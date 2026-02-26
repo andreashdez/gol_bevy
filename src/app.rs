@@ -21,6 +21,12 @@ const LWSS: &[(usize, usize)] = &[
     (3, 3),
 ];
 
+#[derive(Debug, Clone, Copy, Default)]
+struct StampTransform {
+    rotation_quarters: u8,
+    flip_horizontal: bool,
+}
+
 /// Application.
 #[derive(Debug)]
 pub struct App {
@@ -38,6 +44,8 @@ pub struct App {
     show_help: bool,
     /// selected pattern stamp for cursor placement
     selected_pattern: Option<PatternKind>,
+    /// transform applied to stamp before placement
+    stamp_transform: StampTransform,
 
     pub board: board::Board,
 }
@@ -58,6 +66,7 @@ impl App {
             needs_redraw: true,
             show_help: false,
             selected_pattern: None,
+            stamp_transform: StampTransform::default(),
             board,
         }
     }
@@ -217,10 +226,42 @@ impl App {
             .map(|kind| self.pattern_definition(kind).3)
     }
 
-    pub fn selected_pattern_layout(&self) -> Option<(&'static [(usize, usize)], usize, usize)> {
+    pub fn selected_pattern_status_label(&self) -> String {
+        let Some(name) = self.selected_pattern_name() else {
+            return "Draw".to_string();
+        };
+        if self.stamp_transform.rotation_quarters == 0 && !self.stamp_transform.flip_horizontal {
+            return name.to_string();
+        }
+
+        let mut suffix = String::new();
+        if self.stamp_transform.flip_horizontal {
+            suffix.push_str("FlipH");
+        }
+        if self.stamp_transform.rotation_quarters != 0 {
+            if !suffix.is_empty() {
+                suffix.push(' ');
+            }
+            let degrees = self.stamp_transform.rotation_quarters as u32 * 90;
+            suffix.push_str(&format!("R{degrees}"));
+        }
+        format!("{name} ({suffix})")
+    }
+
+    pub fn rotate_stamp_clockwise(&mut self) {
+        self.stamp_transform.rotation_quarters = (self.stamp_transform.rotation_quarters + 1) % 4;
+        self.needs_redraw = true;
+    }
+
+    pub fn toggle_stamp_flip(&mut self) {
+        self.stamp_transform.flip_horizontal = !self.stamp_transform.flip_horizontal;
+        self.needs_redraw = true;
+    }
+
+    pub fn selected_pattern_layout(&self) -> Option<(Vec<(usize, usize)>, usize, usize)> {
         self.selected_pattern.map(|kind| {
             let (pattern, width, height, _) = self.pattern_definition(kind);
-            (pattern, width, height)
+            self.transform_pattern(pattern, width, height)
         })
     }
 
@@ -229,7 +270,8 @@ impl App {
             return;
         };
         let (pattern, width, height, _) = self.pattern_definition(kind);
-        self.place_pattern_at(pattern, width, height, col, row);
+        let (pattern, width, height) = self.transform_pattern(pattern, width, height);
+        self.place_pattern_at(&pattern, width, height, col, row);
     }
 
     fn place_pattern_centered(&mut self, pattern: &[(usize, usize)], width: usize, height: usize) {
@@ -273,6 +315,41 @@ impl App {
             PatternKind::Blinker => (BLINKER, 3, 1, "Blinker"),
             PatternKind::Lwss => (LWSS, 5, 4, "LWSS"),
         }
+    }
+
+    fn transform_pattern(
+        &self,
+        pattern: &[(usize, usize)],
+        width: usize,
+        height: usize,
+    ) -> (Vec<(usize, usize)>, usize, usize) {
+        let mut transformed = Vec::with_capacity(pattern.len());
+        for &(x0, y0) in pattern {
+            let mut x = x0;
+            let mut y = y0;
+            let mut w = width;
+            let mut h = height;
+
+            if self.stamp_transform.flip_horizontal {
+                x = w.saturating_sub(1).saturating_sub(x);
+            }
+
+            for _ in 0..self.stamp_transform.rotation_quarters {
+                let nx = h.saturating_sub(1).saturating_sub(y);
+                let ny = x;
+                x = nx;
+                y = ny;
+                std::mem::swap(&mut w, &mut h);
+            }
+
+            transformed.push((x, y));
+        }
+
+        let (final_w, final_h) = match self.stamp_transform.rotation_quarters {
+            1 | 3 => (height, width),
+            _ => (width, height),
+        };
+        (transformed, final_w, final_h)
     }
 }
 
@@ -345,5 +422,25 @@ mod tests {
         assert_eq!(app.boundary_mode_label(), "Fixed");
         app.toggle_boundary_mode();
         assert_eq!(app.boundary_mode_label(), "Wrap");
+    }
+
+    #[test]
+    fn test_rotate_stamp_changes_placement_orientation() {
+        let mut app = App::new(8, 8);
+        app.select_pattern(PatternKind::Blinker);
+        app.rotate_stamp_clockwise();
+        app.place_selected_pattern_at(4, 4);
+
+        assert!(app.board.is_alive(4, 3));
+        assert!(app.board.is_alive(4, 4));
+        assert!(app.board.is_alive(4, 5));
+    }
+
+    #[test]
+    fn test_flip_stamp_changes_status_label() {
+        let mut app = App::new(8, 8);
+        app.select_pattern(PatternKind::Glider);
+        app.toggle_stamp_flip();
+        assert_eq!(app.selected_pattern_status_label(), "Glider (FlipH)");
     }
 }

@@ -65,6 +65,12 @@ fn handle_keyboard(
     if keys.just_pressed(KeyCode::KeyC) {
         sim.app.clear_selected_pattern();
     }
+    if keys.just_pressed(KeyCode::KeyZ) {
+        sim.app.rotate_stamp_clockwise();
+    }
+    if keys.just_pressed(KeyCode::KeyF) {
+        sim.app.toggle_stamp_flip();
+    }
     if keys.just_pressed(KeyCode::F3) {
         diagnostics.enabled = !diagnostics.enabled;
     }

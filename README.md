@@ -16,6 +16,8 @@ x: clear
 g: select glider stamp
 b: select blinker stamp
 l: select LWSS stamp
+z: rotate stamp
+f: flip stamp horizontally
 c: clear active stamp
 m: toggle boundary mode
 F3: toggle diagnostics

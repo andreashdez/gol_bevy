@@ -21,7 +21,7 @@ pub const CAMERA_ZOOM_MIN: f32 = 0.25;
 pub const CAMERA_ZOOM_MAX: f32 = 8.0;
 pub const CAMERA_PAN_SPEED: f32 = 700.0;
 pub const MAX_PATTERN_CELLS: usize = 20;
-pub const CONTROLS_TEXT: &str = "Controls\n\nSpace: run/pause\nj: step\nr: randomize\nx: clear\n0: reset epoch\n+ / -: speed\ng: select glider stamp\nb: select blinker stamp\nl: select LWSS stamp\nc: clear active stamp\nm: toggle boundary mode\nF3: toggle diagnostics\nt: toggle grid\n/: toggle help\nWheel: zoom camera\nWASD / Arrows: pan camera\nLeft drag: draw\nLeft click (stamp): place pattern\nRight drag: erase\nq / Esc: quit";
+pub const CONTROLS_TEXT: &str = "Controls\n\nSpace: run/pause\nj: step\nr: randomize\nx: clear\n0: reset epoch\n+ / -: speed\ng: select glider stamp\nb: select blinker stamp\nl: select LWSS stamp\nz: rotate stamp\nf: flip stamp horizontally\nc: clear active stamp\nm: toggle boundary mode\nF3: toggle diagnostics\nt: toggle grid\n/: toggle help\nWheel: zoom camera\nWASD / Arrows: pan camera\nLeft drag: draw\nLeft click (stamp): place pattern\nRight drag: erase\nq / Esc: quit";
 
 #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
 pub enum UpdateSet {

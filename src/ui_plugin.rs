@@ -69,7 +69,7 @@ fn sync_hud(
         "Paused"
     };
     let live_cells = sim.app.board.live_cells_count();
-    let stamp = sim.app.selected_pattern_name().unwrap_or("Draw");
+    let stamp = sim.app.selected_pattern_status_label();
     let grid = if grid_overlay.enabled { "On" } else { "Off" };
     let boundary = sim.app.boundary_mode_label();
     let diagnostics_text = if diagnostics.enabled {
