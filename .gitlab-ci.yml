@@ -16,6 +16,10 @@ cache:
     - /usr/local/cargo/registry/
     - /usr/local/cargo/git/
 
+default:
+  before_script:
+    - rustup component add rustfmt clippy
+
 fmt:
   stage: lint
   script:
