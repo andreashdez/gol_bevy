@@ -1,5 +1,5 @@
 use crate::shared::{
-    CONTROLS_TEXT, DiagnosticsOverlay, HELP_FONT_SIZE, HELP_TEXT_COLOR, HUD_FONT_SIZE,
+    CONTROLS_TEXT, DiagnosticsOverlay, GridOverlay, HELP_FONT_SIZE, HELP_TEXT_COLOR, HUD_FONT_SIZE,
     HUD_TEXT_COLOR, HelpText, Hud, RedrawRequested, Simulation, UI_MARGIN, UpdateSet,
 };
 use bevy::prelude::*;
@@ -51,6 +51,7 @@ fn setup_ui(mut commands: Commands) {
 fn sync_hud(
     redraw_requested: Res<RedrawRequested>,
     diagnostics: Res<DiagnosticsOverlay>,
+    grid_overlay: Res<GridOverlay>,
     sim: Res<Simulation>,
     mut hud_q: Query<&mut Text, (With<Hud>, Without<HelpText>)>,
     mut help_q: Query<&mut Visibility, With<HelpText>>,
@@ -68,17 +69,21 @@ fn sync_hud(
         "Paused"
     };
     let live_cells = sim.app.board.live_cells_count();
+    let stamp = sim.app.selected_pattern_name().unwrap_or("Draw");
+    let grid = if grid_overlay.enabled { "On" } else { "Off" };
     let diagnostics_text = if diagnostics.enabled {
         format!(" | Step(avg): {:.3}ms", sim.avg_step_ms)
     } else {
         String::new()
     };
     *hud = Text::new(format!(
-        "Epoch: {} | {} | Tick: {}ms | Live: {}{}",
+        "Epoch: {} | {} | Tick: {}ms | Live: {} | Stamp: {} | Grid: {}{}",
         sim.app.epoch,
         mode,
         sim.app.tick_rate_ms(),
         live_cells,
+        stamp,
+        grid,
         diagnostics_text
     ));
 

@@ -13,12 +13,17 @@ r: randomize
 x: clear
 0: reset epoch
 + / -: speed
-g: glider
-b: blinker
-l: LWSS
+g: select glider stamp
+b: select blinker stamp
+l: select LWSS stamp
+c: clear active stamp
 F3: toggle diagnostics
+t: toggle grid
 /: toggle help
+Wheel: zoom camera
+WASD / Arrows: pan camera
 Left drag: draw
+Left click (stamp): place pattern
 Right drag: erase
 q / Esc: quit
 ```

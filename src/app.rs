@@ -1,5 +1,26 @@
 use crate::board;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatternKind {
+    Glider,
+    Blinker,
+    Lwss,
+}
+
+const GLIDER: &[(usize, usize)] = &[(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)];
+const BLINKER: &[(usize, usize)] = &[(0, 0), (1, 0), (2, 0)];
+const LWSS: &[(usize, usize)] = &[
+    (1, 0),
+    (4, 0),
+    (0, 1),
+    (0, 2),
+    (3, 2),
+    (0, 3),
+    (1, 3),
+    (2, 3),
+    (3, 3),
+];
+
 /// Application.
 #[derive(Debug)]
 pub struct App {
@@ -15,6 +36,8 @@ pub struct App {
     needs_redraw: bool,
     /// whether help overlay is visible
     show_help: bool,
+    /// selected pattern stamp for cursor placement
+    selected_pattern: Option<PatternKind>,
 
     pub board: board::Board,
 }
@@ -34,6 +57,7 @@ impl App {
             running: false,
             needs_redraw: true,
             show_help: false,
+            selected_pattern: None,
             board,
         }
     }
@@ -149,28 +173,54 @@ impl App {
     }
 
     pub fn insert_glider(&mut self) {
-        const GLIDER: &[(usize, usize)] = &[(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)];
         self.place_pattern_centered(GLIDER, 3, 3);
     }
 
     pub fn insert_blinker(&mut self) {
-        const BLINKER: &[(usize, usize)] = &[(0, 0), (1, 0), (2, 0)];
         self.place_pattern_centered(BLINKER, 3, 1);
     }
 
     pub fn insert_lwss(&mut self) {
-        const LWSS: &[(usize, usize)] = &[
-            (1, 0),
-            (4, 0),
-            (0, 1),
-            (0, 2),
-            (3, 2),
-            (0, 3),
-            (1, 3),
-            (2, 3),
-            (3, 3),
-        ];
         self.place_pattern_centered(LWSS, 5, 4);
+    }
+
+    pub fn select_pattern(&mut self, pattern: PatternKind) {
+        if self.selected_pattern == Some(pattern) {
+            self.selected_pattern = None;
+        } else {
+            self.selected_pattern = Some(pattern);
+        }
+        self.needs_redraw = true;
+    }
+
+    pub fn clear_selected_pattern(&mut self) {
+        if self.selected_pattern.take().is_some() {
+            self.needs_redraw = true;
+        }
+    }
+
+    pub fn has_selected_pattern(&self) -> bool {
+        self.selected_pattern.is_some()
+    }
+
+    pub fn selected_pattern_name(&self) -> Option<&'static str> {
+        self.selected_pattern
+            .map(|kind| self.pattern_definition(kind).3)
+    }
+
+    pub fn selected_pattern_layout(&self) -> Option<(&'static [(usize, usize)], usize, usize)> {
+        self.selected_pattern.map(|kind| {
+            let (pattern, width, height, _) = self.pattern_definition(kind);
+            (pattern, width, height)
+        })
+    }
+
+    pub fn place_selected_pattern_at(&mut self, col: usize, row: usize) {
+        let Some(kind) = self.selected_pattern else {
+            return;
+        };
+        let (pattern, width, height, _) = self.pattern_definition(kind);
+        self.place_pattern_at(pattern, width, height, col, row);
     }
 
     fn place_pattern_centered(&mut self, pattern: &[(usize, usize)], width: usize, height: usize) {
@@ -179,8 +229,21 @@ impl App {
             return;
         }
 
-        let origin_x = (cols.saturating_sub(width)) / 2;
-        let origin_y = (rows.saturating_sub(height)) / 2;
+        let center_col = cols / 2;
+        let center_row = rows / 2;
+        self.place_pattern_at(pattern, width, height, center_col, center_row);
+    }
+
+    fn place_pattern_at(
+        &mut self,
+        pattern: &[(usize, usize)],
+        width: usize,
+        height: usize,
+        center_col: usize,
+        center_row: usize,
+    ) {
+        let origin_x = center_col.saturating_sub(width / 2);
+        let origin_y = center_row.saturating_sub(height / 2);
         let mut changed = false;
 
         for &(dx, dy) in pattern {
@@ -189,6 +252,17 @@ impl App {
 
         if changed {
             self.needs_redraw = true;
+        }
+    }
+
+    fn pattern_definition(
+        &self,
+        kind: PatternKind,
+    ) -> (&'static [(usize, usize)], usize, usize, &'static str) {
+        match kind {
+            PatternKind::Glider => (GLIDER, 3, 3, "Glider"),
+            PatternKind::Blinker => (BLINKER, 3, 1, "Blinker"),
+            PatternKind::Lwss => (LWSS, 5, 4, "LWSS"),
         }
     }
 }
@@ -233,5 +307,24 @@ mod tests {
         let mut app = App::new(8, 8);
         app.insert_glider();
         assert!(app.board.rendered().contains("██"));
+    }
+
+    #[test]
+    fn test_select_pattern_toggles() {
+        let mut app = App::new(8, 8);
+        app.select_pattern(PatternKind::Glider);
+        assert_eq!(app.selected_pattern_name(), Some("Glider"));
+        app.select_pattern(PatternKind::Glider);
+        assert_eq!(app.selected_pattern_name(), None);
+    }
+
+    #[test]
+    fn test_place_selected_pattern_at_cursor() {
+        let mut app = App::new(8, 8);
+        app.select_pattern(PatternKind::Blinker);
+        app.place_selected_pattern_at(4, 4);
+        assert!(app.board.is_alive(3, 4));
+        assert!(app.board.is_alive(4, 4));
+        assert!(app.board.is_alive(5, 4));
     }
 }

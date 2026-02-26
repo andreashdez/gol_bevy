@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use crate::shared::{DiagnosticsOverlay, RedrawRequested, Simulation, UpdateSet};
+use crate::shared::{DiagnosticsOverlay, GridOverlay, RedrawRequested, Simulation, UpdateSet};
 use bevy::{app::AppExit, prelude::*};
 
 pub struct SimulationPlugin;
@@ -50,9 +50,11 @@ fn update_step_timing(sim: &mut Simulation, step_ms: f64) {
 fn collect_redraw(
     mut sim: ResMut<Simulation>,
     diagnostics: Res<DiagnosticsOverlay>,
+    grid_overlay: Res<GridOverlay>,
     mut redraw_requested: ResMut<RedrawRequested>,
 ) {
-    redraw_requested.0 = sim.app.take_redraw() || diagnostics.is_changed();
+    redraw_requested.0 =
+        sim.app.take_redraw() || diagnostics.is_changed() || grid_overlay.is_changed();
 }
 
 fn apply_quit(mut sim: ResMut<Simulation>, mut app_exit: MessageWriter<AppExit>) {

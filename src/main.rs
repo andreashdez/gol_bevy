@@ -9,7 +9,7 @@ pub mod ui_plugin;
 use bevy::{prelude::*, window::WindowResolution};
 use input_plugin::InputPlugin;
 use render_plugin::RenderPlugin;
-use shared::{BG_COLOR, DiagnosticsOverlay, RedrawRequested, UpdateSet};
+use shared::{BG_COLOR, DiagnosticsOverlay, GridOverlay, RedrawRequested, UpdateSet};
 use simulation_plugin::SimulationPlugin;
 use ui_plugin::UiPlugin;
 
@@ -27,11 +27,13 @@ fn main() {
         .insert_resource(ClearColor(BG_COLOR))
         .insert_resource(RedrawRequested::default())
         .insert_resource(DiagnosticsOverlay { enabled: true })
+        .insert_resource(GridOverlay { enabled: false })
         .configure_sets(
             Update,
             (
                 UpdateSet::Input,
                 UpdateSet::Simulation,
+                UpdateSet::Camera,
                 UpdateSet::Resize,
                 UpdateSet::Redraw,
                 UpdateSet::Render,
