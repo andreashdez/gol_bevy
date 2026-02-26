@@ -1,12 +1,13 @@
 pub mod app;
 pub mod board;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use app::App as GolApp;
 use bevy::{
+    app::AppExit,
     prelude::*,
-    window::{PrimaryWindow, WindowResolution},
+    window::{PrimaryWindow, WindowResized, WindowResolution},
 };
 
 const CELL_SIZE: f32 = 12.0;
@@ -18,6 +19,8 @@ const BG_COLOR: Color = Color::srgb(0.02, 0.02, 0.03);
 struct Simulation {
     app: GolApp,
     accumulator: Duration,
+    avg_step_ms: f64,
+    step_samples: u64,
 }
 
 #[derive(Component)]
@@ -35,6 +38,14 @@ struct HelpText;
 #[derive(Component)]
 struct MainCamera;
 
+#[derive(Resource, Default)]
+struct RedrawRequested(bool);
+
+#[derive(Resource)]
+struct DiagnosticsOverlay {
+    enabled: bool,
+}
+
 fn main() {
     bevy::prelude::App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -47,6 +58,8 @@ fn main() {
             ..default()
         }))
         .insert_resource(ClearColor(BG_COLOR))
+        .insert_resource(RedrawRequested::default())
+        .insert_resource(DiagnosticsOverlay { enabled: true })
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -55,10 +68,12 @@ fn main() {
                 handle_mouse,
                 advance_simulation,
                 handle_resize,
+                collect_redraw,
                 sync_cells,
                 sync_hud,
                 apply_quit,
-            ),
+            )
+                .chain(),
         )
         .run();
 }
@@ -73,6 +88,8 @@ fn setup(mut commands: Commands, window_q: Query<&Window, With<PrimaryWindow>>) 
     commands.insert_resource(Simulation {
         app: GolApp::new(cols, rows),
         accumulator: Duration::ZERO,
+        avg_step_ms: 0.0,
+        step_samples: 0,
     });
 
     spawn_cells(&mut commands, cols, rows);
@@ -123,7 +140,11 @@ fn spawn_cells(commands: &mut Commands, cols: usize, rows: usize) {
     }
 }
 
-fn handle_keyboard(keys: Res<ButtonInput<KeyCode>>, mut sim: ResMut<Simulation>) {
+fn handle_keyboard(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut sim: ResMut<Simulation>,
+    mut diagnostics: ResMut<DiagnosticsOverlay>,
+) {
     if keys.just_pressed(KeyCode::Space) {
         sim.app.toggle_running();
     }
@@ -156,6 +177,9 @@ fn handle_keyboard(keys: Res<ButtonInput<KeyCode>>, mut sim: ResMut<Simulation>)
     }
     if keys.just_pressed(KeyCode::KeyL) {
         sim.app.insert_lwss();
+    }
+    if keys.just_pressed(KeyCode::F3) {
+        diagnostics.enabled = !diagnostics.enabled;
     }
     if keys.just_pressed(KeyCode::KeyQ) || keys.just_pressed(KeyCode::Escape) {
         sim.app.quit();
@@ -204,17 +228,40 @@ fn advance_simulation(time: Res<Time>, mut sim: ResMut<Simulation>) {
     let tick = Duration::from_millis(sim.app.tick_rate_ms());
 
     while sim.accumulator >= tick {
+        let started = Instant::now();
         sim.app.increment_epoch();
+        let step_ms = started.elapsed().as_secs_f64() * 1000.0;
+        update_step_timing(&mut sim, step_ms);
         sim.accumulator -= tick;
     }
 }
 
+fn update_step_timing(sim: &mut Simulation, step_ms: f64) {
+    sim.step_samples = sim.step_samples.saturating_add(1);
+    if sim.step_samples == 1 {
+        sim.avg_step_ms = step_ms;
+        return;
+    }
+
+    const EMA_ALPHA: f64 = 0.15;
+    sim.avg_step_ms = sim.avg_step_ms * (1.0 - EMA_ALPHA) + step_ms * EMA_ALPHA;
+}
+
 fn handle_resize(
+    mut resize_events: MessageReader<WindowResized>,
     mut commands: Commands,
     window_q: Query<&Window, With<PrimaryWindow>>,
     mut sim: ResMut<Simulation>,
     cells_q: Query<Entity, With<Cell>>,
 ) {
+    let mut saw_resize = false;
+    for _ in resize_events.read() {
+        saw_resize = true;
+    }
+    if !saw_resize {
+        return;
+    }
+
     let Ok(window) = window_q.single() else {
         return;
     };
@@ -232,7 +279,23 @@ fn handle_resize(
     spawn_cells(&mut commands, new_cols, new_rows);
 }
 
-fn sync_cells(sim: Res<Simulation>, mut cell_q: Query<(&Cell, &mut Sprite)>) {
+fn collect_redraw(
+    mut sim: ResMut<Simulation>,
+    diagnostics: Res<DiagnosticsOverlay>,
+    mut redraw_requested: ResMut<RedrawRequested>,
+) {
+    redraw_requested.0 = sim.app.take_redraw() || diagnostics.is_changed();
+}
+
+fn sync_cells(
+    redraw_requested: Res<RedrawRequested>,
+    sim: Res<Simulation>,
+    mut cell_q: Query<(&Cell, &mut Sprite)>,
+) {
+    if !redraw_requested.0 {
+        return;
+    }
+
     for (cell, mut sprite) in &mut cell_q {
         sprite.color = if sim.app.board.is_alive(cell.col, cell.row) {
             LIVE_COLOR
@@ -243,10 +306,16 @@ fn sync_cells(sim: Res<Simulation>, mut cell_q: Query<(&Cell, &mut Sprite)>) {
 }
 
 fn sync_hud(
+    redraw_requested: Res<RedrawRequested>,
+    diagnostics: Res<DiagnosticsOverlay>,
     sim: Res<Simulation>,
     mut hud_q: Query<&mut Text, (With<Hud>, Without<HelpText>)>,
     mut help_q: Query<&mut Visibility, With<HelpText>>,
 ) {
+    if !redraw_requested.0 {
+        return;
+    }
+
     let Ok(mut hud) = hud_q.single_mut() else {
         return;
     };
@@ -255,11 +324,19 @@ fn sync_hud(
     } else {
         "Paused"
     };
+    let live_cells = sim.app.board.live_cells_count();
+    let diagnostics_text = if diagnostics.enabled {
+        format!(" | Step(avg): {:.3}ms", sim.avg_step_ms)
+    } else {
+        String::new()
+    };
     *hud = Text::new(format!(
-        "Epoch: {} | {} | Tick: {}ms",
+        "Epoch: {} | {} | Tick: {}ms | Live: {}{}",
         sim.app.epoch,
         mode,
-        sim.app.tick_rate_ms()
+        sim.app.tick_rate_ms(),
+        live_cells,
+        diagnostics_text
     ));
 
     let Ok(mut help_visibility) = help_q.single_mut() else {
@@ -272,9 +349,10 @@ fn sync_hud(
     };
 }
 
-fn apply_quit(sim: Res<Simulation>) {
+fn apply_quit(mut sim: ResMut<Simulation>, mut app_exit: MessageWriter<AppExit>) {
     if sim.app.should_quit {
-        std::process::exit(0);
+        app_exit.write(AppExit::Success);
+        sim.app.should_quit = false;
     }
 }
 
@@ -313,5 +391,5 @@ fn world_to_cell(world: Vec2, cols: usize, rows: usize) -> Option<(usize, usize)
 }
 
 fn controls_text() -> &'static str {
-    "Controls\n\nSpace: run/pause\nj: step\nr: randomize\nx: clear\n0: reset epoch\n+ / -: speed\ng: glider\nb: blinker\nl: LWSS\n/: toggle help\nLeft drag: draw\nRight drag: erase\nq / Esc: quit"
+    "Controls\n\nSpace: run/pause\nj: step\nr: randomize\nx: clear\n0: reset epoch\n+ / -: speed\ng: glider\nb: blinker\nl: LWSS\nF3: toggle diagnostics\n/: toggle help\nLeft drag: draw\nRight drag: erase\nq / Esc: quit"
 }

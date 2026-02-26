@@ -158,6 +158,13 @@ impl Board {
         false
     }
 
+    pub fn live_cells_count(&self) -> usize {
+        self.current
+            .iter()
+            .map(|col| col.iter().filter(|&&cell| cell).count())
+            .sum()
+    }
+
     fn cols(&self) -> usize {
         self.current.len()
     }
