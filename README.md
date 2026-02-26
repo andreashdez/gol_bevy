@@ -25,6 +25,7 @@ t: toggle grid
 /: toggle help
 Wheel: zoom camera
 WASD / Arrows: pan camera
+v: reset camera
 Left drag: draw
 Left click (stamp): place pattern
 Right drag: erase

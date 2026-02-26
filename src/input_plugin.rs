@@ -1,8 +1,8 @@
 use crate::{
     app::PatternKind,
     shared::{
-        CAMERA_PAN_SPEED, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay,
-        GridOverlay, MainCamera, Simulation, UpdateSet, world_to_cell,
+        world_to_cell, DiagnosticsOverlay, GridOverlay, MainCamera, Simulation, UpdateSet,
+        CAMERA_PAN_SPEED, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP,
     },
 };
 use bevy::{input::mouse::MouseWheel, prelude::*, window::PrimaryWindow};
@@ -18,6 +18,7 @@ impl Plugin for InputPlugin {
                 handle_mouse.in_set(UpdateSet::Input),
                 handle_camera_zoom.in_set(UpdateSet::Camera),
                 handle_camera_pan.in_set(UpdateSet::Camera),
+                handle_camera_reset.in_set(UpdateSet::Camera),
             ),
         );
     }
@@ -175,4 +176,24 @@ fn handle_camera_pan(
     };
     let travel = direction.normalize() * CAMERA_PAN_SPEED * zoom * time.delta_secs();
     camera_transform.translation += travel;
+}
+
+fn handle_camera_reset(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut camera_q: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
+) {
+    if !keys.just_pressed(KeyCode::KeyV) {
+        return;
+    }
+
+    let Ok((mut transform, mut projection)) = camera_q.single_mut() else {
+        return;
+    };
+
+    transform.translation.x = 0.0;
+    transform.translation.y = 0.0;
+
+    if let Projection::Orthographic(ref mut ortho) = *projection {
+        ortho.scale = 1.0;
+    }
 }
