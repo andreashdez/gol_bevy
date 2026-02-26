@@ -7,6 +7,12 @@ pub const CELL_SIZE: f32 = 12.0;
 pub const DEAD_COLOR: Color = Color::srgb(0.08, 0.09, 0.11);
 pub const LIVE_COLOR: Color = Color::srgb(0.22, 0.85, 0.56);
 pub const BG_COLOR: Color = Color::srgb(0.02, 0.02, 0.03);
+pub const HUD_TEXT_COLOR: Color = Color::srgb(0.95, 0.95, 0.95);
+pub const HELP_TEXT_COLOR: Color = Color::srgb(0.80, 0.82, 0.88);
+pub const HUD_FONT_SIZE: f32 = 19.0;
+pub const HELP_FONT_SIZE: f32 = 16.0;
+pub const UI_MARGIN: f32 = 12.0;
+pub const CONTROLS_TEXT: &str = "Controls\n\nSpace: run/pause\nj: step\nr: randomize\nx: clear\n0: reset epoch\n+ / -: speed\ng: glider\nb: blinker\nl: LWSS\nF3: toggle diagnostics\n/: toggle help\nLeft drag: draw\nRight drag: erase\nq / Esc: quit";
 
 #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
 pub enum UpdateSet {
@@ -82,4 +88,15 @@ pub fn world_to_cell(world: Vec2, cols: usize, rows: usize) -> Option<(usize, us
         return Some((col, row));
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CONTROLS_TEXT;
+
+    #[test]
+    fn readme_contains_controls_text() {
+        let readme = include_str!("../README.md");
+        assert!(readme.contains(CONTROLS_TEXT));
+    }
 }

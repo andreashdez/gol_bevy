@@ -1,4 +1,7 @@
-use crate::shared::{DiagnosticsOverlay, HelpText, Hud, RedrawRequested, Simulation, UpdateSet};
+use crate::shared::{
+    CONTROLS_TEXT, DiagnosticsOverlay, HELP_FONT_SIZE, HELP_TEXT_COLOR, HUD_FONT_SIZE,
+    HUD_TEXT_COLOR, HelpText, Hud, RedrawRequested, Simulation, UI_MARGIN, UpdateSet,
+};
 use bevy::prelude::*;
 
 pub struct UiPlugin;
@@ -15,31 +18,31 @@ fn setup_ui(mut commands: Commands) {
         Text::new(""),
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(12.0),
-            left: Val::Px(12.0),
+            top: Val::Px(UI_MARGIN),
+            left: Val::Px(UI_MARGIN),
             ..default()
         },
         TextFont {
-            font_size: 19.0,
+            font_size: HUD_FONT_SIZE,
             ..default()
         },
-        TextColor(Color::srgb(0.95, 0.95, 0.95)),
+        TextColor(HUD_TEXT_COLOR),
         Hud,
     ));
 
     commands.spawn((
-        Text::new(controls_text()),
+        Text::new(CONTROLS_TEXT),
         Node {
             position_type: PositionType::Absolute,
-            right: Val::Px(12.0),
-            top: Val::Px(12.0),
+            right: Val::Px(UI_MARGIN),
+            top: Val::Px(UI_MARGIN),
             ..default()
         },
         TextFont {
-            font_size: 16.0,
+            font_size: HELP_FONT_SIZE,
             ..default()
         },
-        TextColor(Color::srgb(0.80, 0.82, 0.88)),
+        TextColor(HELP_TEXT_COLOR),
         Visibility::Hidden,
         HelpText,
     ));
@@ -87,8 +90,4 @@ fn sync_hud(
     } else {
         Visibility::Hidden
     };
-}
-
-fn controls_text() -> &'static str {
-    "Controls\n\nSpace: run/pause\nj: step\nr: randomize\nx: clear\n0: reset epoch\n+ / -: speed\ng: glider\nb: blinker\nl: LWSS\nF3: toggle diagnostics\n/: toggle help\nLeft drag: draw\nRight drag: erase\nq / Esc: quit"
 }

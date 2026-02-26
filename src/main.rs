@@ -6,10 +6,7 @@ pub mod shared;
 pub mod simulation_plugin;
 pub mod ui_plugin;
 
-use bevy::{
-    prelude::*,
-    window::{WindowResolution, WindowTheme},
-};
+use bevy::{prelude::*, window::WindowResolution};
 use input_plugin::InputPlugin;
 use render_plugin::RenderPlugin;
 use shared::{BG_COLOR, DiagnosticsOverlay, RedrawRequested, UpdateSet};
@@ -23,7 +20,6 @@ fn main() {
                 title: "Conway's Game of Life (Bevy)".into(),
                 resolution: WindowResolution::new(1200, 800),
                 resizable: true,
-                window_theme: Some(WindowTheme::Dark),
                 ..default()
             }),
             ..default()

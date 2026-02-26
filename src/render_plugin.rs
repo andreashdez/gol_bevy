@@ -1,8 +1,9 @@
 use std::time::Duration;
 
+use crate::app::App as GolApp;
 use crate::shared::{
-    Cell, DEAD_COLOR, MainCamera, RedrawRequested, Simulation, UpdateSet, board_size_for_window,
-    cell_to_world,
+    CELL_SIZE, Cell, DEAD_COLOR, LIVE_COLOR, MainCamera, RedrawRequested, Simulation, UpdateSet,
+    board_size_for_window, cell_to_world,
 };
 use bevy::{
     prelude::*,
@@ -31,7 +32,7 @@ fn setup_world(mut commands: Commands, window_q: Query<&Window, With<PrimaryWind
 
     commands.spawn((Camera2d, MainCamera));
     commands.insert_resource(Simulation {
-        app: crate::app::App::new(cols, rows),
+        app: GolApp::new(cols, rows),
         accumulator: Duration::ZERO,
         avg_step_ms: 0.0,
         step_samples: 0,
@@ -44,7 +45,7 @@ fn spawn_cells(commands: &mut Commands, cols: usize, rows: usize) {
     for col in 0..cols {
         for row in 0..rows {
             commands.spawn((
-                Sprite::from_color(DEAD_COLOR, Vec2::splat(crate::shared::CELL_SIZE - 1.0)),
+                Sprite::from_color(DEAD_COLOR, Vec2::splat(CELL_SIZE - 1.0)),
                 Transform::from_translation(cell_to_world(col, row, cols, rows)),
                 Cell { col, row },
             ));
@@ -95,7 +96,7 @@ fn sync_cells(
 
     for (cell, mut sprite) in &mut cell_q {
         sprite.color = if sim.app.board.is_alive(cell.col, cell.row) {
-            crate::shared::LIVE_COLOR
+            LIVE_COLOR
         } else {
             DEAD_COLOR
         };
