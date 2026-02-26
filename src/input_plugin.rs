@@ -1,8 +1,8 @@
 use crate::{
     app::PatternKind,
     shared::{
-        CAMERA_PAN_SPEED, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay,
-        GridOverlay, MainCamera, Simulation, UpdateSet, world_to_cell,
+        world_to_cell, DiagnosticsOverlay, GridOverlay, MainCamera, Simulation, UpdateSet,
+        CAMERA_PAN_SPEED, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP,
     },
 };
 use bevy::{input::mouse::MouseWheel, prelude::*, window::PrimaryWindow};
@@ -100,9 +100,9 @@ fn handle_mouse(
         return;
     };
 
-    if mouse_buttons.just_pressed(MouseButton::Left) && sim.app.has_selected_pattern() {
+    if mouse_buttons.just_released(MouseButton::Left) && sim.app.has_selected_pattern() {
         sim.app.place_selected_pattern_at(col, row);
-    } else if mouse_buttons.pressed(MouseButton::Left) {
+    } else if mouse_buttons.pressed(MouseButton::Left) && !sim.app.has_selected_pattern() {
         sim.app.populate_board(col, row);
     }
 
