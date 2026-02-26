@@ -71,19 +71,21 @@ fn sync_hud(
     let live_cells = sim.app.board.live_cells_count();
     let stamp = sim.app.selected_pattern_name().unwrap_or("Draw");
     let grid = if grid_overlay.enabled { "On" } else { "Off" };
+    let boundary = sim.app.boundary_mode_label();
     let diagnostics_text = if diagnostics.enabled {
         format!(" | Step(avg): {:.3}ms", sim.avg_step_ms)
     } else {
         String::new()
     };
     *hud = Text::new(format!(
-        "Epoch: {} | {} | Tick: {}ms | Live: {} | Stamp: {} | Grid: {}{}",
+        "Epoch: {} | {} | Tick: {}ms | Live: {} | Stamp: {} | Grid: {} | Boundary: {}{}",
         sim.app.epoch,
         mode,
         sim.app.tick_rate_ms(),
         live_cells,
         stamp,
         grid,
+        boundary,
         diagnostics_text
     ));
 

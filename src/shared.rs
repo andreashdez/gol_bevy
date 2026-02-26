@@ -8,6 +8,8 @@ pub const DEAD_COLOR: Color = Color::srgb(0.08, 0.09, 0.11);
 pub const LIVE_COLOR: Color = Color::srgb(0.22, 0.85, 0.56);
 pub const GHOST_LIVE_COLOR: Color = Color::srgba(0.22, 0.85, 0.56, 0.30);
 pub const BG_COLOR: Color = Color::srgb(0.02, 0.02, 0.03);
+pub const WALL_COLOR: Color = Color::srgba(0.96, 0.92, 0.70, 0.55);
+pub const WALL_BRIGHT_COLOR: Color = Color::srgba(1.0, 0.98, 0.82, 0.92);
 pub const HUD_TEXT_COLOR: Color = Color::srgb(0.95, 0.95, 0.95);
 pub const HELP_TEXT_COLOR: Color = Color::srgb(0.80, 0.82, 0.88);
 pub const GRID_LINE_COLOR: Color = Color::srgba(0.9, 0.9, 0.95, 0.14);
@@ -19,7 +21,7 @@ pub const CAMERA_ZOOM_MIN: f32 = 0.25;
 pub const CAMERA_ZOOM_MAX: f32 = 8.0;
 pub const CAMERA_PAN_SPEED: f32 = 700.0;
 pub const MAX_PATTERN_CELLS: usize = 20;
-pub const CONTROLS_TEXT: &str = "Controls\n\nSpace: run/pause\nj: step\nr: randomize\nx: clear\n0: reset epoch\n+ / -: speed\ng: select glider stamp\nb: select blinker stamp\nl: select LWSS stamp\nc: clear active stamp\nF3: toggle diagnostics\nt: toggle grid\n/: toggle help\nWheel: zoom camera\nWASD / Arrows: pan camera\nLeft drag: draw\nLeft click (stamp): place pattern\nRight drag: erase\nq / Esc: quit";
+pub const CONTROLS_TEXT: &str = "Controls\n\nSpace: run/pause\nj: step\nr: randomize\nx: clear\n0: reset epoch\n+ / -: speed\ng: select glider stamp\nb: select blinker stamp\nl: select LWSS stamp\nc: clear active stamp\nm: toggle boundary mode\nF3: toggle diagnostics\nt: toggle grid\n/: toggle help\nWheel: zoom camera\nWASD / Arrows: pan camera\nLeft drag: draw\nLeft click (stamp): place pattern\nRight drag: erase\nq / Esc: quit";
 
 #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
 pub enum UpdateSet {

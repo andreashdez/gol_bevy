@@ -91,6 +91,15 @@ impl App {
         self.tick_rate_ms
     }
 
+    pub fn toggle_boundary_mode(&mut self) {
+        self.board.toggle_boundary_mode();
+        self.needs_redraw = true;
+    }
+
+    pub fn boundary_mode_label(&self) -> &'static str {
+        self.board.boundary_mode_label()
+    }
+
     pub fn speed_up(&mut self) -> bool {
         if self.tick_rate_ms <= Self::TICK_RATE_MIN_MS {
             return false;
@@ -326,5 +335,15 @@ mod tests {
         assert!(app.board.is_alive(3, 4));
         assert!(app.board.is_alive(4, 4));
         assert!(app.board.is_alive(5, 4));
+    }
+
+    #[test]
+    fn test_toggle_boundary_mode() {
+        let mut app = App::new(8, 8);
+        assert_eq!(app.boundary_mode_label(), "Wrap");
+        app.toggle_boundary_mode();
+        assert_eq!(app.boundary_mode_label(), "Fixed");
+        app.toggle_boundary_mode();
+        assert_eq!(app.boundary_mode_label(), "Wrap");
     }
 }

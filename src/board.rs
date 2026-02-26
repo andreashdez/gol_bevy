@@ -1,6 +1,12 @@
 const CENTER_FULL: &str = "██";
 const CENTER_EMPTY: &str = "  ";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoundaryMode {
+    Wrap,
+    Fixed,
+}
+
 #[derive(Debug)]
 pub struct Board {
     /// current state field
@@ -11,6 +17,8 @@ pub struct Board {
     render_cache: String,
     /// whether render cache needs rebuild
     render_dirty: bool,
+    /// board boundary behavior
+    boundary_mode: BoundaryMode,
 }
 
 impl Board {
@@ -20,6 +28,7 @@ impl Board {
             future: vec![vec![false; rows]; cols],
             render_cache: String::new(),
             render_dirty: true,
+            boundary_mode: BoundaryMode::Wrap,
         }
     }
 
@@ -102,9 +111,20 @@ impl Board {
         if w == 0 || h == 0 {
             return false;
         }
-        let i = ((x + w) % w) as usize;
-        let j = ((y + h) % h) as usize;
-        self.current[i][j]
+
+        match self.boundary_mode {
+            BoundaryMode::Wrap => {
+                let i = ((x + w) % w) as usize;
+                let j = ((y + h) % h) as usize;
+                self.current[i][j]
+            }
+            BoundaryMode::Fixed => {
+                if x < 0 || y < 0 || x >= w || y >= h {
+                    return false;
+                }
+                self.current[x as usize][y as usize]
+            }
+        }
     }
 
     fn next(&self, x: i32, y: i32) -> bool {
@@ -151,6 +171,30 @@ impl Board {
         (self.cols(), self.rows())
     }
 
+    pub fn toggle_boundary_mode(&mut self) {
+        self.boundary_mode = match self.boundary_mode {
+            BoundaryMode::Wrap => BoundaryMode::Fixed,
+            BoundaryMode::Fixed => BoundaryMode::Wrap,
+        };
+        self.render_dirty = true;
+    }
+
+    pub fn set_boundary_mode(&mut self, mode: BoundaryMode) {
+        self.boundary_mode = mode;
+        self.render_dirty = true;
+    }
+
+    pub fn boundary_mode(&self) -> BoundaryMode {
+        self.boundary_mode
+    }
+
+    pub fn boundary_mode_label(&self) -> &'static str {
+        match self.boundary_mode {
+            BoundaryMode::Wrap => "Wrap",
+            BoundaryMode::Fixed => "Fixed",
+        }
+    }
+
     pub fn is_alive(&self, col: usize, row: usize) -> bool {
         if col < self.cols() && row < self.rows() {
             return self.current[col][row];
@@ -194,7 +238,7 @@ impl Board {
 
 #[cfg(test)]
 mod tests {
-    use super::Board;
+    use super::{Board, BoundaryMode};
 
     fn live_cells(board: &Board) -> Vec<(usize, usize)> {
         let mut cells = Vec::new();
@@ -241,6 +285,7 @@ mod tests {
     #[test]
     fn wraparound_neighbors_are_counted() {
         let mut board = Board::new(5, 5);
+        board.set_boundary_mode(BoundaryMode::Wrap);
         board.populate(4, 4);
         board.populate(4, 0);
         board.populate(0, 4);
@@ -248,6 +293,19 @@ mod tests {
         board.step();
 
         assert!(board.current[0][0]);
+    }
+
+    #[test]
+    fn fixed_boundary_does_not_wrap_neighbors() {
+        let mut board = Board::new(5, 5);
+        board.set_boundary_mode(BoundaryMode::Fixed);
+        board.populate(4, 4);
+        board.populate(4, 0);
+        board.populate(0, 4);
+
+        board.step();
+
+        assert!(!board.current[0][0]);
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use crate::{
     app::PatternKind,
     shared::{
-        world_to_cell, DiagnosticsOverlay, GridOverlay, MainCamera, Simulation, UpdateSet,
-        CAMERA_PAN_SPEED, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP,
+        CAMERA_PAN_SPEED, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay,
+        GridOverlay, MainCamera, Simulation, UpdateSet, world_to_cell,
     },
 };
 use bevy::{input::mouse::MouseWheel, prelude::*, window::PrimaryWindow};
@@ -70,6 +70,9 @@ fn handle_keyboard(
     }
     if keys.just_pressed(KeyCode::KeyT) {
         grid_overlay.enabled = !grid_overlay.enabled;
+    }
+    if keys.just_pressed(KeyCode::KeyM) {
+        sim.app.toggle_boundary_mode();
     }
     if keys.just_pressed(KeyCode::KeyQ) || keys.just_pressed(KeyCode::Escape) {
         sim.app.quit();

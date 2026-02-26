@@ -1,10 +1,11 @@
-use std::time::Duration;
+use std::{f32::consts::PI, time::Duration};
 
 use crate::app::App as GolApp;
+use crate::board::BoundaryMode;
 use crate::shared::{
     CELL_SIZE, Cell, DEAD_COLOR, GHOST_LIVE_COLOR, GRID_LINE_COLOR, GridLine, GridOverlay,
     LIVE_COLOR, MAX_PATTERN_CELLS, MainCamera, RedrawRequested, Simulation, UpdateSet,
-    board_size_for_window, cell_to_world, world_to_cell,
+    WALL_BRIGHT_COLOR, WALL_COLOR, board_size_for_window, cell_to_world, world_to_cell,
 };
 use bevy::{
     prelude::*,
@@ -18,17 +19,42 @@ struct GhostPreviewCell {
     slot: usize,
 }
 
+#[derive(Component)]
+struct BoundaryWall;
+
+#[derive(Resource)]
+struct BoundaryWallPulse {
+    timer: Timer,
+    active: bool,
+    last_mode: BoundaryMode,
+    pulses_done: u8,
+}
+
+impl Default for BoundaryWallPulse {
+    fn default() -> Self {
+        Self {
+            timer: Timer::from_seconds(0.35, TimerMode::Repeating),
+            active: false,
+            last_mode: BoundaryMode::Wrap,
+            pulses_done: 0,
+        }
+    }
+}
+
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_world).add_systems(
-            Update,
-            (
-                handle_resize.in_set(UpdateSet::Resize),
-                sync_cells.in_set(UpdateSet::Render),
-                sync_grid_visibility.in_set(UpdateSet::Render),
-                sync_pattern_preview.in_set(UpdateSet::Render),
-            ),
-        );
+        app.insert_resource(BoundaryWallPulse::default())
+            .add_systems(Startup, setup_world)
+            .add_systems(
+                Update,
+                (
+                    handle_resize.in_set(UpdateSet::Resize),
+                    sync_cells.in_set(UpdateSet::Render),
+                    sync_grid_visibility.in_set(UpdateSet::Render),
+                    sync_boundary_wall_visibility.in_set(UpdateSet::Render),
+                    sync_pattern_preview.in_set(UpdateSet::Render),
+                ),
+            );
     }
 }
 
@@ -52,6 +78,7 @@ fn setup_world(
 
     spawn_cells(&mut commands, cols, rows);
     spawn_grid_lines(&mut commands, cols, rows, grid_overlay.enabled);
+    spawn_boundary_walls(&mut commands, cols, rows);
     spawn_pattern_preview_cells(&mut commands);
 }
 
@@ -97,6 +124,51 @@ fn spawn_grid_lines(commands: &mut Commands, cols: usize, rows: usize, is_visibl
     }
 }
 
+fn spawn_boundary_walls(commands: &mut Commands, cols: usize, rows: usize) {
+    let width = cols as f32 * CELL_SIZE;
+    let height = rows as f32 * CELL_SIZE;
+    let wall_thickness = 3.0;
+    let offset_x = width / 2.0 + wall_thickness / 2.0;
+    let offset_y = height / 2.0 + wall_thickness / 2.0;
+
+    commands.spawn((
+        Sprite::from_color(
+            WALL_COLOR,
+            Vec2::new(wall_thickness, height + wall_thickness * 2.0),
+        ),
+        Transform::from_translation(Vec3::new(-offset_x, 0.0, 3.0)),
+        Visibility::Hidden,
+        BoundaryWall,
+    ));
+    commands.spawn((
+        Sprite::from_color(
+            WALL_COLOR,
+            Vec2::new(wall_thickness, height + wall_thickness * 2.0),
+        ),
+        Transform::from_translation(Vec3::new(offset_x, 0.0, 3.0)),
+        Visibility::Hidden,
+        BoundaryWall,
+    ));
+    commands.spawn((
+        Sprite::from_color(
+            WALL_COLOR,
+            Vec2::new(width + wall_thickness * 2.0, wall_thickness),
+        ),
+        Transform::from_translation(Vec3::new(0.0, offset_y, 3.0)),
+        Visibility::Hidden,
+        BoundaryWall,
+    ));
+    commands.spawn((
+        Sprite::from_color(
+            WALL_COLOR,
+            Vec2::new(width + wall_thickness * 2.0, wall_thickness),
+        ),
+        Transform::from_translation(Vec3::new(0.0, -offset_y, 3.0)),
+        Visibility::Hidden,
+        BoundaryWall,
+    ));
+}
+
 fn spawn_pattern_preview_cells(commands: &mut Commands) {
     for slot in 0..MAX_PATTERN_CELLS {
         commands.spawn((
@@ -115,6 +187,7 @@ fn handle_resize(
     mut sim: ResMut<Simulation>,
     cells_q: Query<Entity, With<Cell>>,
     grid_q: Query<Entity, With<GridLine>>,
+    wall_q: Query<Entity, With<BoundaryWall>>,
     grid_overlay: Res<GridOverlay>,
 ) {
     let mut saw_resize = false;
@@ -142,8 +215,12 @@ fn handle_resize(
     for entity in &grid_q {
         commands.entity(entity).despawn();
     }
+    for entity in &wall_q {
+        commands.entity(entity).despawn();
+    }
     spawn_cells(&mut commands, new_cols, new_rows);
     spawn_grid_lines(&mut commands, new_cols, new_rows, grid_overlay.enabled);
+    spawn_boundary_walls(&mut commands, new_cols, new_rows);
 }
 
 fn sync_cells(
@@ -180,6 +257,67 @@ fn sync_grid_visibility(
     for mut line_visibility in &mut grid_q {
         *line_visibility = visibility;
     }
+}
+
+fn sync_boundary_wall_visibility(
+    time: Res<Time>,
+    redraw_requested: Res<RedrawRequested>,
+    sim: Res<Simulation>,
+    mut pulse: ResMut<BoundaryWallPulse>,
+    mut wall_q: Query<(&mut Visibility, &mut Sprite), With<BoundaryWall>>,
+) {
+    let mode = sim.app.board.boundary_mode();
+    if mode != pulse.last_mode {
+        pulse.last_mode = mode;
+        pulse.active = mode == BoundaryMode::Fixed;
+        if pulse.active {
+            pulse.timer.reset();
+            pulse.pulses_done = 0;
+        }
+    }
+
+    if !redraw_requested.0 && !pulse.active {
+        return;
+    }
+
+    let visibility = if mode == BoundaryMode::Fixed {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
+    };
+
+    let wall_color = if pulse.active {
+        pulse.timer.tick(time.delta());
+        if pulse.timer.just_finished() {
+            pulse.pulses_done = pulse.pulses_done.saturating_add(1);
+        }
+        if pulse.pulses_done >= 3 {
+            pulse.active = false;
+        }
+
+        let phase = pulse.timer.fraction();
+        let pulse_t = (phase * PI).sin().max(0.0);
+        blend_color(WALL_COLOR, WALL_BRIGHT_COLOR, pulse_t)
+    } else {
+        WALL_COLOR
+    };
+
+    for (mut wall_visibility, mut wall_sprite) in &mut wall_q {
+        *wall_visibility = visibility;
+        wall_sprite.color = wall_color;
+    }
+}
+
+fn blend_color(from: Color, to: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    let from = from.to_srgba();
+    let to = to.to_srgba();
+    Color::srgba(
+        from.red + (to.red - from.red) * t,
+        from.green + (to.green - from.green) * t,
+        from.blue + (to.blue - from.blue) * t,
+        from.alpha + (to.alpha - from.alpha) * t,
+    )
 }
 
 fn sync_pattern_preview(
