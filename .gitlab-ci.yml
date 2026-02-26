@@ -1,0 +1,33 @@
+image: rust:latest
+
+stages:
+  - lint
+  - test
+
+variables:
+  CARGO_TERM_COLOR: always
+
+cache:
+  key:
+    files:
+      - Cargo.lock
+  paths:
+    - target/
+    - /usr/local/cargo/registry/
+    - /usr/local/cargo/git/
+
+fmt:
+  stage: lint
+  script:
+    - cargo fmt --all -- --check
+
+clippy:
+  stage: lint
+  script:
+    - cargo clippy --all-targets --all-features -- -D warnings
+
+test:
+  stage: test
+  script:
+    - cargo test --all-targets --all-features --locked
+    - cargo test readme_contains_controls_text --locked
