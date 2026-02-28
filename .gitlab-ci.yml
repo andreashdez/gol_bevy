@@ -18,6 +18,9 @@ cache:
 
 default:
   before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends pkg-config libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
+    - rm -rf /var/lib/apt/lists/*
     - rustup component add rustfmt clippy
 
 fmt:
