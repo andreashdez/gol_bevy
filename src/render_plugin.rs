@@ -3,9 +3,9 @@ use std::{f32::consts::PI, time::Duration};
 use crate::app::App as GolApp;
 use crate::board::BoundaryMode;
 use crate::shared::{
-    board_size_for_window, cell_to_world, world_to_cell, Cell, GridLine, GridOverlay, MainCamera,
-    RedrawRequested, Simulation, UpdateSet, CELL_SIZE, DEAD_COLOR, GHOST_LIVE_COLOR,
-    GRID_LINE_COLOR, LIVE_COLOR, MAX_PATTERN_CELLS, WALL_BRIGHT_COLOR, WALL_COLOR,
+    CELL_SIZE, Cell, DEAD_COLOR, GHOST_LIVE_COLOR, GRID_LINE_COLOR, GridLine, GridOverlay,
+    LIVE_COLOR, MAX_PATTERN_CELLS, MainCamera, RedrawRequested, Simulation, UpdateSet,
+    WALL_BRIGHT_COLOR, WALL_COLOR, board_size_for_window, cell_to_world, world_to_cell,
 };
 use bevy::{
     prelude::*,
