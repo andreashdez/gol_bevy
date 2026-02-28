@@ -3,9 +3,9 @@ use std::{f32::consts::PI, time::Duration};
 use crate::app::App as GolApp;
 use crate::board::BoundaryMode;
 use crate::shared::{
-    CELL_SIZE, Cell, DEAD_COLOR, GHOST_LIVE_COLOR, GRID_LINE_COLOR, GridLine, GridOverlay,
-    LIVE_COLOR, MAX_PATTERN_CELLS, MainCamera, RedrawRequested, Simulation, UpdateSet,
-    WALL_BRIGHT_COLOR, WALL_COLOR, board_size_for_window, cell_to_world, world_to_cell,
+    board_size_for_window, cell_to_world, world_to_cell, Cell, GridLine, GridOverlay, MainCamera,
+    RedrawRequested, Simulation, UpdateSet, CELL_SIZE, DEAD_COLOR, GHOST_LIVE_COLOR,
+    GRID_LINE_COLOR, LIVE_COLOR, MAX_PATTERN_CELLS, WALL_BRIGHT_COLOR, WALL_COLOR,
 };
 use bevy::{
     prelude::*,
@@ -13,6 +13,8 @@ use bevy::{
 };
 
 pub struct RenderPlugin;
+
+type BoardEntityFilter = Or<(With<Cell>, With<GridLine>, With<BoundaryWall>)>;
 
 #[derive(Component)]
 struct GhostPreviewCell {
@@ -185,9 +187,7 @@ fn handle_resize(
     mut commands: Commands,
     window_q: Query<&Window, With<PrimaryWindow>>,
     mut sim: ResMut<Simulation>,
-    cells_q: Query<Entity, With<Cell>>,
-    grid_q: Query<Entity, With<GridLine>>,
-    wall_q: Query<Entity, With<BoundaryWall>>,
+    board_entities_q: Query<Entity, BoardEntityFilter>,
     grid_overlay: Res<GridOverlay>,
 ) {
     let mut saw_resize = false;
@@ -209,13 +209,7 @@ fn handle_resize(
 
     sim.app.resize_board(new_cols, new_rows);
 
-    for entity in &cells_q {
-        commands.entity(entity).despawn();
-    }
-    for entity in &grid_q {
-        commands.entity(entity).despawn();
-    }
-    for entity in &wall_q {
+    for entity in &board_entities_q {
         commands.entity(entity).despawn();
     }
     spawn_cells(&mut commands, new_cols, new_rows);

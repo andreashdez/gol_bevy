@@ -21,6 +21,8 @@ const LWSS: &[(usize, usize)] = &[
     (3, 3),
 ];
 
+type PatternLayout = (Vec<(usize, usize)>, usize, usize);
+
 #[derive(Debug, Clone, Copy, Default)]
 struct StampTransform {
     rotation_quarters: u8,
@@ -258,7 +260,7 @@ impl App {
         self.needs_redraw = true;
     }
 
-    pub fn selected_pattern_layout(&self) -> Option<(Vec<(usize, usize)>, usize, usize)> {
+    pub fn selected_pattern_layout(&self) -> Option<PatternLayout> {
         self.selected_pattern.map(|kind| {
             let (pattern, width, height, _) = self.pattern_definition(kind);
             self.transform_pattern(pattern, width, height)
