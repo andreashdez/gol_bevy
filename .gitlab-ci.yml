@@ -6,6 +6,7 @@ stages:
 
 variables:
   CARGO_TERM_COLOR: always
+  CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
 
 cache:
   key:
@@ -13,8 +14,8 @@ cache:
       - Cargo.lock
   paths:
     - target/
-    - /usr/local/cargo/registry/
-    - /usr/local/cargo/git/
+    - .cargo/registry/
+    - .cargo/git/
 
 default:
   before_script:
