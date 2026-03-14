@@ -63,6 +63,9 @@ fn handle_keyboard(
     if keys.just_pressed(KeyCode::KeyL) {
         sim.app.select_pattern(PatternKind::Lwss);
     }
+    if keys.just_pressed(KeyCode::KeyP) {
+        sim.app.select_pattern(PatternKind::RleDemo);
+    }
     if keys.just_pressed(KeyCode::KeyC) {
         sim.app.clear_selected_pattern();
     }

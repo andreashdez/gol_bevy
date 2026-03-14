@@ -4,8 +4,8 @@ use crate::app::App as GolApp;
 use crate::board::{BoundaryMode, DirtyCells};
 use crate::shared::{
     CELL_SIZE, Cell, DEAD_COLOR, GHOST_LIVE_COLOR, GRID_LINE_COLOR, GridLine, GridOverlay,
-    LIVE_COLOR, MAX_PATTERN_CELLS, MainCamera, RedrawRequested, Simulation, UpdateSet,
-    WALL_BRIGHT_COLOR, WALL_COLOR, board_size_for_window, cell_to_world, world_to_cell,
+    LIVE_COLOR, MainCamera, RedrawRequested, Simulation, UpdateSet, WALL_BRIGHT_COLOR, WALL_COLOR,
+    board_size_for_window, cell_to_world, world_to_cell,
 };
 use bevy::{
     prelude::*,
@@ -17,9 +17,7 @@ pub struct RenderPlugin;
 type BoardEntityFilter = Or<(With<Cell>, With<GridLine>, With<BoundaryWall>)>;
 
 #[derive(Component)]
-struct GhostPreviewCell {
-    slot: usize,
-}
+struct GhostPreviewCell;
 
 #[derive(Component)]
 struct BoundaryWall;
@@ -42,6 +40,11 @@ impl CellEntities {
         }
         Some((idx % self.cols, idx / self.cols))
     }
+}
+
+#[derive(Resource, Default)]
+struct PatternPreviewPool {
+    entities: Vec<Entity>,
 }
 
 #[derive(Resource)]
@@ -67,6 +70,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(BoundaryWallPulse::default())
             .insert_resource(CellEntities::default())
+            .insert_resource(PatternPreviewPool::default())
             .add_systems(Startup, setup_world)
             .add_systems(
                 Update,
@@ -104,7 +108,6 @@ fn setup_world(
     cell_entities.replace(cols, cells);
     spawn_grid_lines(&mut commands, cols, rows, grid_overlay.enabled);
     spawn_boundary_walls(&mut commands, cols, rows);
-    spawn_pattern_preview_cells(&mut commands);
 }
 
 fn spawn_cells(commands: &mut Commands, cols: usize, rows: usize) -> Vec<Entity> {
@@ -199,14 +202,17 @@ fn spawn_boundary_walls(commands: &mut Commands, cols: usize, rows: usize) {
     ));
 }
 
-fn spawn_pattern_preview_cells(commands: &mut Commands) {
-    for slot in 0..MAX_PATTERN_CELLS {
-        commands.spawn((
-            Sprite::from_color(GHOST_LIVE_COLOR, Vec2::splat(CELL_SIZE - 2.0)),
-            Transform::from_translation(Vec3::new(0.0, 0.0, 2.0)),
-            Visibility::Hidden,
-            GhostPreviewCell { slot },
-        ));
+fn ensure_preview_pool(commands: &mut Commands, pool: &mut PatternPreviewPool, target: usize) {
+    while pool.entities.len() < target {
+        let entity = commands
+            .spawn((
+                Sprite::from_color(GHOST_LIVE_COLOR, Vec2::splat(CELL_SIZE - 2.0)),
+                Transform::from_translation(Vec3::new(0.0, 0.0, 2.0)),
+                Visibility::Hidden,
+                GhostPreviewCell,
+            ))
+            .id();
+        pool.entities.push(entity);
     }
 }
 
@@ -379,44 +385,51 @@ fn blend_color(from: Color, to: Color, t: f32) -> Color {
 }
 
 fn sync_pattern_preview(
+    mut commands: Commands,
     window_q: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     sim: Res<Simulation>,
-    mut preview_q: Query<(&GhostPreviewCell, &mut Transform, &mut Visibility)>,
+    mut preview_pool: ResMut<PatternPreviewPool>,
+    mut preview_q: Query<(&mut Transform, &mut Visibility), With<GhostPreviewCell>>,
 ) {
     let Some((pattern, width, height)) = sim.app.selected_pattern_layout() else {
-        hide_preview_cells(&mut preview_q);
+        hide_preview_cells(&preview_pool, &mut preview_q);
         return;
     };
 
+    ensure_preview_pool(&mut commands, &mut preview_pool, pattern.len());
+
     let Ok(window) = window_q.single() else {
-        hide_preview_cells(&mut preview_q);
+        hide_preview_cells(&preview_pool, &mut preview_q);
         return;
     };
     let Some(cursor_pos) = window.cursor_position() else {
-        hide_preview_cells(&mut preview_q);
+        hide_preview_cells(&preview_pool, &mut preview_q);
         return;
     };
     let Ok((camera, camera_transform)) = camera_q.single() else {
-        hide_preview_cells(&mut preview_q);
+        hide_preview_cells(&preview_pool, &mut preview_q);
         return;
     };
     let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_pos) else {
-        hide_preview_cells(&mut preview_q);
+        hide_preview_cells(&preview_pool, &mut preview_q);
         return;
     };
 
     let (cols, rows) = sim.app.board.size();
     let Some((cursor_col, cursor_row)) = world_to_cell(world_pos, cols, rows) else {
-        hide_preview_cells(&mut preview_q);
+        hide_preview_cells(&preview_pool, &mut preview_q);
         return;
     };
 
     let origin_col = cursor_col.saturating_sub(width / 2);
     let origin_row = cursor_row.saturating_sub(height / 2);
 
-    for (ghost, mut transform, mut visibility) in &mut preview_q {
-        let Some(&(dx, dy)) = pattern.get(ghost.slot) else {
+    for (idx, entity) in preview_pool.entities.iter().copied().enumerate() {
+        let Ok((mut transform, mut visibility)) = preview_q.get_mut(entity) else {
+            continue;
+        };
+        let Some(&(dx, dy)) = pattern.get(idx) else {
             *visibility = Visibility::Hidden;
             continue;
         };
@@ -433,8 +446,13 @@ fn sync_pattern_preview(
     }
 }
 
-fn hide_preview_cells(preview_q: &mut Query<(&GhostPreviewCell, &mut Transform, &mut Visibility)>) {
-    for (_, _, mut visibility) in preview_q {
-        *visibility = Visibility::Hidden;
+fn hide_preview_cells(
+    preview_pool: &PatternPreviewPool,
+    preview_q: &mut Query<(&mut Transform, &mut Visibility), With<GhostPreviewCell>>,
+) {
+    for entity in &preview_pool.entities {
+        if let Ok((_, mut visibility)) = preview_q.get_mut(*entity) {
+            *visibility = Visibility::Hidden;
+        }
     }
 }

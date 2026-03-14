@@ -31,3 +31,18 @@ Left click (stamp): place pattern
 Right drag: erase
 q / Esc: quit
 ```
+
+## RLE patterns
+
+The project supports parsing classic Life RLE strings (`x = <w>, y = <h>`) with:
+
+- comment lines starting with `#`
+- run counts like `3o`, `10b`, `2$`
+- row breaks (`$`) and terminator (`!`)
+
+Example:
+
+```text
+x = 8, y = 4
+8o$8o$8o$8o!
+```

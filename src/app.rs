@@ -1,25 +1,26 @@
-use crate::board;
+use crate::{
+    board,
+    patterns::{Pattern, PatternParseError},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PatternKind {
     Glider,
     Blinker,
     Lwss,
+    RleDemo,
 }
 
-const GLIDER: &[(usize, usize)] = &[(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)];
-const BLINKER: &[(usize, usize)] = &[(0, 0), (1, 0), (2, 0)];
-const LWSS: &[(usize, usize)] = &[
-    (1, 0),
-    (4, 0),
-    (0, 1),
-    (0, 2),
-    (3, 2),
-    (0, 3),
-    (1, 3),
-    (2, 3),
-    (3, 3),
-];
+impl PatternKind {
+    fn slot(self) -> usize {
+        match self {
+            Self::Glider => 0,
+            Self::Blinker => 1,
+            Self::Lwss => 2,
+            Self::RleDemo => 3,
+        }
+    }
+}
 
 type PatternLayout = (Vec<(usize, usize)>, usize, usize);
 
@@ -45,9 +46,11 @@ pub struct App {
     /// whether help overlay is visible
     show_help: bool,
     /// selected pattern stamp for cursor placement
-    selected_pattern: Option<PatternKind>,
+    selected_pattern: Option<usize>,
     /// transform applied to stamp before placement
     stamp_transform: StampTransform,
+    /// available stamp patterns
+    patterns: Vec<Pattern>,
 
     pub board: board::Board,
 }
@@ -69,6 +72,7 @@ impl App {
             show_help: false,
             selected_pattern: None,
             stamp_transform: StampTransform::default(),
+            patterns: Pattern::builtins(),
             board,
         }
     }
@@ -193,24 +197,40 @@ impl App {
     }
 
     pub fn insert_glider(&mut self) {
-        self.place_pattern_centered(GLIDER, 3, 3);
+        self.place_pattern_centered(0);
     }
 
     pub fn insert_blinker(&mut self) {
-        self.place_pattern_centered(BLINKER, 3, 1);
+        self.place_pattern_centered(1);
     }
 
     pub fn insert_lwss(&mut self) {
-        self.place_pattern_centered(LWSS, 5, 4);
+        self.place_pattern_centered(2);
     }
 
     pub fn select_pattern(&mut self, pattern: PatternKind) {
-        if self.selected_pattern == Some(pattern) {
+        let slot = pattern.slot();
+        if slot >= self.patterns.len() {
+            return;
+        }
+        if self.selected_pattern == Some(slot) {
             self.selected_pattern = None;
         } else {
-            self.selected_pattern = Some(pattern);
+            self.selected_pattern = Some(slot);
         }
         self.needs_redraw = true;
+    }
+
+    pub fn import_rle_pattern(
+        &mut self,
+        name: impl Into<String>,
+        source: &str,
+    ) -> Result<(), PatternParseError> {
+        let pattern = Pattern::from_rle(name, source)?;
+        self.patterns.push(pattern);
+        self.selected_pattern = Some(self.patterns.len() - 1);
+        self.needs_redraw = true;
+        Ok(())
     }
 
     pub fn clear_selected_pattern(&mut self) {
@@ -220,12 +240,14 @@ impl App {
     }
 
     pub fn has_selected_pattern(&self) -> bool {
-        self.selected_pattern.is_some()
+        self.selected_pattern
+            .is_some_and(|idx| idx < self.patterns.len())
     }
 
-    pub fn selected_pattern_name(&self) -> Option<&'static str> {
+    pub fn selected_pattern_name(&self) -> Option<&str> {
         self.selected_pattern
-            .map(|kind| self.pattern_definition(kind).3)
+            .and_then(|idx| self.patterns.get(idx))
+            .map(|pattern| pattern.name.as_str())
     }
 
     pub fn selected_pattern_status_label(&self) -> String {
@@ -261,22 +283,33 @@ impl App {
     }
 
     pub fn selected_pattern_layout(&self) -> Option<PatternLayout> {
-        self.selected_pattern.map(|kind| {
-            let (pattern, width, height, _) = self.pattern_definition(kind);
-            self.transform_pattern(pattern, width, height)
+        self.selected_pattern.and_then(|idx| {
+            self.patterns.get(idx).map(|pattern| {
+                self.transform_pattern(&pattern.cells, pattern.width, pattern.height)
+            })
         })
     }
 
     pub fn place_selected_pattern_at(&mut self, col: usize, row: usize) {
-        let Some(kind) = self.selected_pattern else {
+        let Some((cells, width, height)) = self.selected_pattern.and_then(|idx| {
+            self.patterns
+                .get(idx)
+                .map(|pattern| (pattern.cells.clone(), pattern.width, pattern.height))
+        }) else {
             return;
         };
-        let (pattern, width, height, _) = self.pattern_definition(kind);
-        let (pattern, width, height) = self.transform_pattern(pattern, width, height);
+        let (pattern, width, height) = self.transform_pattern(&cells, width, height);
         self.place_pattern_at(&pattern, width, height, col, row);
     }
 
-    fn place_pattern_centered(&mut self, pattern: &[(usize, usize)], width: usize, height: usize) {
+    fn place_pattern_centered(&mut self, index: usize) {
+        let Some((cells, width, height)) = self
+            .patterns
+            .get(index)
+            .map(|pattern| (pattern.cells.clone(), pattern.width, pattern.height))
+        else {
+            return;
+        };
         let (cols, rows) = self.board.size();
         if cols == 0 || rows == 0 {
             return;
@@ -284,7 +317,7 @@ impl App {
 
         let center_col = cols / 2;
         let center_row = rows / 2;
-        self.place_pattern_at(pattern, width, height, center_col, center_row);
+        self.place_pattern_at(&cells, width, height, center_col, center_row);
     }
 
     fn place_pattern_at(
@@ -305,17 +338,6 @@ impl App {
 
         if changed {
             self.needs_redraw = true;
-        }
-    }
-
-    fn pattern_definition(
-        &self,
-        kind: PatternKind,
-    ) -> (&'static [(usize, usize)], usize, usize, &'static str) {
-        match kind {
-            PatternKind::Glider => (GLIDER, 3, 3, "Glider"),
-            PatternKind::Blinker => (BLINKER, 3, 1, "Blinker"),
-            PatternKind::Lwss => (LWSS, 5, 4, "LWSS"),
         }
     }
 
@@ -429,5 +451,17 @@ mod tests {
         app.select_pattern(PatternKind::Glider);
         app.toggle_stamp_flip();
         assert_eq!(app.selected_pattern_status_label(), "Glider (FlipH)");
+    }
+
+    #[test]
+    fn test_rle_demo_pattern_has_dynamic_size() {
+        let mut app = App::new(20, 20);
+        app.select_pattern(PatternKind::RleDemo);
+
+        let (cells, width, height) = app
+            .selected_pattern_layout()
+            .expect("RLE demo pattern should be selectable");
+        assert!(cells.len() > 20);
+        assert_eq!((width, height), (8, 4));
     }
 }
