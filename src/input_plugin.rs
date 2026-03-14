@@ -2,25 +2,56 @@ use crate::{
     app::PatternKind,
     shared::{
         CAMERA_PAN_SPEED, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay,
-        GridOverlay, MainCamera, Simulation, UpdateSet, world_to_cell,
+        GridOverlay, MainCamera, Simulation, UiLayout, UpdateSet, world_to_cell,
     },
 };
-use bevy::{input::mouse::MouseWheel, prelude::*, window::PrimaryWindow};
+use bevy::{
+    ecs::schedule::common_conditions::not, input::mouse::MouseWheel, prelude::*,
+    window::PrimaryWindow,
+};
+use bevy_egui::input::{egui_wants_any_keyboard_input, egui_wants_any_pointer_input};
 
 pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (
-                handle_keyboard.in_set(UpdateSet::Input),
-                handle_mouse.in_set(UpdateSet::Input),
-                handle_camera_zoom.in_set(UpdateSet::Camera),
-                handle_camera_pan.in_set(UpdateSet::Camera),
-                handle_camera_reset.in_set(UpdateSet::Camera),
-            ),
-        );
+        app.add_systems(Update, handle_layout_cycle.in_set(UpdateSet::Input))
+            .add_systems(
+                Update,
+                handle_keyboard
+                    .in_set(UpdateSet::Input)
+                    .run_if(not(egui_wants_any_keyboard_input)),
+            )
+            .add_systems(
+                Update,
+                handle_mouse
+                    .in_set(UpdateSet::Input)
+                    .run_if(not(egui_wants_any_pointer_input)),
+            )
+            .add_systems(
+                Update,
+                handle_camera_zoom
+                    .in_set(UpdateSet::Camera)
+                    .run_if(not(egui_wants_any_pointer_input)),
+            )
+            .add_systems(
+                Update,
+                handle_camera_pan
+                    .in_set(UpdateSet::Camera)
+                    .run_if(not(egui_wants_any_keyboard_input)),
+            )
+            .add_systems(
+                Update,
+                handle_camera_reset
+                    .in_set(UpdateSet::Camera)
+                    .run_if(not(egui_wants_any_keyboard_input)),
+            );
+    }
+}
+
+fn handle_layout_cycle(keys: Res<ButtonInput<KeyCode>>, mut ui_layout: ResMut<UiLayout>) {
+    if keys.just_pressed(KeyCode::F2) {
+        ui_layout.cycle();
     }
 }
 

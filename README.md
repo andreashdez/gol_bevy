@@ -39,6 +39,7 @@ z: rotate stamp
 f: flip stamp horizontally
 c: clear active stamp
 m: toggle boundary mode
+F2: cycle layout preset
 F3: toggle diagnostics
 t: toggle grid
 /: toggle help
@@ -49,6 +50,15 @@ Left drag: draw
 Left click (stamp): place pattern
 Right drag: erase
 q / Esc: quit
+
+Pattern Lab panel:
+- Paste RLE and import as a new stamp
+- Select imported stamp in Active Stamp
+
+Layout presets:
+- Choose Full, Compact, or Minimal from the status bar
+- Press F2 to cycle Full -> Compact -> Minimal
+- Layout preset is saved between runs
 ```
 
 ## Architecture map
@@ -59,7 +69,7 @@ Runtime flow from `src/main.rs`:
 main
   -> DefaultPlugins + resources
   -> RenderPlugin (world setup, cell/grid/wall/preview rendering)
-  -> UiPlugin (HUD + help overlays)
+  -> UiPlugin (egui control deck + quick controls + layout presets + RLE pattern lab)
   -> InputPlugin (keyboard, mouse, camera controls)
   -> SimulationPlugin (tick advancement, redraw collection, quit)
 

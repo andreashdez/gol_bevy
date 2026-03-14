@@ -8,6 +8,7 @@ pub mod simulation_plugin;
 pub mod ui_plugin;
 
 use bevy::{prelude::*, window::WindowResolution};
+use bevy_egui::EguiPlugin;
 use input_plugin::InputPlugin;
 use render_plugin::RenderPlugin;
 use shared::{BG_COLOR, DiagnosticsOverlay, GridOverlay, RedrawRequested, UpdateSet};
@@ -25,6 +26,7 @@ fn main() {
             }),
             ..default()
         }))
+        .add_plugins(EguiPlugin::default())
         .insert_resource(ClearColor(BG_COLOR))
         .insert_resource(RedrawRequested::default())
         .insert_resource(DiagnosticsOverlay { enabled: true })
@@ -38,7 +40,6 @@ fn main() {
                 UpdateSet::Resize,
                 UpdateSet::Redraw,
                 UpdateSet::Render,
-                UpdateSet::Ui,
                 UpdateSet::Quit,
             )
                 .chain(),

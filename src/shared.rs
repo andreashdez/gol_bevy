@@ -10,17 +10,84 @@ pub const GHOST_LIVE_COLOR: Color = Color::srgba(0.22, 0.85, 0.56, 0.30);
 pub const BG_COLOR: Color = Color::srgb(0.02, 0.02, 0.03);
 pub const WALL_COLOR: Color = Color::srgba(0.96, 0.92, 0.70, 0.55);
 pub const WALL_BRIGHT_COLOR: Color = Color::srgba(1.0, 0.98, 0.82, 0.92);
-pub const HUD_TEXT_COLOR: Color = Color::srgb(0.95, 0.95, 0.95);
-pub const HELP_TEXT_COLOR: Color = Color::srgb(0.80, 0.82, 0.88);
 pub const GRID_LINE_COLOR: Color = Color::srgba(0.9, 0.9, 0.95, 0.14);
-pub const HUD_FONT_SIZE: f32 = 19.0;
-pub const HELP_FONT_SIZE: f32 = 16.0;
-pub const UI_MARGIN: f32 = 12.0;
 pub const CAMERA_ZOOM_STEP: f32 = 0.10;
 pub const CAMERA_ZOOM_MIN: f32 = 0.25;
 pub const CAMERA_ZOOM_MAX: f32 = 8.0;
 pub const CAMERA_PAN_SPEED: f32 = 700.0;
-pub const CONTROLS_TEXT: &str = "Controls\n\nSpace: run/pause\nj: step\nr: randomize\nx: clear\n0: reset epoch\n+ / -: speed\ng: select glider stamp\nb: select blinker stamp\nl: select LWSS stamp\np: select RLE 8x4 stamp\nz: rotate stamp\nf: flip stamp horizontally\nc: clear active stamp\nm: toggle boundary mode\nF3: toggle diagnostics\nt: toggle grid\n/: toggle help\nWheel: zoom camera\nWASD / Arrows: pan camera\nv: reset camera\nLeft drag: draw\nLeft click (stamp): place pattern\nRight drag: erase\nq / Esc: quit";
+pub const CONTROLS_TEXT: &str = "Controls\n\nSpace: run/pause\nj: step\nr: randomize\nx: clear\n0: reset epoch\n+ / -: speed\ng: select glider stamp\nb: select blinker stamp\nl: select LWSS stamp\np: select RLE 8x4 stamp\nz: rotate stamp\nf: flip stamp horizontally\nc: clear active stamp\nm: toggle boundary mode\nF2: cycle layout preset\nF3: toggle diagnostics\nt: toggle grid\n/: toggle help\nWheel: zoom camera\nWASD / Arrows: pan camera\nv: reset camera\nLeft drag: draw\nLeft click (stamp): place pattern\nRight drag: erase\nq / Esc: quit\n\nPattern Lab panel:\n- Paste RLE and import as a new stamp\n- Select imported stamp in Active Stamp\n\nLayout presets:\n- Choose Full, Compact, or Minimal from the status bar\n- Press F2 to cycle Full -> Compact -> Minimal\n- Layout preset is saved between runs";
+
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum UiLayoutPreset {
+    #[default]
+    Full,
+    Compact,
+    Minimal,
+}
+
+impl UiLayoutPreset {
+    pub const ALL: [Self; 3] = [Self::Full, Self::Compact, Self::Minimal];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Full => "Full",
+            Self::Compact => "Compact",
+            Self::Minimal => "Minimal",
+        }
+    }
+
+    pub fn side_panel_width(self) -> f32 {
+        match self {
+            Self::Full => 350.0,
+            Self::Compact => 280.0,
+            Self::Minimal => 0.0,
+        }
+    }
+
+    pub fn uses_side_panel(self) -> bool {
+        !matches!(self, Self::Minimal)
+    }
+
+    pub fn show_pattern_lab(self) -> bool {
+        matches!(self, Self::Full | Self::Compact)
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Full => Self::Compact,
+            Self::Compact => Self::Minimal,
+            Self::Minimal => Self::Full,
+        }
+    }
+
+    pub fn as_storage_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Compact => "compact",
+            Self::Minimal => "minimal",
+        }
+    }
+
+    pub fn from_storage_str(value: &str) -> Option<Self> {
+        match value {
+            "full" => Some(Self::Full),
+            "compact" => Some(Self::Compact),
+            "minimal" => Some(Self::Minimal),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Resource, Default)]
+pub struct UiLayout {
+    pub preset: UiLayoutPreset,
+}
+
+impl UiLayout {
+    pub fn cycle(&mut self) {
+        self.preset = self.preset.next();
+    }
+}
 
 #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
 pub enum UpdateSet {
@@ -30,7 +97,6 @@ pub enum UpdateSet {
     Resize,
     Redraw,
     Render,
-    Ui,
     Quit,
 }
 
@@ -60,12 +126,6 @@ pub struct Cell {
     pub col: usize,
     pub row: usize,
 }
-
-#[derive(Component)]
-pub struct Hud;
-
-#[derive(Component)]
-pub struct HelpText;
 
 #[derive(Component)]
 pub struct MainCamera;

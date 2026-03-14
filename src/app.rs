@@ -102,8 +102,39 @@ impl App {
         self.needs_redraw = true;
     }
 
+    pub fn set_help_visible(&mut self, visible: bool) {
+        if self.show_help != visible {
+            self.show_help = visible;
+            self.needs_redraw = true;
+        }
+    }
+
     pub fn tick_rate_ms(&self) -> u64 {
         self.tick_rate_ms
+    }
+
+    pub fn tick_rate_bounds() -> (u64, u64, u64) {
+        (
+            Self::TICK_RATE_MIN_MS,
+            Self::TICK_RATE_MAX_MS,
+            Self::TICK_RATE_STEP_MS,
+        )
+    }
+
+    pub fn set_tick_rate_ms(&mut self, tick_rate_ms: u64) -> bool {
+        let clamped = tick_rate_ms.clamp(Self::TICK_RATE_MIN_MS, Self::TICK_RATE_MAX_MS);
+        let offset = clamped.saturating_sub(Self::TICK_RATE_MIN_MS);
+        let step = Self::TICK_RATE_STEP_MS.max(1);
+        let snapped = ((offset + step / 2) / step) * step + Self::TICK_RATE_MIN_MS;
+        let snapped = snapped.min(Self::TICK_RATE_MAX_MS);
+
+        if self.tick_rate_ms == snapped {
+            return false;
+        }
+
+        self.tick_rate_ms = snapped;
+        self.needs_redraw = true;
+        true
     }
 
     pub fn toggle_boundary_mode(&mut self) {
@@ -237,6 +268,31 @@ impl App {
         if self.selected_pattern.take().is_some() {
             self.needs_redraw = true;
         }
+    }
+
+    pub fn selected_pattern_index(&self) -> Option<usize> {
+        self.selected_pattern
+            .filter(|&idx| idx < self.patterns.len())
+    }
+
+    pub fn pattern_count(&self) -> usize {
+        self.patterns.len()
+    }
+
+    pub fn pattern_name_at(&self, index: usize) -> Option<&str> {
+        self.patterns
+            .get(index)
+            .map(|pattern| pattern.name.as_str())
+    }
+
+    pub fn select_pattern_index(&mut self, index: usize) -> bool {
+        if index >= self.patterns.len() || self.selected_pattern == Some(index) {
+            return false;
+        }
+
+        self.selected_pattern = Some(index);
+        self.needs_redraw = true;
+        true
     }
 
     pub fn has_selected_pattern(&self) -> bool {
