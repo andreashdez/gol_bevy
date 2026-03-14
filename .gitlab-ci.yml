@@ -32,10 +32,9 @@ fmt:
 clippy:
   stage: lint
   script:
-    - cargo clippy --all-targets --all-features -- -D warnings
+    - cargo clippy --all-targets --all-features --locked -- -D warnings
 
 test:
   stage: test
   script:
     - cargo test --all-targets --all-features --locked
-    - cargo test readme_contains_controls_text --locked
