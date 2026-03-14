@@ -1,7 +1,7 @@
 use std::{f32::consts::PI, time::Duration};
 
 use crate::app::App as GolApp;
-use crate::board::BoundaryMode;
+use crate::board::{BoundaryMode, DirtyCells};
 use crate::shared::{
     CELL_SIZE, Cell, DEAD_COLOR, GHOST_LIVE_COLOR, GRID_LINE_COLOR, GridLine, GridOverlay,
     LIVE_COLOR, MAX_PATTERN_CELLS, MainCamera, RedrawRequested, Simulation, UpdateSet,
@@ -23,6 +23,26 @@ struct GhostPreviewCell {
 
 #[derive(Component)]
 struct BoundaryWall;
+
+#[derive(Resource, Default)]
+struct CellEntities {
+    cols: usize,
+    entities: Vec<Entity>,
+}
+
+impl CellEntities {
+    fn replace(&mut self, cols: usize, entities: Vec<Entity>) {
+        self.cols = cols;
+        self.entities = entities;
+    }
+
+    fn coords_for_index(&self, idx: usize) -> Option<(usize, usize)> {
+        if self.cols == 0 || idx >= self.entities.len() {
+            return None;
+        }
+        Some((idx % self.cols, idx / self.cols))
+    }
+}
 
 #[derive(Resource)]
 struct BoundaryWallPulse {
@@ -46,6 +66,7 @@ impl Default for BoundaryWallPulse {
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(BoundaryWallPulse::default())
+            .insert_resource(CellEntities::default())
             .add_systems(Startup, setup_world)
             .add_systems(
                 Update,
@@ -64,6 +85,7 @@ fn setup_world(
     mut commands: Commands,
     window_q: Query<&Window, With<PrimaryWindow>>,
     grid_overlay: Res<GridOverlay>,
+    mut cell_entities: ResMut<CellEntities>,
 ) {
     let Ok(window) = window_q.single() else {
         return;
@@ -78,22 +100,28 @@ fn setup_world(
         step_samples: 0,
     });
 
-    spawn_cells(&mut commands, cols, rows);
+    let cells = spawn_cells(&mut commands, cols, rows);
+    cell_entities.replace(cols, cells);
     spawn_grid_lines(&mut commands, cols, rows, grid_overlay.enabled);
     spawn_boundary_walls(&mut commands, cols, rows);
     spawn_pattern_preview_cells(&mut commands);
 }
 
-fn spawn_cells(commands: &mut Commands, cols: usize, rows: usize) {
-    for col in 0..cols {
-        for row in 0..rows {
-            commands.spawn((
-                Sprite::from_color(DEAD_COLOR, Vec2::splat(CELL_SIZE - 1.0)),
-                Transform::from_translation(cell_to_world(col, row, cols, rows)),
-                Cell { col, row },
-            ));
+fn spawn_cells(commands: &mut Commands, cols: usize, rows: usize) -> Vec<Entity> {
+    let mut entities = Vec::with_capacity(cols.saturating_mul(rows));
+    for row in 0..rows {
+        for col in 0..cols {
+            let entity = commands
+                .spawn((
+                    Sprite::from_color(DEAD_COLOR, Vec2::splat(CELL_SIZE - 1.0)),
+                    Transform::from_translation(cell_to_world(col, row, cols, rows)),
+                    Cell { col, row },
+                ))
+                .id();
+            entities.push(entity);
         }
     }
+    entities
 }
 
 fn spawn_grid_lines(commands: &mut Commands, cols: usize, rows: usize, is_visible: bool) {
@@ -187,6 +215,7 @@ fn handle_resize(
     mut commands: Commands,
     window_q: Query<&Window, With<PrimaryWindow>>,
     mut sim: ResMut<Simulation>,
+    mut cell_entities: ResMut<CellEntities>,
     board_entities_q: Query<Entity, BoardEntityFilter>,
     grid_overlay: Res<GridOverlay>,
 ) {
@@ -212,26 +241,61 @@ fn handle_resize(
     for entity in &board_entities_q {
         commands.entity(entity).despawn();
     }
-    spawn_cells(&mut commands, new_cols, new_rows);
+    let cells = spawn_cells(&mut commands, new_cols, new_rows);
+    cell_entities.replace(new_cols, cells);
     spawn_grid_lines(&mut commands, new_cols, new_rows, grid_overlay.enabled);
     spawn_boundary_walls(&mut commands, new_cols, new_rows);
 }
 
 fn sync_cells(
     redraw_requested: Res<RedrawRequested>,
-    sim: Res<Simulation>,
-    mut cell_q: Query<(&Cell, &mut Sprite)>,
+    mut sim: ResMut<Simulation>,
+    cell_entities: Res<CellEntities>,
+    mut cell_q: Query<&mut Sprite, With<Cell>>,
 ) {
     if !redraw_requested.0 {
         return;
     }
 
-    for (cell, mut sprite) in &mut cell_q {
-        sprite.color = if sim.app.board.is_alive(cell.col, cell.row) {
-            LIVE_COLOR
-        } else {
-            DEAD_COLOR
-        };
+    let dirty = sim.app.board.take_dirty_cells();
+    match dirty {
+        DirtyCells::None => {}
+        DirtyCells::Full => {
+            for idx in 0..cell_entities.entities.len() {
+                let Some((col, row)) = cell_entities.coords_for_index(idx) else {
+                    continue;
+                };
+                let Some(entity) = cell_entities.entities.get(idx).copied() else {
+                    continue;
+                };
+                let Ok(mut sprite) = cell_q.get_mut(entity) else {
+                    continue;
+                };
+                sprite.color = if sim.app.board.is_alive(col, row) {
+                    LIVE_COLOR
+                } else {
+                    DEAD_COLOR
+                };
+            }
+        }
+        DirtyCells::Cells(indices) => {
+            for idx in indices {
+                let Some((col, row)) = cell_entities.coords_for_index(idx) else {
+                    continue;
+                };
+                let Some(entity) = cell_entities.entities.get(idx).copied() else {
+                    continue;
+                };
+                let Ok(mut sprite) = cell_q.get_mut(entity) else {
+                    continue;
+                };
+                sprite.color = if sim.app.board.is_alive(col, row) {
+                    LIVE_COLOR
+                } else {
+                    DEAD_COLOR
+                };
+            }
+        }
     }
 }
 

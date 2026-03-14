@@ -6,12 +6,25 @@ pub enum BoundaryMode {
     Fixed,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum DirtyCells {
+    None,
+    Full,
+    Cells(Vec<usize>),
+}
+
 #[derive(Debug)]
 pub struct Board {
     /// current state field
     current: Vec<u8>,
     /// future state field
     future: Vec<u8>,
+    /// changed cells since last render sync
+    dirty_cells: Vec<usize>,
+    /// dedupe flags for dirty cells
+    dirty_flags: Vec<u8>,
+    /// request a full redraw on next render sync
+    dirty_full: bool,
     /// board width in cells
     cols: usize,
     /// board height in cells
@@ -28,6 +41,9 @@ impl Board {
         Self {
             current: vec![0; cells],
             future: vec![0; cells],
+            dirty_cells: Vec::new(),
+            dirty_flags: vec![0; cells],
+            dirty_full: true,
             cols,
             rows,
             render_dirty: true,
@@ -57,7 +73,10 @@ impl Board {
         self.cols = new_cols;
         self.rows = new_rows;
         self.current = new_current;
-        self.future = vec![0; new_cols.saturating_mul(new_rows)];
+        let new_len = new_cols.saturating_mul(new_rows);
+        self.future = vec![0; new_len];
+        self.dirty_flags = vec![0; new_len];
+        self.mark_dirty_full();
         self.render_dirty = true;
         true
     }
@@ -69,6 +88,7 @@ impl Board {
                 return false;
             }
             self.current[idx] = CELL_ALIVE;
+            self.mark_dirty_cell(idx);
             self.render_dirty = true;
             return true;
         }
@@ -82,6 +102,7 @@ impl Board {
                 return false;
             }
             self.current[idx] = 0;
+            self.mark_dirty_cell(idx);
             self.render_dirty = true;
             return true;
         }
@@ -100,6 +121,7 @@ impl Board {
             let idx = self.idx(x, y);
             self.current[idx] = CELL_ALIVE;
         }
+        self.mark_dirty_full();
         self.render_dirty = true;
     }
 
@@ -113,6 +135,7 @@ impl Board {
         }
 
         if changed {
+            self.mark_dirty_full();
             self.render_dirty = true;
         }
         changed
@@ -163,6 +186,9 @@ impl Board {
                 let idx = self.idx(col, row);
                 let next_state = u8::from(self.next(col as i32, row as i32));
                 changed |= next_state != self.current[idx];
+                if next_state != self.current[idx] {
+                    self.mark_dirty_cell(idx);
+                }
                 self.future[idx] = next_state;
             }
         }
@@ -213,14 +239,48 @@ impl Board {
             .count()
     }
 
+    pub fn take_dirty_cells(&mut self) -> DirtyCells {
+        if self.dirty_full {
+            self.dirty_full = false;
+            self.dirty_cells.clear();
+            self.dirty_flags.fill(0);
+            return DirtyCells::Full;
+        }
+
+        if self.dirty_cells.is_empty() {
+            return DirtyCells::None;
+        }
+
+        let mut cells = Vec::new();
+        std::mem::swap(&mut self.dirty_cells, &mut cells);
+        for &idx in &cells {
+            self.dirty_flags[idx] = 0;
+        }
+        DirtyCells::Cells(cells)
+    }
+
     fn idx(&self, col: usize, row: usize) -> usize {
         row * self.cols + col
+    }
+
+    fn mark_dirty_cell(&mut self, idx: usize) {
+        if self.dirty_full || idx >= self.dirty_flags.len() || self.dirty_flags[idx] != 0 {
+            return;
+        }
+        self.dirty_flags[idx] = 1;
+        self.dirty_cells.push(idx);
+    }
+
+    fn mark_dirty_full(&mut self) {
+        self.dirty_full = true;
+        self.dirty_cells.clear();
+        self.dirty_flags.fill(0);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Board, BoundaryMode};
+    use super::{Board, BoundaryMode, DirtyCells};
 
     fn live_cells(board: &Board) -> Vec<(usize, usize)> {
         let mut cells = Vec::new();
@@ -333,5 +393,44 @@ mod tests {
             live_cells(&board),
             vec![(1, 3), (2, 1), (2, 3), (3, 2), (3, 3)]
         );
+    }
+
+    #[test]
+    fn populate_marks_single_dirty_cell() {
+        let mut board = Board::new(4, 4);
+        assert_eq!(board.take_dirty_cells(), DirtyCells::Full);
+
+        board.populate(2, 1);
+        assert_eq!(board.take_dirty_cells(), DirtyCells::Cells(vec![6]));
+        assert_eq!(board.take_dirty_cells(), DirtyCells::None);
+    }
+
+    #[test]
+    fn step_marks_only_changed_cells() {
+        let mut board = Board::new(5, 5);
+        let _ = board.take_dirty_cells();
+        board.populate(1, 2);
+        board.populate(2, 2);
+        board.populate(3, 2);
+        let _ = board.take_dirty_cells();
+
+        board.step();
+
+        let DirtyCells::Cells(indices) = board.take_dirty_cells() else {
+            panic!("expected incremental dirty cells");
+        };
+        assert_eq!(indices, vec![7, 11, 13, 17]);
+    }
+
+    #[test]
+    fn clear_requests_full_redraw() {
+        let mut board = Board::new(4, 4);
+        let _ = board.take_dirty_cells();
+        board.populate(1, 1);
+        let _ = board.take_dirty_cells();
+
+        board.clear();
+
+        assert_eq!(board.take_dirty_cells(), DirtyCells::Full);
     }
 }
