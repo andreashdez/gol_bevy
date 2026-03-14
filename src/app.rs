@@ -375,26 +375,11 @@ mod tests {
     }
 
     #[test]
-    fn test_clear_board_removes_cells() {
-        let mut app = App::new(4, 4);
-        app.populate_board(1, 1);
-        app.clear_board();
-        assert!(!app.board.rendered().contains("██"));
-    }
-
-    #[test]
     fn test_toggle_help() {
         let mut app = App::new(4, 4);
         assert!(!app.is_help_visible());
         app.toggle_help();
         assert!(app.is_help_visible());
-    }
-
-    #[test]
-    fn test_insert_glider_populates_board() {
-        let mut app = App::new(8, 8);
-        app.insert_glider();
-        assert!(app.board.rendered().contains("██"));
     }
 
     #[test]

@@ -1,5 +1,4 @@
-const CENTER_FULL: &str = "██";
-const CENTER_EMPTY: &str = "  ";
+const CELL_ALIVE: u8 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoundaryMode {
@@ -10,11 +9,13 @@ pub enum BoundaryMode {
 #[derive(Debug)]
 pub struct Board {
     /// current state field
-    current: Vec<Vec<bool>>,
+    current: Vec<u8>,
     /// future state field
-    future: Vec<Vec<bool>>,
-    /// cached board render output
-    render_cache: String,
+    future: Vec<u8>,
+    /// board width in cells
+    cols: usize,
+    /// board height in cells
+    rows: usize,
     /// whether render cache needs rebuild
     render_dirty: bool,
     /// board boundary behavior
@@ -23,38 +24,51 @@ pub struct Board {
 
 impl Board {
     pub fn new(cols: usize, rows: usize) -> Self {
+        let cells = cols.saturating_mul(rows);
         Self {
-            current: vec![vec![false; rows]; cols],
-            future: vec![vec![false; rows]; cols],
-            render_cache: String::new(),
+            current: vec![0; cells],
+            future: vec![0; cells],
+            cols,
+            rows,
             render_dirty: true,
             boundary_mode: BoundaryMode::Wrap,
         }
     }
 
     pub fn resize(&mut self, new_cols: usize, new_rows: usize) -> bool {
-        if self.cols() == new_cols && self.rows() == new_rows {
+        if self.cols == new_cols && self.rows == new_rows {
             return false;
         }
 
-        let mut new_current = vec![vec![false; new_rows]; new_cols];
-        let copy_cols = self.cols().min(new_cols);
-        let copy_rows = self.rows().min(new_rows);
-        for (x, new_col) in new_current.iter_mut().enumerate().take(copy_cols) {
-            new_col[..copy_rows].copy_from_slice(&self.current[x][..copy_rows]);
+        let old_cols = self.cols;
+        let old_rows = self.rows;
+        let mut new_current = vec![0; new_cols.saturating_mul(new_rows)];
+        let copy_cols = old_cols.min(new_cols);
+        let copy_rows = old_rows.min(new_rows);
+
+        for row in 0..copy_rows {
+            for col in 0..copy_cols {
+                let src = row * old_cols + col;
+                let dst = row * new_cols + col;
+                new_current[dst] = self.current[src];
+            }
         }
+
+        self.cols = new_cols;
+        self.rows = new_rows;
         self.current = new_current;
-        self.future = vec![vec![false; new_rows]; new_cols];
+        self.future = vec![0; new_cols.saturating_mul(new_rows)];
         self.render_dirty = true;
         true
     }
 
     pub fn populate(&mut self, col: usize, row: usize) -> bool {
-        if col < self.cols() && row < self.rows() {
-            if self.current[col][row] {
+        if col < self.cols && row < self.rows {
+            let idx = self.idx(col, row);
+            if self.current[idx] == CELL_ALIVE {
                 return false;
             }
-            self.current[col][row] = true;
+            self.current[idx] = CELL_ALIVE;
             self.render_dirty = true;
             return true;
         }
@@ -62,11 +76,12 @@ impl Board {
     }
 
     pub fn depopulate(&mut self, col: usize, row: usize) -> bool {
-        if col < self.cols() && row < self.rows() {
-            if !self.current[col][row] {
+        if col < self.cols && row < self.rows {
+            let idx = self.idx(col, row);
+            if self.current[idx] != CELL_ALIVE {
                 return false;
             }
-            self.current[col][row] = false;
+            self.current[idx] = 0;
             self.render_dirty = true;
             return true;
         }
@@ -74,28 +89,26 @@ impl Board {
     }
 
     pub fn populate_random(&mut self) {
-        let cols = self.cols();
-        let rows = self.rows();
-        if cols == 0 || rows == 0 {
+        if self.cols == 0 || self.rows == 0 {
             return;
         }
-        let size = cols * rows / 4;
+
+        let size = self.current.len() / 4;
         for _ in 0..size {
-            let x = fastrand::usize(0..cols);
-            let y = fastrand::usize(0..rows);
-            self.current[x][y] = true;
+            let x = fastrand::usize(0..self.cols);
+            let y = fastrand::usize(0..self.rows);
+            let idx = self.idx(x, y);
+            self.current[idx] = CELL_ALIVE;
         }
         self.render_dirty = true;
     }
 
     pub fn clear(&mut self) -> bool {
         let mut changed = false;
-        for col in &mut self.current {
-            for cell in col {
-                if *cell {
-                    *cell = false;
-                    changed = true;
-                }
+        for cell in &mut self.current {
+            if *cell == CELL_ALIVE {
+                *cell = 0;
+                changed = true;
             }
         }
 
@@ -106,23 +119,23 @@ impl Board {
     }
 
     fn alive(&self, x: i32, y: i32) -> bool {
-        let w = self.cols() as i32;
-        let h = self.rows() as i32;
+        let w = self.cols as i32;
+        let h = self.rows as i32;
         if w == 0 || h == 0 {
             return false;
         }
 
         match self.boundary_mode {
             BoundaryMode::Wrap => {
-                let i = ((x + w) % w) as usize;
-                let j = ((y + h) % h) as usize;
-                self.current[i][j]
+                let i = x.rem_euclid(w) as usize;
+                let j = y.rem_euclid(h) as usize;
+                self.current[self.idx(i, j)] == CELL_ALIVE
             }
             BoundaryMode::Fixed => {
                 if x < 0 || y < 0 || x >= w || y >= h {
                     return false;
                 }
-                self.current[x as usize][y as usize]
+                self.current[self.idx(x as usize, y as usize)] == CELL_ALIVE
             }
         }
     }
@@ -140,18 +153,17 @@ impl Board {
     }
 
     pub fn step(&mut self) -> bool {
-        let cols = self.cols();
-        let rows = self.rows();
-        if cols == 0 || rows == 0 {
+        if self.cols == 0 || self.rows == 0 {
             return false;
         }
 
         let mut changed = false;
-        for y in 0..rows {
-            for x in 0..cols {
-                let next_state = self.next(x as i32, y as i32);
-                changed |= next_state != self.current[x][y];
-                self.future[x][y] = next_state;
+        for row in 0..self.rows {
+            for col in 0..self.cols {
+                let idx = self.idx(col, row);
+                let next_state = u8::from(self.next(col as i32, row as i32));
+                changed |= next_state != self.current[idx];
+                self.future[idx] = next_state;
             }
         }
         std::mem::swap(&mut self.current, &mut self.future);
@@ -159,16 +171,8 @@ impl Board {
         changed
     }
 
-    pub fn rendered(&mut self) -> &str {
-        if self.render_dirty {
-            self.rebuild_render_cache();
-            self.render_dirty = false;
-        }
-        self.render_cache.as_str()
-    }
-
     pub fn size(&self) -> (usize, usize) {
-        (self.cols(), self.rows())
+        (self.cols, self.rows)
     }
 
     pub fn toggle_boundary_mode(&mut self) {
@@ -196,8 +200,8 @@ impl Board {
     }
 
     pub fn is_alive(&self, col: usize, row: usize) -> bool {
-        if col < self.cols() && row < self.rows() {
-            return self.current[col][row];
+        if col < self.cols && row < self.rows {
+            return self.current[self.idx(col, row)] == CELL_ALIVE;
         }
         false
     }
@@ -205,34 +209,12 @@ impl Board {
     pub fn live_cells_count(&self) -> usize {
         self.current
             .iter()
-            .map(|col| col.iter().filter(|&&cell| cell).count())
-            .sum()
+            .filter(|&&cell| cell == CELL_ALIVE)
+            .count()
     }
 
-    fn cols(&self) -> usize {
-        self.current.len()
-    }
-
-    fn rows(&self) -> usize {
-        self.current.first().map_or(0, Vec::len)
-    }
-
-    fn rebuild_render_cache(&mut self) {
-        let cols = self.cols();
-        let rows = self.rows();
-        let capacity = rows.saturating_mul(cols.saturating_mul(CENTER_FULL.len()) + 1);
-        let mut cache = String::with_capacity(capacity);
-        for y in 0..rows {
-            for x in 0..cols {
-                if self.current[x][y] {
-                    cache.push_str(CENTER_FULL);
-                } else {
-                    cache.push_str(CENTER_EMPTY);
-                }
-            }
-            cache.push('\n');
-        }
-        self.render_cache = cache;
+    fn idx(&self, col: usize, row: usize) -> usize {
+        row * self.cols + col
     }
 }
 
@@ -242,9 +224,10 @@ mod tests {
 
     fn live_cells(board: &Board) -> Vec<(usize, usize)> {
         let mut cells = Vec::new();
-        for x in 0..board.current.len() {
-            for y in 0..board.current[x].len() {
-                if board.current[x][y] {
+        let (cols, rows) = board.size();
+        for x in 0..cols {
+            for y in 0..rows {
+                if board.is_alive(x, y) {
                     cells.push((x, y));
                 }
             }
@@ -292,7 +275,7 @@ mod tests {
 
         board.step();
 
-        assert!(board.current[0][0]);
+        assert!(board.is_alive(0, 0));
     }
 
     #[test]
@@ -305,7 +288,7 @@ mod tests {
 
         board.step();
 
-        assert!(!board.current[0][0]);
+        assert!(!board.is_alive(0, 0));
     }
 
     #[test]
@@ -316,9 +299,8 @@ mod tests {
 
         board.resize(2, 3);
 
-        assert_eq!(board.current.len(), 2);
-        assert_eq!(board.current[0].len(), 3);
-        assert!(board.current[0][0]);
+        assert_eq!(board.size(), (2, 3));
+        assert!(board.is_alive(0, 0));
         assert_eq!(live_cells(&board), vec![(0, 0)]);
     }
 
