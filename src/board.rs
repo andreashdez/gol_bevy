@@ -29,8 +29,6 @@ pub struct Board {
     cols: usize,
     /// board height in cells
     rows: usize,
-    /// whether render cache needs rebuild
-    render_dirty: bool,
     /// board boundary behavior
     boundary_mode: BoundaryMode,
 }
@@ -46,7 +44,6 @@ impl Board {
             dirty_full: true,
             cols,
             rows,
-            render_dirty: true,
             boundary_mode: BoundaryMode::Wrap,
         }
     }
@@ -77,7 +74,6 @@ impl Board {
         self.future = vec![0; new_len];
         self.dirty_flags = vec![0; new_len];
         self.mark_dirty_full();
-        self.render_dirty = true;
         true
     }
 
@@ -89,7 +85,6 @@ impl Board {
             }
             self.current[idx] = CELL_ALIVE;
             self.mark_dirty_cell(idx);
-            self.render_dirty = true;
             return true;
         }
         false
@@ -103,7 +98,6 @@ impl Board {
             }
             self.current[idx] = 0;
             self.mark_dirty_cell(idx);
-            self.render_dirty = true;
             return true;
         }
         false
@@ -122,7 +116,6 @@ impl Board {
             self.current[idx] = CELL_ALIVE;
         }
         self.mark_dirty_full();
-        self.render_dirty = true;
     }
 
     pub fn clear(&mut self) -> bool {
@@ -136,7 +129,6 @@ impl Board {
 
         if changed {
             self.mark_dirty_full();
-            self.render_dirty = true;
         }
         changed
     }
@@ -193,7 +185,6 @@ impl Board {
             }
         }
         std::mem::swap(&mut self.current, &mut self.future);
-        self.render_dirty = true;
         changed
     }
 
@@ -206,12 +197,10 @@ impl Board {
             BoundaryMode::Wrap => BoundaryMode::Fixed,
             BoundaryMode::Fixed => BoundaryMode::Wrap,
         };
-        self.render_dirty = true;
     }
 
     pub fn set_boundary_mode(&mut self, mode: BoundaryMode) {
         self.boundary_mode = mode;
-        self.render_dirty = true;
     }
 
     pub fn boundary_mode(&self) -> BoundaryMode {

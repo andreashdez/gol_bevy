@@ -30,7 +30,8 @@ j: step
 r: randomize
 x: clear
 0: reset epoch
-+ / -: speed
++: speed up
+-: slow down
 g: select glider stamp
 b: select blinker stamp
 l: select LWSS stamp
@@ -40,6 +41,7 @@ f: flip stamp horizontally
 c: clear active stamp
 m: toggle boundary mode
 F2: cycle layout preset
+h: hide/show Control Deck sidebar
 F3: toggle diagnostics
 t: toggle grid
 /: toggle help

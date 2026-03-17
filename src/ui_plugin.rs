@@ -74,7 +74,7 @@ fn render_ui(
         .resizable(false)
         .show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.heading("Conway Lab");
+                ui.heading("GOL");
                 ui.separator();
                 ui.label(format!("Epoch {}", sim.app.epoch));
                 ui.label(format!("Mode: {mode}"));
@@ -87,6 +87,19 @@ fn render_ui(
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     render_layout_selector(ui, &mut ui_layout.preset);
                     ui.separator();
+                    if ui_layout.preset.uses_side_panel() {
+                        if ui
+                            .button(if ui_layout.control_deck_visible {
+                                "Hide Deck"
+                            } else {
+                                "Show Deck"
+                            })
+                            .clicked()
+                        {
+                            ui_layout.toggle_control_deck();
+                        }
+                        ui.separator();
+                    }
                     if ui
                         .button(if sim.app.is_help_visible() {
                             "Hide Help"
@@ -107,7 +120,7 @@ fn render_ui(
             }
         });
 
-    if ui_layout.preset.uses_side_panel() {
+    if ui_layout.is_control_deck_visible() {
         render_control_deck(
             ctx,
             &mut sim,
@@ -116,14 +129,15 @@ fn render_ui(
             ui_layout.preset,
             &mut ui_state,
         );
-    } else {
+    } else if ui_layout.preset == UiLayoutPreset::Minimal {
         render_minimal_controls(ctx, &mut sim, &mut diagnostics, &mut grid_overlay);
     }
 
     let mut show_help = sim.app.is_help_visible();
     if show_help {
         egui::Window::new("Controls and Tips")
-            .default_size([420.0, 540.0])
+            .default_size([420.0, 640.0])
+            .resizable(false)
             .open(&mut show_help)
             .show(ctx, |ui| {
                 ui.label(
@@ -131,7 +145,7 @@ fn render_ui(
                 );
                 ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.label(egui::RichText::new(CONTROLS_TEXT).monospace());
+                    ui.label(egui::RichText::new(CONTROLS_TEXT.as_str()).monospace());
                 });
             });
     }
@@ -146,17 +160,11 @@ fn render_control_deck(
     preset: UiLayoutPreset,
     ui_state: &mut UiState,
 ) {
-    let heading = if preset == UiLayoutPreset::Compact {
-        "Control Deck (Compact)"
-    } else {
-        "Control Deck"
-    };
-
     egui::SidePanel::left("control_deck")
         .default_width(preset.side_panel_width())
         .resizable(preset == UiLayoutPreset::Full)
         .show(ctx, |ui| {
-            ui.heading(heading);
+            ui.heading("GOL Control Deck");
             if preset == UiLayoutPreset::Full {
                 ui.label("Hands-on controls for simulation, overlays, and stamp workflows.");
             }

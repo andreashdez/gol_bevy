@@ -1,8 +1,15 @@
 use crate::{
     app::PatternKind,
     shared::{
-        CAMERA_PAN_SPEED, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay,
-        GridOverlay, MainCamera, Simulation, UiLayout, UpdateSet, world_to_cell,
+        BINDING_CLEAR, BINDING_CLEAR_STAMP, BINDING_CYCLE_LAYOUT, BINDING_FLIP_STAMP,
+        BINDING_PAN_DOWN, BINDING_PAN_LEFT, BINDING_PAN_RIGHT, BINDING_PAN_UP, BINDING_QUIT,
+        BINDING_RANDOMIZE, BINDING_RESET_CAMERA, BINDING_RESET_EPOCH, BINDING_ROTATE_STAMP,
+        BINDING_RUN_PAUSE, BINDING_SELECT_BLINKER, BINDING_SELECT_GLIDER, BINDING_SELECT_LWSS,
+        BINDING_SELECT_RLE_DEMO, BINDING_SLOW_DOWN, BINDING_SPEED_UP, BINDING_STEP,
+        BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_CONTROL_DECK, BINDING_TOGGLE_DIAGNOSTICS,
+        BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, CAMERA_PAN_SPEED, CAMERA_ZOOM_MAX,
+        CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay, GridOverlay, MainCamera, Simulation,
+        UiLayout, UpdateSet, world_to_cell,
     },
 };
 use bevy::{
@@ -50,7 +57,7 @@ impl Plugin for InputPlugin {
 }
 
 fn handle_layout_cycle(keys: Res<ButtonInput<KeyCode>>, mut ui_layout: ResMut<UiLayout>) {
-    if keys.just_pressed(KeyCode::F2) {
+    if BINDING_CYCLE_LAYOUT.just_pressed(&keys) {
         ui_layout.cycle();
     }
 }
@@ -60,62 +67,66 @@ fn handle_keyboard(
     mut sim: ResMut<Simulation>,
     mut diagnostics: ResMut<DiagnosticsOverlay>,
     mut grid_overlay: ResMut<GridOverlay>,
+    mut ui_layout: ResMut<UiLayout>,
 ) {
-    if keys.just_pressed(KeyCode::Space) {
+    if BINDING_RUN_PAUSE.just_pressed(&keys) {
         sim.app.toggle_running();
     }
-    if keys.just_pressed(KeyCode::KeyJ) {
+    if BINDING_STEP.just_pressed(&keys) {
         sim.app.increment_epoch();
     }
-    if keys.just_pressed(KeyCode::KeyR) {
+    if BINDING_RANDOMIZE.just_pressed(&keys) {
         sim.app.randomize_board();
     }
-    if keys.just_pressed(KeyCode::KeyX) {
+    if BINDING_CLEAR.just_pressed(&keys) {
         sim.app.clear_board();
     }
-    if keys.just_pressed(KeyCode::Digit0) {
+    if BINDING_RESET_EPOCH.just_pressed(&keys) {
         sim.app.reset_epoch();
     }
-    if keys.just_pressed(KeyCode::Equal) || keys.just_pressed(KeyCode::NumpadAdd) {
+    if BINDING_SPEED_UP.just_pressed(&keys) {
         sim.app.speed_up();
     }
-    if keys.just_pressed(KeyCode::Minus) || keys.just_pressed(KeyCode::NumpadSubtract) {
+    if BINDING_SLOW_DOWN.just_pressed(&keys) {
         sim.app.slow_down();
     }
-    if keys.just_pressed(KeyCode::Slash) {
+    if BINDING_TOGGLE_HELP.just_pressed(&keys) {
         sim.app.toggle_help();
     }
-    if keys.just_pressed(KeyCode::KeyG) {
+    if BINDING_SELECT_GLIDER.just_pressed(&keys) {
         sim.app.select_pattern(PatternKind::Glider);
     }
-    if keys.just_pressed(KeyCode::KeyB) {
+    if BINDING_SELECT_BLINKER.just_pressed(&keys) {
         sim.app.select_pattern(PatternKind::Blinker);
     }
-    if keys.just_pressed(KeyCode::KeyL) {
+    if BINDING_SELECT_LWSS.just_pressed(&keys) {
         sim.app.select_pattern(PatternKind::Lwss);
     }
-    if keys.just_pressed(KeyCode::KeyP) {
+    if BINDING_SELECT_RLE_DEMO.just_pressed(&keys) {
         sim.app.select_pattern(PatternKind::RleDemo);
     }
-    if keys.just_pressed(KeyCode::KeyC) {
+    if BINDING_CLEAR_STAMP.just_pressed(&keys) {
         sim.app.clear_selected_pattern();
     }
-    if keys.just_pressed(KeyCode::KeyZ) {
+    if BINDING_ROTATE_STAMP.just_pressed(&keys) {
         sim.app.rotate_stamp_clockwise();
     }
-    if keys.just_pressed(KeyCode::KeyF) {
+    if BINDING_FLIP_STAMP.just_pressed(&keys) {
         sim.app.toggle_stamp_flip();
     }
-    if keys.just_pressed(KeyCode::F3) {
+    if BINDING_TOGGLE_DIAGNOSTICS.just_pressed(&keys) {
         diagnostics.enabled = !diagnostics.enabled;
     }
-    if keys.just_pressed(KeyCode::KeyT) {
+    if BINDING_TOGGLE_GRID.just_pressed(&keys) {
         grid_overlay.enabled = !grid_overlay.enabled;
     }
-    if keys.just_pressed(KeyCode::KeyM) {
+    if BINDING_TOGGLE_BOUNDARY_MODE.just_pressed(&keys) {
         sim.app.toggle_boundary_mode();
     }
-    if keys.just_pressed(KeyCode::KeyQ) || keys.just_pressed(KeyCode::Escape) {
+    if BINDING_TOGGLE_CONTROL_DECK.just_pressed(&keys) {
+        ui_layout.toggle_control_deck();
+    }
+    if BINDING_QUIT.just_pressed(&keys) {
         sim.app.quit();
     }
 }
@@ -188,16 +199,16 @@ fn handle_camera_pan(
     };
 
     let mut direction = Vec3::ZERO;
-    if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
+    if BINDING_PAN_LEFT.pressed(&keys) {
         direction.x -= 1.0;
     }
-    if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
+    if BINDING_PAN_RIGHT.pressed(&keys) {
         direction.x += 1.0;
     }
-    if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
+    if BINDING_PAN_UP.pressed(&keys) {
         direction.y += 1.0;
     }
-    if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
+    if BINDING_PAN_DOWN.pressed(&keys) {
         direction.y -= 1.0;
     }
     if direction == Vec3::ZERO {
@@ -216,7 +227,7 @@ fn handle_camera_reset(
     keys: Res<ButtonInput<KeyCode>>,
     mut camera_q: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyV) {
+    if !BINDING_RESET_CAMERA.just_pressed(&keys) {
         return;
     }
 

@@ -66,7 +66,7 @@ impl App {
         Self {
             should_quit: false,
             epoch: 0,
-            tick_rate_ms: 250,
+            tick_rate_ms: 25,
             running: false,
             needs_redraw: true,
             show_help: false,
