@@ -118,6 +118,7 @@ Baseline runs:
 ```bash
 cargo run --release
 cargo test --all-targets --all-features --locked
+cargo bench --bench board_step --locked
 ```
 
 CPU profiling options:
@@ -125,10 +126,9 @@ CPU profiling options:
 - macOS: use Instruments (`cargo run --release`, attach Time Profiler).
 - Linux: use `perf` or `cargo flamegraph` (if installed).
 
-Suggested benchmark targets as the project grows:
+Current benchmark target:
 
-- `board::step` throughput on large boards.
-- redraw cost with sparse vs dense updates.
+- `benches/board_step.rs`: `board::step` + dirty-cell extraction in sparse and dense scenarios.
 
 ## Development
 

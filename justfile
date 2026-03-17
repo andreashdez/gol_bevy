@@ -10,6 +10,9 @@ check:
 test:
 	cargo test --all-targets --all-features --locked
 
+bench:
+	cargo bench --bench board_step --locked
+
 readme-check:
 	cargo test readme_contains_controls_text --locked
 
