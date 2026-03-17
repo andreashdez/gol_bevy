@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 #[allow(dead_code, unused_imports)]
 #[path = "../src/board.rs"]
@@ -47,25 +47,27 @@ fn step_and_extract(board: &mut Board) -> usize {
 fn bench_board_step_and_dirty(c: &mut Criterion) {
     let mut group = c.benchmark_group("board_step_dirty");
 
-    let mut sparse_board = Board::new(256, 256);
-    seed_glider(&mut sparse_board);
-    let _ = sparse_board.take_dirty_cells();
-    group.bench_function("sparse_glider_256", |b| {
-        b.iter(|| {
-            let dirty_count = step_and_extract(&mut sparse_board);
-            black_box(dirty_count);
-        })
-    });
+    for size in [256, 512, 1024] {
+        let mut sparse_board = Board::new(size, size);
+        seed_glider(&mut sparse_board);
+        let _ = sparse_board.take_dirty_cells();
+        group.bench_function(format!("sparse_glider_{size}"), |b| {
+            b.iter(|| {
+                let dirty_count = step_and_extract(black_box(&mut sparse_board));
+                black_box(dirty_count);
+            })
+        });
 
-    let mut dense_board = Board::new(256, 256);
-    seed_blinker_field(&mut dense_board);
-    let _ = dense_board.take_dirty_cells();
-    group.bench_function("dense_blinkers_256", |b| {
-        b.iter(|| {
-            let dirty_count = step_and_extract(&mut dense_board);
-            black_box(dirty_count);
-        })
-    });
+        let mut dense_board = Board::new(size, size);
+        seed_blinker_field(&mut dense_board);
+        let _ = dense_board.take_dirty_cells();
+        group.bench_function(format!("dense_blinkers_{size}"), |b| {
+            b.iter(|| {
+                let dirty_count = step_and_extract(black_box(&mut dense_board));
+                black_box(dirty_count);
+            })
+        });
+    }
 
     group.finish();
 }

@@ -108,6 +108,7 @@ x = 8, y = 4
 ## Performance notes
 
 - Board state is stored in a flat contiguous buffer for better cache locality.
+- Stepping is adaptive: sparse generations use a frontier update (changed cells plus neighbors), while dense generations fall back to a full scan.
 - Rendering is incremental: changed cells are tracked and only dirty sprites are recolored.
 - Full redraw is still used as a safe fallback for operations like resize, randomize, and clear.
 

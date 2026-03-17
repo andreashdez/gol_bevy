@@ -1,4 +1,5 @@
 const CELL_ALIVE: u8 = 1;
+const FRONTIER_DENSE_THRESHOLD_PERCENT: usize = 35;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoundaryMode {
@@ -25,6 +26,14 @@ pub struct Board {
     dirty_flags: Vec<u8>,
     /// request a full redraw on next render sync
     dirty_full: bool,
+    /// cells changed by the latest state transition
+    frontier_cells: Vec<usize>,
+    /// dedupe flags for frontier cells
+    frontier_flags: Vec<u8>,
+    /// force dense stepping on next generation
+    frontier_full: bool,
+    /// dedupe flags for frontier candidate expansion
+    candidate_flags: Vec<u8>,
     /// board width in cells
     cols: usize,
     /// board height in cells
@@ -42,6 +51,10 @@ impl Board {
             dirty_cells: Vec::new(),
             dirty_flags: vec![0; cells],
             dirty_full: true,
+            frontier_cells: Vec::new(),
+            frontier_flags: vec![0; cells],
+            frontier_full: false,
+            candidate_flags: vec![0; cells],
             cols,
             rows,
             boundary_mode: BoundaryMode::Wrap,
@@ -73,7 +86,10 @@ impl Board {
         let new_len = new_cols.saturating_mul(new_rows);
         self.future = vec![0; new_len];
         self.dirty_flags = vec![0; new_len];
+        self.frontier_flags = vec![0; new_len];
+        self.candidate_flags = vec![0; new_len];
         self.mark_dirty_full();
+        self.mark_frontier_full();
         true
     }
 
@@ -85,6 +101,7 @@ impl Board {
             }
             self.current[idx] = CELL_ALIVE;
             self.mark_dirty_cell(idx);
+            self.mark_frontier_cell(idx);
             return true;
         }
         false
@@ -98,6 +115,7 @@ impl Board {
             }
             self.current[idx] = 0;
             self.mark_dirty_cell(idx);
+            self.mark_frontier_cell(idx);
             return true;
         }
         false
@@ -116,6 +134,7 @@ impl Board {
             self.current[idx] = CELL_ALIVE;
         }
         self.mark_dirty_full();
+        self.mark_frontier_full();
     }
 
     pub fn clear(&mut self) -> bool {
@@ -129,42 +148,9 @@ impl Board {
 
         if changed {
             self.mark_dirty_full();
+            self.mark_frontier_full();
         }
         changed
-    }
-
-    fn alive(&self, x: i32, y: i32) -> bool {
-        let w = self.cols as i32;
-        let h = self.rows as i32;
-        if w == 0 || h == 0 {
-            return false;
-        }
-
-        match self.boundary_mode {
-            BoundaryMode::Wrap => {
-                let i = x.rem_euclid(w) as usize;
-                let j = y.rem_euclid(h) as usize;
-                self.current[self.idx(i, j)] == CELL_ALIVE
-            }
-            BoundaryMode::Fixed => {
-                if x < 0 || y < 0 || x >= w || y >= h {
-                    return false;
-                }
-                self.current[self.idx(x as usize, y as usize)] == CELL_ALIVE
-            }
-        }
-    }
-
-    fn next(&self, x: i32, y: i32) -> bool {
-        let mut alive = 0;
-        for j in y - 1..y + 2 {
-            for i in x - 1..x + 2 {
-                if (j != y || i != x) && self.alive(i, j) {
-                    alive += 1;
-                }
-            }
-        }
-        alive == 3 || (alive == 2 && self.alive(x, y))
     }
 
     pub fn step(&mut self) -> bool {
@@ -172,19 +158,75 @@ impl Board {
             return false;
         }
 
+        if self.frontier_full {
+            return self.step_dense();
+        }
+
+        if self.frontier_cells.is_empty() {
+            return false;
+        }
+
+        self.step_frontier()
+    }
+
+    fn step_dense(&mut self) -> bool {
         let mut changed = false;
+        let mut next_frontier = Vec::new();
+
         for row in 0..self.rows {
             for col in 0..self.cols {
                 let idx = self.idx(col, row);
-                let next_state = u8::from(self.next(col as i32, row as i32));
+                let next_state = self.next_state(col, row);
                 changed |= next_state != self.current[idx];
                 if next_state != self.current[idx] {
                     self.mark_dirty_cell(idx);
+                    next_frontier.push(idx);
                 }
                 self.future[idx] = next_state;
             }
         }
+
         std::mem::swap(&mut self.current, &mut self.future);
+        self.replace_frontier(next_frontier);
+        changed
+    }
+
+    fn step_frontier(&mut self) -> bool {
+        let mut candidates = Vec::with_capacity(self.frontier_cells.len().saturating_mul(9));
+        self.collect_frontier_candidates(&mut candidates);
+
+        let dense_threshold = self
+            .current
+            .len()
+            .saturating_mul(FRONTIER_DENSE_THRESHOLD_PERCENT)
+            / 100;
+        if candidates.len() > dense_threshold.max(1) {
+            for idx in candidates {
+                self.candidate_flags[idx] = 0;
+            }
+            return self.step_dense();
+        }
+
+        self.future.copy_from_slice(&self.current);
+
+        let mut changed = false;
+        let mut next_frontier = Vec::with_capacity(candidates.len());
+        for idx in candidates {
+            self.candidate_flags[idx] = 0;
+
+            let col = idx % self.cols;
+            let row = idx / self.cols;
+            let next_state = self.next_state(col, row);
+            changed |= next_state != self.current[idx];
+            if next_state != self.current[idx] {
+                self.mark_dirty_cell(idx);
+                next_frontier.push(idx);
+            }
+            self.future[idx] = next_state;
+        }
+
+        std::mem::swap(&mut self.current, &mut self.future);
+        self.replace_frontier(next_frontier);
         changed
     }
 
@@ -197,10 +239,15 @@ impl Board {
             BoundaryMode::Wrap => BoundaryMode::Fixed,
             BoundaryMode::Fixed => BoundaryMode::Wrap,
         };
+        self.mark_frontier_full();
     }
 
     pub fn set_boundary_mode(&mut self, mode: BoundaryMode) {
+        if self.boundary_mode == mode {
+            return;
+        }
         self.boundary_mode = mode;
+        self.mark_frontier_full();
     }
 
     pub fn boundary_mode(&self) -> BoundaryMode {
@@ -252,6 +299,123 @@ impl Board {
         row * self.cols + col
     }
 
+    fn next_state(&self, col: usize, row: usize) -> u8 {
+        let alive_neighbors = match self.boundary_mode {
+            BoundaryMode::Wrap => self.count_neighbors_wrap(col, row),
+            BoundaryMode::Fixed => self.count_neighbors_fixed(col, row),
+        };
+        let currently_alive = self.current[self.idx(col, row)] == CELL_ALIVE;
+        u8::from(alive_neighbors == 3 || (alive_neighbors == 2 && currently_alive))
+    }
+
+    fn count_neighbors_wrap(&self, col: usize, row: usize) -> u8 {
+        let cols = self.cols as isize;
+        let rows = self.rows as isize;
+        let col = col as isize;
+        let row = row as isize;
+        let mut alive = 0;
+
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+
+                let ncol = (col + dx).rem_euclid(cols) as usize;
+                let nrow = (row + dy).rem_euclid(rows) as usize;
+                alive += u8::from(self.current[self.idx(ncol, nrow)] == CELL_ALIVE);
+            }
+        }
+
+        alive
+    }
+
+    fn count_neighbors_fixed(&self, col: usize, row: usize) -> u8 {
+        let cols = self.cols as isize;
+        let rows = self.rows as isize;
+        let col = col as isize;
+        let row = row as isize;
+        let mut alive = 0;
+
+        for dy in -1..=1 {
+            let nrow = row + dy;
+            if nrow < 0 || nrow >= rows {
+                continue;
+            }
+
+            for dx in -1..=1 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+
+                let ncol = col + dx;
+                if ncol < 0 || ncol >= cols {
+                    continue;
+                }
+
+                alive +=
+                    u8::from(self.current[self.idx(ncol as usize, nrow as usize)] == CELL_ALIVE);
+            }
+        }
+
+        alive
+    }
+
+    fn collect_frontier_candidates(&mut self, out: &mut Vec<usize>) {
+        let frontier_cells = &self.frontier_cells;
+        let candidate_flags = &mut self.candidate_flags;
+        let cols_usize = self.cols;
+        let cols = self.cols as isize;
+        let rows = self.rows as isize;
+
+        match self.boundary_mode {
+            BoundaryMode::Wrap => {
+                for &idx in frontier_cells {
+                    let col = (idx % self.cols) as isize;
+                    let row = (idx / self.cols) as isize;
+
+                    for dy in -1..=1 {
+                        for dx in -1..=1 {
+                            let ncol = (col + dx).rem_euclid(cols) as usize;
+                            let nrow = (row + dy).rem_euclid(rows) as usize;
+                            let neighbor_idx = nrow * cols_usize + ncol;
+                            if candidate_flags[neighbor_idx] == 0 {
+                                candidate_flags[neighbor_idx] = 1;
+                                out.push(neighbor_idx);
+                            }
+                        }
+                    }
+                }
+            }
+            BoundaryMode::Fixed => {
+                for &idx in frontier_cells {
+                    let col = (idx % self.cols) as isize;
+                    let row = (idx / self.cols) as isize;
+
+                    for dy in -1..=1 {
+                        let nrow = row + dy;
+                        if nrow < 0 || nrow >= rows {
+                            continue;
+                        }
+
+                        for dx in -1..=1 {
+                            let ncol = col + dx;
+                            if ncol < 0 || ncol >= cols {
+                                continue;
+                            }
+
+                            let neighbor_idx = nrow as usize * cols_usize + ncol as usize;
+                            if candidate_flags[neighbor_idx] == 0 {
+                                candidate_flags[neighbor_idx] = 1;
+                                out.push(neighbor_idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn mark_dirty_cell(&mut self, idx: usize) {
         if self.dirty_full || idx >= self.dirty_flags.len() || self.dirty_flags[idx] != 0 {
             return;
@@ -264,6 +428,38 @@ impl Board {
         self.dirty_full = true;
         self.dirty_cells.clear();
         self.dirty_flags.fill(0);
+    }
+
+    fn mark_frontier_cell(&mut self, idx: usize) {
+        if self.frontier_full || idx >= self.frontier_flags.len() || self.frontier_flags[idx] != 0 {
+            return;
+        }
+        self.frontier_flags[idx] = 1;
+        self.frontier_cells.push(idx);
+    }
+
+    fn mark_frontier_full(&mut self) {
+        self.frontier_full = true;
+        self.frontier_cells.clear();
+        self.frontier_flags.fill(0);
+    }
+
+    fn replace_frontier(&mut self, mut next_frontier: Vec<usize>) {
+        if self.frontier_full {
+            self.frontier_full = false;
+        } else {
+            for &idx in &self.frontier_cells {
+                self.frontier_flags[idx] = 0;
+            }
+        }
+
+        std::mem::swap(&mut self.frontier_cells, &mut next_frontier);
+        for idx in next_frontier {
+            self.frontier_flags[idx] = 0;
+        }
+        for &idx in &self.frontier_cells {
+            self.frontier_flags[idx] = 1;
+        }
     }
 }
 
@@ -421,5 +617,29 @@ mod tests {
         board.clear();
 
         assert_eq!(board.take_dirty_cells(), DirtyCells::Full);
+    }
+
+    #[test]
+    fn render_sync_does_not_clear_step_frontier() {
+        let mut board = Board::new(5, 5);
+        let _ = board.take_dirty_cells();
+        board.populate(1, 2);
+        board.populate(2, 2);
+        board.populate(3, 2);
+
+        let _ = board.take_dirty_cells();
+        board.step();
+
+        assert_eq!(live_cells(&board), vec![(2, 1), (2, 2), (2, 3)]);
+    }
+
+    #[test]
+    fn boundary_mode_toggle_marks_frontier_full() {
+        let mut board = Board::new(5, 5);
+        assert!(!board.frontier_full);
+
+        board.toggle_boundary_mode();
+
+        assert!(board.frontier_full);
     }
 }
