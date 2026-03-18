@@ -1,5 +1,6 @@
 use crate::{
     app::App as GolApp,
+    board::frontier_dense_threshold_percent_for_diagnostics,
     shared::{
         CONTROLS_TEXT, DiagnosticsOverlay, GridOverlay, Simulation, UiLayout, UiLayoutPreset,
     },
@@ -83,6 +84,10 @@ fn render_ui(
                 ui.label(format!("Boundary: {boundary}"));
                 if diagnostics.enabled {
                     ui.label(format!("Step(avg): {:.3} ms", sim.avg_step_ms));
+                    ui.label(format!(
+                        "Frontier dense fallback: {}%",
+                        frontier_dense_threshold_percent_for_diagnostics()
+                    ));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     render_layout_selector(ui, &mut ui_layout.preset);

@@ -1,5 +1,20 @@
 const CELL_ALIVE: u8 = 1;
-const FRONTIER_DENSE_THRESHOLD_PERCENT: usize = 35;
+const FRONTIER_DENSE_THRESHOLD_PERCENT_DEFAULT: usize = 60;
+
+fn frontier_dense_threshold_percent() -> usize {
+    static THRESHOLD: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+        std::env::var("GOL_FRONTIER_DENSE_THRESHOLD_PERCENT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .map(|value| value.min(100))
+            .unwrap_or(FRONTIER_DENSE_THRESHOLD_PERCENT_DEFAULT)
+    });
+    *THRESHOLD
+}
+
+pub fn frontier_dense_threshold_percent_for_diagnostics() -> usize {
+    frontier_dense_threshold_percent()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoundaryMode {
@@ -14,7 +29,7 @@ pub enum DirtyCells {
     Cells(Vec<usize>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Board {
     /// current state field
     current: Vec<u8>,
@@ -198,7 +213,7 @@ impl Board {
         let dense_threshold = self
             .current
             .len()
-            .saturating_mul(FRONTIER_DENSE_THRESHOLD_PERCENT)
+            .saturating_mul(frontier_dense_threshold_percent())
             / 100;
         if candidates.len() > dense_threshold.max(1) {
             for idx in candidates {
@@ -601,9 +616,10 @@ mod tests {
 
         board.step();
 
-        let DirtyCells::Cells(indices) = board.take_dirty_cells() else {
+        let DirtyCells::Cells(mut indices) = board.take_dirty_cells() else {
             panic!("expected incremental dirty cells");
         };
+        indices.sort_unstable();
         assert_eq!(indices, vec![7, 11, 13, 17]);
     }
 

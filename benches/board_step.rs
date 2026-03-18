@@ -20,17 +20,23 @@ fn seed_glider(board: &mut Board) {
     }
 }
 
-fn seed_blinker_field(board: &mut Board) {
+fn seed_noise(board: &mut Board, live_percent: u64) {
     let (cols, rows) = board.size();
-    if cols < 3 || rows == 0 {
+    if cols == 0 || rows == 0 {
         return;
     }
 
-    for row in (0..rows).step_by(3) {
-        for col in (0..cols.saturating_sub(2)).step_by(4) {
-            let _ = board.populate(col, row);
-            let _ = board.populate(col + 1, row);
-            let _ = board.populate(col + 2, row);
+    for row in 0..rows {
+        for col in 0..cols {
+            let idx = (row * cols + col) as u64;
+            let mut x = idx.wrapping_add(0x9E3779B97F4A7C15);
+            x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+            x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB);
+            x ^= x >> 31;
+
+            if x % 100 < live_percent {
+                let _ = board.populate(col, row);
+            }
         }
     }
 }
@@ -58,10 +64,20 @@ fn bench_board_step_and_dirty(c: &mut Criterion) {
             })
         });
 
+        let mut medium_board = Board::new(size, size);
+        seed_noise(&mut medium_board, 30);
+        let _ = medium_board.take_dirty_cells();
+        group.bench_function(format!("noise30_{size}"), |b| {
+            b.iter(|| {
+                let dirty_count = step_and_extract(black_box(&mut medium_board));
+                black_box(dirty_count);
+            })
+        });
+
         let mut dense_board = Board::new(size, size);
-        seed_blinker_field(&mut dense_board);
+        seed_noise(&mut dense_board, 45);
         let _ = dense_board.take_dirty_cells();
-        group.bench_function(format!("dense_blinkers_{size}"), |b| {
+        group.bench_function(format!("noise45_{size}"), |b| {
             b.iter(|| {
                 let dirty_count = step_and_extract(black_box(&mut dense_board));
                 black_box(dirty_count);

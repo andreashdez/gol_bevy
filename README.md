@@ -109,6 +109,7 @@ x = 8, y = 4
 
 - Board state is stored in a flat contiguous buffer for better cache locality.
 - Stepping is adaptive: sparse generations use a frontier update (changed cells plus neighbors), while dense generations fall back to a full scan.
+- Dense fallback threshold defaults to 60% candidate coverage and can be overridden with `GOL_FRONTIER_DENSE_THRESHOLD_PERCENT`.
 - Rendering is incremental: changed cells are tracked and only dirty sprites are recolored.
 - Full redraw is still used as a safe fallback for operations like resize, randomize, and clear.
 
@@ -129,7 +130,7 @@ CPU profiling options:
 
 Current benchmark target:
 
-- `benches/board_step.rs`: `board::step` + dirty-cell extraction in sparse and dense scenarios.
+- `benches/board_step.rs`: `board::step` + dirty-cell extraction for sparse glider and deterministic noise scenarios across 256/512/1024 boards.
 
 ## Development
 
