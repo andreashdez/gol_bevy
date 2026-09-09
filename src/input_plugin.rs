@@ -1,5 +1,5 @@
 use crate::{
-    app::PatternKind,
+    app::{EditTool, PatternKind},
     shared::{
         BINDING_CLEAR, BINDING_CLEAR_STAMP, BINDING_CYCLE_LAYOUT, BINDING_FLIP_STAMP,
         BINDING_PAN_DOWN, BINDING_PAN_LEFT, BINDING_PAN_RIGHT, BINDING_PAN_UP, BINDING_QUIT,
@@ -9,50 +9,60 @@ use crate::{
         BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_CONTROL_DECK, BINDING_TOGGLE_DIAGNOSTICS,
         BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, CAMERA_PAN_SPEED, CAMERA_ZOOM_MAX,
         CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay, GridOverlay, MainCamera, Simulation,
-        UiLayout, UpdateSet, world_to_cell,
+        UiLayout, UiPointerCapture, UpdateSet, world_to_cell,
     },
 };
 use bevy::{
     ecs::schedule::common_conditions::not, input::mouse::MouseWheel, prelude::*,
     window::PrimaryWindow,
 };
-use bevy_egui::input::{egui_wants_any_keyboard_input, egui_wants_any_pointer_input};
+use bevy_egui::EguiPostUpdateSet;
+use bevy_egui::input::{
+    EguiWantsInput, egui_wants_any_keyboard_input, egui_wants_any_pointer_input,
+};
 
 pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, handle_layout_cycle.in_set(UpdateSet::Input))
-            .add_systems(
-                Update,
-                handle_keyboard
-                    .in_set(UpdateSet::Input)
-                    .run_if(not(egui_wants_any_keyboard_input)),
-            )
-            .add_systems(
-                Update,
-                handle_mouse
-                    .in_set(UpdateSet::Input)
-                    .run_if(not(egui_wants_any_pointer_input)),
-            )
-            .add_systems(
-                Update,
-                handle_camera_zoom
-                    .in_set(UpdateSet::Camera)
-                    .run_if(not(egui_wants_any_pointer_input)),
-            )
-            .add_systems(
-                Update,
-                handle_camera_pan
-                    .in_set(UpdateSet::Camera)
-                    .run_if(not(egui_wants_any_keyboard_input)),
-            )
-            .add_systems(
-                Update,
-                handle_camera_reset
-                    .in_set(UpdateSet::Camera)
-                    .run_if(not(egui_wants_any_keyboard_input)),
-            );
+        // Egui publishes input capture after its UI pass. Using it during Update
+        // reads the previous frame and lets the first click on a widget paint cells.
+        app.configure_sets(
+            PostUpdate,
+            UpdateSet::Input.after(EguiPostUpdateSet::ProcessOutput),
+        )
+        .add_systems(PostUpdate, handle_layout_cycle.in_set(UpdateSet::Input))
+        .add_systems(
+            PostUpdate,
+            finish_mouse_stroke
+                .in_set(UpdateSet::Input)
+                .before(handle_mouse),
+        )
+        .add_systems(
+            PostUpdate,
+            handle_keyboard
+                .in_set(UpdateSet::Input)
+                .run_if(not(egui_wants_any_keyboard_input)),
+        )
+        .add_systems(PostUpdate, handle_mouse.in_set(UpdateSet::Input))
+        .add_systems(
+            Update,
+            handle_camera_zoom
+                .in_set(UpdateSet::Camera)
+                .run_if(not(egui_wants_any_pointer_input)),
+        )
+        .add_systems(
+            Update,
+            handle_camera_pan
+                .in_set(UpdateSet::Camera)
+                .run_if(not(egui_wants_any_keyboard_input)),
+        )
+        .add_systems(
+            Update,
+            handle_camera_reset
+                .in_set(UpdateSet::Camera)
+                .run_if(not(egui_wants_any_keyboard_input)),
+        );
     }
 }
 
@@ -69,6 +79,16 @@ fn handle_keyboard(
     mut grid_overlay: ResMut<GridOverlay>,
     mut ui_layout: ResMut<UiLayout>,
 ) {
+    let command = keys.pressed(KeyCode::SuperLeft)
+        || keys.pressed(KeyCode::SuperRight)
+        || keys.pressed(KeyCode::ControlLeft)
+        || keys.pressed(KeyCode::ControlRight);
+    if command {
+        if keys.just_pressed(KeyCode::KeyZ) {
+            sim.app.undo();
+        }
+        return;
+    }
     if BINDING_RUN_PAUSE.just_pressed(&keys) {
         sim.app.toggle_running();
     }
@@ -131,12 +151,31 @@ fn handle_keyboard(
     }
 }
 
+fn finish_mouse_stroke(mouse_buttons: Res<ButtonInput<MouseButton>>, mut sim: ResMut<Simulation>) {
+    // Always end strokes, including releases over UI widgets or outside the board.
+    if !mouse_buttons.pressed(MouseButton::Left) && !mouse_buttons.pressed(MouseButton::Right) {
+        sim.app.end_stroke();
+    }
+}
+
 fn handle_mouse(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     window_q: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     mut sim: ResMut<Simulation>,
+    wants_input: Res<EguiWantsInput>,
+    mut canvas_drag: Local<(bool, bool)>,
+    pointer_capture: Res<UiPointerCapture>,
 ) {
+    if !mouse_buttons.pressed(MouseButton::Left) {
+        canvas_drag.0 = false;
+    }
+    if !mouse_buttons.pressed(MouseButton::Right) {
+        canvas_drag.1 = false;
+    }
+    if wants_input.wants_any_pointer_input() || pointer_capture.blocked {
+        return;
+    }
     let Ok(window) = window_q.single() else {
         return;
     };
@@ -155,13 +194,25 @@ fn handle_mouse(
         return;
     };
 
-    if mouse_buttons.just_released(MouseButton::Left) && sim.app.has_selected_pattern() {
-        sim.app.place_selected_pattern_at(col, row);
-    } else if mouse_buttons.pressed(MouseButton::Left) && !sim.app.has_selected_pattern() {
-        sim.app.populate_board(col, row);
+    if mouse_buttons.just_pressed(MouseButton::Left) {
+        canvas_drag.0 = true;
+    }
+    if mouse_buttons.just_pressed(MouseButton::Right) {
+        canvas_drag.1 = true;
     }
 
-    if mouse_buttons.pressed(MouseButton::Right) {
+    if mouse_buttons.just_pressed(MouseButton::Left) && sim.app.has_selected_pattern() {
+        sim.app.place_selected_pattern_at(col, row);
+    } else if canvas_drag.0 && !sim.app.has_selected_pattern() {
+        sim.app.begin_stroke();
+        match sim.app.tool() {
+            EditTool::Erase => sim.app.depopulate_board(col, row),
+            _ => sim.app.populate_board(col, row),
+        }
+    }
+
+    if canvas_drag.1 {
+        sim.app.begin_stroke();
         sim.app.depopulate_board(col, row);
     }
 }

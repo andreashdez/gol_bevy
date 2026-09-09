@@ -2,6 +2,21 @@ use crate::{
     board,
     patterns::{Pattern, PatternParseError},
 };
+use std::collections::VecDeque;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EditTool {
+    #[default]
+    Draw,
+    Erase,
+    Stamp,
+}
+
+#[derive(Debug)]
+struct EditSnapshot {
+    cells: Vec<u8>,
+    epoch: usize,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PatternKind {
@@ -51,6 +66,10 @@ pub struct App {
     stamp_transform: StampTransform,
     /// available stamp patterns
     patterns: Vec<Pattern>,
+    tool: EditTool,
+    undo_history: VecDeque<EditSnapshot>,
+    stroke_active: bool,
+    stroke_saved: bool,
 
     pub board: board::Board,
 }
@@ -73,6 +92,10 @@ impl App {
             selected_pattern: None,
             stamp_transform: StampTransform::default(),
             patterns: Pattern::builtins(),
+            tool: EditTool::Draw,
+            undo_history: VecDeque::new(),
+            stroke_active: false,
+            stroke_saved: false,
             board,
         }
     }
@@ -123,16 +146,11 @@ impl App {
 
     pub fn set_tick_rate_ms(&mut self, tick_rate_ms: u64) -> bool {
         let clamped = tick_rate_ms.clamp(Self::TICK_RATE_MIN_MS, Self::TICK_RATE_MAX_MS);
-        let offset = clamped.saturating_sub(Self::TICK_RATE_MIN_MS);
-        let step = Self::TICK_RATE_STEP_MS.max(1);
-        let snapped = ((offset + step / 2) / step) * step + Self::TICK_RATE_MIN_MS;
-        let snapped = snapped.min(Self::TICK_RATE_MAX_MS);
-
-        if self.tick_rate_ms == snapped {
+        if self.tick_rate_ms == clamped {
             return false;
         }
 
-        self.tick_rate_ms = snapped;
+        self.tick_rate_ms = clamped;
         self.needs_redraw = true;
         true
     }
@@ -192,24 +210,40 @@ impl App {
     }
 
     pub fn randomize_board(&mut self) {
+        self.end_stroke();
+        self.save_edit();
         self.board.clear();
         self.board.populate_random();
         self.needs_redraw = true;
     }
 
     pub fn clear_board(&mut self) {
+        if self.board.live_cells_count() == 0 {
+            return;
+        }
+        self.end_stroke();
+        self.save_edit();
         if self.board.clear() {
             self.needs_redraw = true;
         }
     }
 
     pub fn populate_board(&mut self, col: usize, row: usize) {
+        let (cols, rows) = self.board.size();
+        if col >= cols || row >= rows || self.board.is_alive(col, row) {
+            return;
+        }
+        self.save_edit();
         if self.board.populate(col, row) {
             self.needs_redraw = true;
         }
     }
 
     pub fn depopulate_board(&mut self, col: usize, row: usize) {
+        if !self.board.is_alive(col, row) {
+            return;
+        }
+        self.save_edit();
         if self.board.depopulate(col, row) {
             self.needs_redraw = true;
         }
@@ -217,6 +251,9 @@ impl App {
 
     pub fn resize_board(&mut self, new_cols: usize, new_rows: usize) {
         if self.board.resize(new_cols, new_rows) {
+            // Window resizing changes board dimensions; old snapshots no longer fit.
+            self.undo_history.clear();
+            self.end_stroke();
             self.needs_redraw = true;
         }
     }
@@ -244,10 +281,11 @@ impl App {
         if slot >= self.patterns.len() {
             return;
         }
-        if self.selected_pattern == Some(slot) {
-            self.selected_pattern = None;
+        if self.selected_pattern == Some(slot) && self.tool == EditTool::Stamp {
+            self.clear_selected_pattern();
         } else {
             self.selected_pattern = Some(slot);
+            self.tool = EditTool::Stamp;
         }
         self.needs_redraw = true;
     }
@@ -260,11 +298,13 @@ impl App {
         let pattern = Pattern::from_rle(name, source)?;
         self.patterns.push(pattern);
         self.selected_pattern = Some(self.patterns.len() - 1);
+        self.tool = EditTool::Stamp;
         self.needs_redraw = true;
         Ok(())
     }
 
     pub fn clear_selected_pattern(&mut self) {
+        self.tool = EditTool::Draw;
         if self.selected_pattern.take().is_some() {
             self.needs_redraw = true;
         }
@@ -286,18 +326,23 @@ impl App {
     }
 
     pub fn select_pattern_index(&mut self, index: usize) -> bool {
-        if index >= self.patterns.len() || self.selected_pattern == Some(index) {
+        if index >= self.patterns.len()
+            || (self.selected_pattern == Some(index) && self.tool == EditTool::Stamp)
+        {
             return false;
         }
 
         self.selected_pattern = Some(index);
+        self.tool = EditTool::Stamp;
         self.needs_redraw = true;
         true
     }
 
     pub fn has_selected_pattern(&self) -> bool {
-        self.selected_pattern
-            .is_some_and(|idx| idx < self.patterns.len())
+        self.tool == EditTool::Stamp
+            && self
+                .selected_pattern
+                .is_some_and(|idx| idx < self.patterns.len())
     }
 
     pub fn selected_pattern_name(&self) -> Option<&str> {
@@ -339,6 +384,9 @@ impl App {
     }
 
     pub fn selected_pattern_layout(&self) -> Option<PatternLayout> {
+        if self.tool != EditTool::Stamp {
+            return None;
+        }
         self.selected_pattern.and_then(|idx| {
             self.patterns.get(idx).map(|pattern| {
                 self.transform_pattern(&pattern.cells, pattern.width, pattern.height)
@@ -386,6 +434,16 @@ impl App {
     ) {
         let origin_x = center_col.saturating_sub(width / 2);
         let origin_y = center_row.saturating_sub(height / 2);
+        let (cols, rows) = self.board.size();
+        let changes_board = pattern.iter().any(|&(dx, dy)| {
+            let (col, row) = (origin_x + dx, origin_y + dy);
+            col < cols && row < rows && !self.board.is_alive(col, row)
+        });
+        if !changes_board {
+            return;
+        }
+        self.end_stroke();
+        self.save_edit();
         let mut changed = false;
 
         for &(dx, dy) in pattern {
@@ -395,6 +453,65 @@ impl App {
         if changed {
             self.needs_redraw = true;
         }
+    }
+
+    pub fn tool(&self) -> EditTool {
+        self.tool
+    }
+
+    pub fn set_tool(&mut self, tool: EditTool) {
+        self.end_stroke();
+        self.tool = tool;
+        if tool == EditTool::Stamp && self.selected_pattern.is_none() && !self.patterns.is_empty() {
+            self.selected_pattern = Some(0);
+        }
+        self.needs_redraw = true;
+    }
+
+    pub fn pattern_at(&self, index: usize) -> Option<&Pattern> {
+        self.patterns.get(index)
+    }
+
+    pub fn begin_stroke(&mut self) {
+        self.stroke_active = true;
+    }
+
+    pub fn end_stroke(&mut self) {
+        self.stroke_active = false;
+        self.stroke_saved = false;
+    }
+
+    fn save_edit(&mut self) {
+        if self.stroke_active && self.stroke_saved {
+            return;
+        }
+        let cells = self.board.snapshot_cells();
+        // Limit history to 32 edits and approximately 16 MiB (at least one edit).
+        let limit = (16 * 1024 * 1024 / cells.len().max(1)).clamp(1, 32);
+        while self.undo_history.len() >= limit {
+            self.undo_history.pop_front();
+        }
+        self.undo_history.push_back(EditSnapshot {
+            cells,
+            epoch: self.epoch,
+        });
+        self.stroke_saved = self.stroke_active;
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.undo_history.is_empty()
+    }
+
+    pub fn undo(&mut self) -> bool {
+        self.end_stroke();
+        let Some(snapshot) = self.undo_history.pop_back() else {
+            return false;
+        };
+        self.board.restore_cells(snapshot.cells);
+        self.epoch = snapshot.epoch;
+        self.running = false;
+        self.needs_redraw = true;
+        true
     }
 
     fn transform_pattern(
@@ -436,6 +553,107 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn undo_groups_drag_and_ignores_noop_edits() {
+        let mut app = App::new(8, 8);
+        app.clear_board();
+        app.depopulate_board(0, 0);
+        assert!(!app.can_undo());
+        app.begin_stroke();
+        app.populate_board(2, 2);
+        app.populate_board(3, 2);
+        app.populate_board(3, 2);
+        app.end_stroke();
+        app.populate_board(3, 2);
+        assert!(app.undo());
+        assert_eq!(app.board.live_cells_count(), 0);
+        assert!(!app.can_undo());
+    }
+
+    #[test]
+    fn undo_restores_clear_and_generation_then_simulation_can_continue() {
+        let mut app = App::new(8, 8);
+        app.insert_blinker();
+        app.increment_epoch();
+        let expected = app.board.snapshot_cells();
+        let mut next = app.board.clone();
+        next.step();
+        app.clear_board();
+        app.toggle_running();
+        app.tick();
+        assert!(app.undo());
+        assert_eq!(app.epoch, 1);
+        assert!(!app.is_running());
+        assert_eq!(app.board.snapshot_cells(), expected);
+        assert_eq!(app.board.take_dirty_cells(), board::DirtyCells::Full);
+        app.increment_epoch();
+        assert_eq!(app.board.snapshot_cells(), next.snapshot_cells());
+    }
+
+    #[test]
+    fn undo_restores_erased_cells_randomization_and_stamps() {
+        let mut app = App::new(8, 8);
+        app.insert_glider();
+        let original = app.board.snapshot_cells();
+        app.begin_stroke();
+        for row in 0..8 {
+            for col in 0..8 {
+                app.depopulate_board(col, row);
+            }
+        }
+        app.end_stroke();
+        assert_eq!(app.board.live_cells_count(), 0);
+        assert!(app.undo());
+        assert_eq!(app.board.snapshot_cells(), original);
+        app.randomize_board();
+        assert!(app.undo());
+        assert_eq!(app.board.snapshot_cells(), original);
+        assert!(app.undo());
+        assert_eq!(app.board.live_cells_count(), 0);
+    }
+
+    #[test]
+    fn undo_history_is_bounded_and_invalidated_only_on_actual_resize() {
+        let mut app = App::new(8, 8);
+        for i in 0..40 {
+            app.populate_board(i % 8, i / 8);
+        }
+        assert_eq!(app.undo_history.len(), 32);
+        app.resize_board(8, 8);
+        assert!(app.can_undo());
+        app.resize_board(9, 8);
+        assert!(!app.can_undo());
+        assert!(!app.undo());
+    }
+
+    #[test]
+    fn switching_tools_preserves_stamp_selection_but_hides_ghost() {
+        let mut app = App::new(8, 8);
+        app.select_pattern(PatternKind::Blinker);
+        app.set_tool(EditTool::Erase);
+        assert!(!app.has_selected_pattern());
+        assert!(app.selected_pattern_layout().is_none());
+        app.set_tool(EditTool::Stamp);
+        assert!(app.has_selected_pattern());
+        assert_eq!(app.selected_pattern_name(), Some("Blinker"));
+        app.set_tool(EditTool::Draw);
+        assert!(app.select_pattern_index(1));
+        assert_eq!(app.tool(), EditTool::Stamp);
+    }
+
+    #[test]
+    fn speed_accepts_intervals_between_keyboard_steps_and_clamps_bounds() {
+        let mut app = App::new(8, 8);
+        app.set_tick_rate_ms(100);
+        assert_eq!(1000 / app.tick_rate_ms(), 10);
+        app.set_tick_rate_ms(33);
+        assert_eq!(app.tick_rate_ms(), 33);
+        app.set_tick_rate_ms(0);
+        assert_eq!(app.tick_rate_ms(), 25);
+        app.set_tick_rate_ms(2000);
+        assert_eq!(app.tick_rate_ms(), 1000);
+    }
 
     #[test]
     fn test_app_increment_epoch() {

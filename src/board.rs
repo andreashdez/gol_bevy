@@ -58,6 +58,17 @@ pub struct Board {
 }
 
 impl Board {
+    pub(crate) fn snapshot_cells(&self) -> Vec<u8> {
+        self.current.clone()
+    }
+
+    pub(crate) fn restore_cells(&mut self, cells: Vec<u8>) {
+        assert_eq!(cells.len(), self.current.len());
+        self.current = cells;
+        self.mark_dirty_full();
+        self.mark_frontier_full();
+    }
+
     pub fn new(cols: usize, rows: usize) -> Self {
         let cells = cols.saturating_mul(rows);
         Self {

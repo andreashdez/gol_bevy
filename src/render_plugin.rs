@@ -1,7 +1,8 @@
 use std::{f32::consts::PI, time::Duration};
 
-use crate::app::App as GolApp;
+use crate::app::{App as GolApp, EditTool};
 use crate::board::{BoundaryMode, DirtyCells};
+use crate::shared::UiPointerCapture;
 use crate::shared::{
     CELL_SIZE, Cell, DEAD_COLOR, GHOST_LIVE_COLOR, GRID_LINE_COLOR, GridLine, GridOverlay,
     LIVE_COLOR, MainCamera, RedrawRequested, Simulation, UpdateSet, WALL_BRIGHT_COLOR, WALL_COLOR,
@@ -11,10 +12,14 @@ use bevy::{
     prelude::*,
     window::{PrimaryWindow, WindowResized},
 };
+use bevy_egui::input::EguiWantsInput;
 
 pub struct RenderPlugin;
 
 type BoardEntityFilter = Or<(With<Cell>, With<GridLine>, With<BoundaryWall>)>;
+
+#[derive(Resource, Default)]
+struct HoveredCell(Option<(usize, usize)>);
 
 #[derive(Component)]
 struct GhostPreviewCell;
@@ -68,7 +73,8 @@ impl Default for BoundaryWallPulse {
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(BoundaryWallPulse::default())
+        app.init_resource::<HoveredCell>()
+            .insert_resource(BoundaryWallPulse::default())
             .insert_resource(CellEntities::default())
             .insert_resource(PatternPreviewPool::default())
             .add_systems(Startup, setup_world)
@@ -79,7 +85,12 @@ impl Plugin for RenderPlugin {
                     sync_cells.in_set(UpdateSet::Render),
                     sync_grid_visibility.in_set(UpdateSet::Render),
                     sync_boundary_wall_visibility.in_set(UpdateSet::Render),
+                    update_hovered_cell
+                        .in_set(UpdateSet::Render)
+                        .before(sync_pattern_preview)
+                        .before(render_hover_cell),
                     sync_pattern_preview.in_set(UpdateSet::Render),
+                    render_hover_cell.in_set(UpdateSet::Render),
                 ),
             );
     }
@@ -386,41 +397,21 @@ fn blend_color(from: Color, to: Color, t: f32) -> Color {
 
 fn sync_pattern_preview(
     mut commands: Commands,
-    window_q: Query<&Window, With<PrimaryWindow>>,
-    camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    hovered: Res<HoveredCell>,
     sim: Res<Simulation>,
     mut preview_pool: ResMut<PatternPreviewPool>,
     mut preview_q: Query<(&mut Transform, &mut Visibility), With<GhostPreviewCell>>,
 ) {
+    let Some((cursor_col, cursor_row)) = hovered.0 else {
+        hide_preview_cells(&preview_pool, &mut preview_q);
+        return;
+    };
     let Some((pattern, width, height)) = sim.app.selected_pattern_layout() else {
         hide_preview_cells(&preview_pool, &mut preview_q);
         return;
     };
-
     ensure_preview_pool(&mut commands, &mut preview_pool, pattern.len());
-
-    let Ok(window) = window_q.single() else {
-        hide_preview_cells(&preview_pool, &mut preview_q);
-        return;
-    };
-    let Some(cursor_pos) = window.cursor_position() else {
-        hide_preview_cells(&preview_pool, &mut preview_q);
-        return;
-    };
-    let Ok((camera, camera_transform)) = camera_q.single() else {
-        hide_preview_cells(&preview_pool, &mut preview_q);
-        return;
-    };
-    let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_pos) else {
-        hide_preview_cells(&preview_pool, &mut preview_q);
-        return;
-    };
-
     let (cols, rows) = sim.app.board.size();
-    let Some((cursor_col, cursor_row)) = world_to_cell(world_pos, cols, rows) else {
-        hide_preview_cells(&preview_pool, &mut preview_q);
-        return;
-    };
 
     let origin_col = cursor_col.saturating_sub(width / 2);
     let origin_row = cursor_row.saturating_sub(height / 2);
@@ -455,4 +446,55 @@ fn hide_preview_cells(
             *visibility = Visibility::Hidden;
         }
     }
+}
+
+fn update_hovered_cell(
+    window_q: Query<&Window, With<PrimaryWindow>>,
+    camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    sim: Res<Simulation>,
+    wants_input: Res<EguiWantsInput>,
+    mut hovered: ResMut<HoveredCell>,
+    pointer_capture: Res<UiPointerCapture>,
+) {
+    hovered.0 = None;
+    if wants_input.wants_any_pointer_input() || pointer_capture.blocked {
+        return;
+    }
+    let Ok(window) = window_q.single() else {
+        return;
+    };
+    let Some(cursor) = window.cursor_position() else {
+        return;
+    };
+    let Ok((camera, transform)) = camera_q.single() else {
+        return;
+    };
+    let Ok(world) = camera.viewport_to_world_2d(transform, cursor) else {
+        return;
+    };
+    let (cols, rows) = sim.app.board.size();
+    hovered.0 = world_to_cell(world, cols, rows);
+}
+
+fn render_hover_cell(
+    hovered: Res<HoveredCell>,
+    sim: Res<Simulation>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mut gizmos: Gizmos,
+) {
+    let Some((col, row)) = hovered.0 else {
+        return;
+    };
+    let (cols, rows) = sim.app.board.size();
+    let erasing = sim.app.tool() == EditTool::Erase || mouse_buttons.pressed(MouseButton::Right);
+    let color = if erasing {
+        Color::srgb(1.0, 0.60, 0.55)
+    } else {
+        Color::srgb(0.75, 0.95, 0.85)
+    };
+    gizmos.rect_2d(
+        Isometry2d::from_translation(cell_to_world(col, row, cols, rows).truncate()),
+        Vec2::splat(CELL_SIZE),
+        color,
+    );
 }

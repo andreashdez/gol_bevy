@@ -138,7 +138,7 @@ pub const BINDING_CYCLE_LAYOUT: KeyBinding = KeyBinding {
 pub const BINDING_TOGGLE_CONTROL_DECK: KeyBinding = KeyBinding {
     keys: &[KeyCode::KeyH],
     label: "h",
-    action: "hide/show Control Deck sidebar",
+    action: "hide/show pattern sidebar",
 };
 pub const BINDING_TOGGLE_DIAGNOSTICS: KeyBinding = KeyBinding {
     keys: &[KeyCode::F3],
@@ -235,18 +235,19 @@ fn build_controls_text() -> String {
     out.push_str(": ");
     out.push_str(BINDING_RESET_CAMERA.action);
     out.push('\n');
-    out.push_str("Left drag: draw\n");
+    out.push_str("Left drag: draw or erase with the selected tool\n");
     out.push_str("Left click (stamp): place pattern\n");
     out.push_str("Right drag: erase\n");
+    out.push_str("Cmd/Ctrl+Z: undo last edit and pause\n");
     out.push_str(BINDING_QUIT.label);
     out.push_str(": ");
     out.push_str(BINDING_QUIT.action);
     out.push_str("\n\n");
-    out.push_str("Pattern Lab panel:\n");
-    out.push_str("- Paste RLE and import as a new stamp\n");
-    out.push_str("- Select imported stamp in Active Stamp\n\n");
+    out.push_str("Pattern palette:\n");
+    out.push_str("- Use Import pattern to paste RLE and add a stamp\n");
+    out.push_str("- Select a pattern thumbnail, then click the board to place it\n\n");
     out.push_str("Layout presets:\n");
-    out.push_str("- Choose Full, Compact, or Minimal from the status bar\n");
+    out.push_str("- Choose Full, Compact, or Minimal from the View menu\n");
     out.push_str("- Press F2 to cycle Full -> Compact -> Minimal\n");
     out.push_str("- Layout preset is saved between runs");
     out
@@ -374,6 +375,12 @@ pub struct DiagnosticsOverlay {
 #[derive(Resource)]
 pub struct GridOverlay {
     pub enabled: bool,
+}
+
+/// Embedded egui panels share the background layer, so capture them explicitly.
+#[derive(Resource, Default)]
+pub struct UiPointerCapture {
+    pub blocked: bool,
 }
 
 #[derive(Component)]

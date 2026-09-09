@@ -41,27 +41,32 @@ f: flip stamp horizontally
 c: clear active stamp
 m: toggle boundary mode
 F2: cycle layout preset
-h: hide/show Control Deck sidebar
+h: hide/show pattern sidebar
 F3: toggle diagnostics
 t: toggle grid
 /: toggle help
 Wheel: zoom camera
 WASD / Arrows: pan camera
 v: reset camera
-Left drag: draw
+Left drag: draw or erase with the selected tool
 Left click (stamp): place pattern
 Right drag: erase
+Cmd/Ctrl+Z: undo last edit and pause
 q / Esc: quit
 
-Pattern Lab panel:
-- Paste RLE and import as a new stamp
-- Select imported stamp in Active Stamp
+Pattern palette:
+- Use Import pattern to paste RLE and add a stamp
+- Select a pattern thumbnail, then click the board to place it
 
 Layout presets:
-- Choose Full, Compact, or Minimal from the status bar
+- Choose Full, Compact, or Minimal from the View menu
 - Press F2 to cycle Full -> Compact -> Minimal
 - Layout preset is saved between runs
 ```
+
+The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools share a visual pattern palette; rotate and flip controls appear for stamps. In Minimal mode, open Tools to access the palette and board actions. Grid and diagnostics are available in View; diagnostics start hidden.
+
+Undo restores the board and generation before drawing, erasing, placing a stamp, randomizing, or clearing, and pauses playback. Each drag is one edit. History retains up to 32 edits within an approximate 16 MiB budget (with at least one edit), and clears when window resizing changes the board dimensions. Imported patterns remain available for the current session.
 
 ## Architecture map
 
@@ -71,7 +76,7 @@ Runtime flow from `src/main.rs`:
 main
   -> DefaultPlugins + resources
   -> RenderPlugin (world setup, cell/grid/wall/preview rendering)
-  -> UiPlugin (egui control deck + quick controls + layout presets + RLE pattern lab)
+  -> UiPlugin (playback toolbar + pattern palette + layout presets + RLE import)
   -> InputPlugin (keyboard, mouse, camera controls)
   -> SimulationPlugin (tick advancement, redraw collection, quit)
 

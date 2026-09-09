@@ -29,7 +29,7 @@ fn main() {
         .add_plugins(EguiPlugin::default())
         .insert_resource(ClearColor(BG_COLOR))
         .insert_resource(RedrawRequested::default())
-        .insert_resource(DiagnosticsOverlay { enabled: true })
+        .insert_resource(DiagnosticsOverlay { enabled: false })
         .insert_resource(GridOverlay { enabled: false })
         .configure_sets(
             Update,
