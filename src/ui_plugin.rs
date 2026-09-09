@@ -60,6 +60,14 @@ fn render_ui(
 
     initialize_visuals(&mut ui_state, ctx);
 
+    let mut viewport_ui = egui::Ui::new(
+        ctx.clone(),
+        "viewport".into(),
+        egui::UiBuilder::new()
+            .layer_id(egui::LayerId::background())
+            .max_rect(ctx.viewport_rect()),
+    );
+
     let mode = if sim.app.is_running() {
         "Running"
     } else {
@@ -71,9 +79,9 @@ fn render_ui(
     let density = live_cells as f32 / total_cells as f32;
     let boundary = sim.app.boundary_mode_label();
 
-    egui::TopBottomPanel::top("status_bar")
+    egui::Panel::top("status_bar")
         .resizable(false)
-        .show(ctx, |ui| {
+        .show(&mut viewport_ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.heading("GOL");
                 ui.separator();
@@ -127,7 +135,7 @@ fn render_ui(
 
     if ui_layout.is_control_deck_visible() {
         render_control_deck(
-            ctx,
+            &mut viewport_ui,
             &mut sim,
             &mut diagnostics,
             &mut grid_overlay,
@@ -158,17 +166,17 @@ fn render_ui(
 }
 
 fn render_control_deck(
-    ctx: &egui::Context,
+    viewport_ui: &mut egui::Ui,
     sim: &mut Simulation,
     diagnostics: &mut DiagnosticsOverlay,
     grid_overlay: &mut GridOverlay,
     preset: UiLayoutPreset,
     ui_state: &mut UiState,
 ) {
-    egui::SidePanel::left("control_deck")
-        .default_width(preset.side_panel_width())
+    egui::Panel::left("control_deck")
+        .default_size(preset.side_panel_width())
         .resizable(preset == UiLayoutPreset::Full)
-        .show(ctx, |ui| {
+        .show(viewport_ui, |ui| {
             ui.heading("GOL Control Deck");
             if preset == UiLayoutPreset::Full {
                 ui.label("Hands-on controls for simulation, overlays, and stamp workflows.");
@@ -502,16 +510,16 @@ fn initialize_visuals(ui_state: &mut UiState, ctx: &egui::Context) {
     visuals.hyperlink_color = egui::Color32::from_rgb(118, 190, 237);
     ctx.set_visuals(visuals);
 
-    let mut style = (*ctx.style()).clone();
-    style.spacing.item_spacing = egui::vec2(10.0, 8.0);
-    style.spacing.button_padding = egui::vec2(10.0, 7.0);
-    style.spacing.indent = 16.0;
-    style.visuals.window_corner_radius = egui::CornerRadius::same(8);
-    style.visuals.menu_corner_radius = egui::CornerRadius::same(8);
-    style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
-    style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
-    style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(6);
-    ctx.set_style(style);
+    ctx.global_style_mut(|style| {
+        style.spacing.item_spacing = egui::vec2(10.0, 8.0);
+        style.spacing.button_padding = egui::vec2(10.0, 7.0);
+        style.spacing.indent = 16.0;
+        style.visuals.window_corner_radius = egui::CornerRadius::same(8);
+        style.visuals.menu_corner_radius = egui::CornerRadius::same(8);
+        style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
+        style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
+        style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(6);
+    });
 
     ui_state.style_initialized = true;
 }
