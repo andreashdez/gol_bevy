@@ -3,10 +3,12 @@ use crate::{
     board::frontier_dense_threshold_percent_for_diagnostics,
     patterns::Pattern,
     shared::{
-        CONTROLS_TEXT, DiagnosticsOverlay, GridOverlay, Simulation, UiLayout, UiLayoutPreset,
+        BOARD_SIZE_MAX, BOARD_SIZE_MIN, BOARD_SIZE_PRESETS, BoardSettings, CONTROLS_TEXT,
+        DiagnosticsOverlay, GridOverlay, Simulation, StartupSet, UiLayout, UiLayoutPreset,
         UiPointerCapture,
     },
 };
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 use std::path::PathBuf;
@@ -18,8 +20,11 @@ impl Plugin for UiPlugin {
         app.init_resource::<UiLayout>()
             .init_resource::<UiPointerCapture>()
             .init_resource::<UiState>()
-            .add_systems(Startup, setup_layout_persistence)
-            .add_systems(Update, persist_layout_preset)
+            .add_systems(
+                Startup,
+                setup_layout_persistence.in_set(StartupSet::LoadSettings),
+            )
+            .add_systems(Update, persist_settings)
             .add_systems(EguiPrimaryContextPass, render_ui);
     }
 }
@@ -27,7 +32,19 @@ impl Plugin for UiPlugin {
 #[derive(Resource)]
 struct UiLayoutPersistence {
     path: PathBuf,
-    last_saved: Option<UiLayoutPreset>,
+    last_saved: Option<PersistedSettings>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct PersistedSettings {
+    preset: UiLayoutPreset,
+    board: (usize, usize),
+}
+
+#[derive(Default)]
+struct ParsedSettings {
+    preset: Option<UiLayoutPreset>,
+    board: Option<(usize, usize)>,
 }
 
 #[derive(Resource)]
@@ -54,14 +71,21 @@ impl Default for UiState {
 const ACCENT: egui::Color32 = egui::Color32::from_rgb(56, 217, 143);
 const MUTED: egui::Color32 = egui::Color32::from_rgb(155, 167, 180);
 
+/// The two overlay toggles are always read together by the View menu.
+#[derive(SystemParam)]
+struct Overlays<'w> {
+    diagnostics: ResMut<'w, DiagnosticsOverlay>,
+    grid: ResMut<'w, GridOverlay>,
+}
+
 fn render_ui(
     mut contexts: EguiContexts,
     mut sim: ResMut<Simulation>,
-    mut diagnostics: ResMut<DiagnosticsOverlay>,
-    mut grid_overlay: ResMut<GridOverlay>,
+    mut overlays: Overlays,
     mut ui_layout: ResMut<UiLayout>,
     mut ui_state: ResMut<UiState>,
     mut pointer_capture: ResMut<UiPointerCapture>,
+    mut board_settings: ResMut<BoardSettings>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
@@ -113,10 +137,17 @@ fn render_ui(
                     ui.separator();
                     if ui
                         .add_enabled(sim.app.can_undo(), egui::Button::new("Undo"))
-                        .on_hover_text("Restore the previous edit and pause · Cmd/Ctrl+Z")
+                        .on_hover_text("Restore the previous edit and pause · U or Cmd/Ctrl+Z")
                         .clicked()
                     {
                         sim.app.undo();
+                    }
+                    if ui
+                        .add_enabled(sim.app.can_redo(), egui::Button::new("Redo"))
+                        .on_hover_text("Reapply the last undone edit · Cmd/Ctrl+Shift+Z")
+                        .clicked()
+                    {
+                        sim.app.redo();
                     }
                     if !ui_layout.is_control_deck_visible() {
                         ui.menu_button("Tools", |ui| {
@@ -128,7 +159,7 @@ fn render_ui(
                                     ui.separator();
                                     render_palette(ui, &mut sim.app);
                                     ui.separator();
-                                    render_board_controls(ui, &mut sim.app);
+                                    render_board_controls(ui, &mut sim.app, &mut board_settings);
                                     if ui.button("Import pattern…").clicked() {
                                         ui_state.import_open = true;
                                         ui.close();
@@ -137,8 +168,8 @@ fn render_ui(
                         });
                     }
                     ui.menu_button("View", |ui| {
-                        ui.checkbox(&mut grid_overlay.enabled, "Grid");
-                        ui.checkbox(&mut diagnostics.enabled, "Diagnostics");
+                        ui.checkbox(&mut overlays.grid.enabled, "Grid");
+                        ui.checkbox(&mut overlays.diagnostics.enabled, "Diagnostics");
                         ui.separator();
                         ui.label("Layout");
                         for preset in UiLayoutPreset::ALL {
@@ -191,12 +222,18 @@ fn render_ui(
                 ui.label(
                     egui::RichText::new(format!("Population {live} · {density:.1}%")).color(MUTED),
                 );
+                ui.label(
+                    egui::RichText::new(sim.app.rule_label())
+                        .monospace()
+                        .color(MUTED),
+                )
+                .on_hover_text("Birth/survival rule · set by imported RLE headers");
                 ui.separator();
                 ui.colored_label(
                     MUTED,
                     match sim.app.tool() {
                         EditTool::Draw => "Drag to draw · Right-drag to erase",
-                        EditTool::Erase => "Drag to erase · Cmd/Ctrl+Z undo",
+                        EditTool::Erase => "Drag to erase · U or Cmd/Ctrl+Z undo",
                         EditTool::Stamp => "Click to place · Z rotate · F flip",
                     },
                 );
@@ -232,7 +269,7 @@ fn render_ui(
                         }
                         ui.add_space(8.0);
                         ui.separator();
-                        render_board_controls(ui, &mut sim.app);
+                        render_board_controls(ui, &mut sim.app, &mut board_settings);
                     });
             })
             .response
@@ -242,9 +279,9 @@ fn render_ui(
         None
     };
 
-    if diagnostics.enabled {
+    if overlays.diagnostics.enabled {
         egui::Window::new("Diagnostics")
-            .open(&mut diagnostics.enabled)
+            .open(&mut overlays.diagnostics.enabled)
             .default_pos([720.0, 70.0])
             .resizable(false)
             .show(ctx, |ui| {
@@ -271,7 +308,8 @@ fn render_ui(
         .vscroll(true)
         .show(ctx, |ui| {
             ui.label("Draw, erase, or choose a pattern, then press Space to play.");
-            ui.label("Cmd/Ctrl+Z undoes an edit and pauses. One drag is one edit.");
+            ui.label("U or Cmd/Ctrl+Z undoes an edit and pauses; Cmd/Ctrl+Shift+Z redoes it.");
+            ui.label("One drag is one edit. A new edit discards the redo chain.");
             ui.label("History keeps up to 32 edits and clears when board dimensions change.");
             ui.separator();
             ui.label(egui::RichText::new(CONTROLS_TEXT.as_str()).monospace());
@@ -287,6 +325,19 @@ fn render_ui(
     .collect();
     pointer_capture.blocked =
         ctx.input(|input| pointer_over_panels(input.pointer.latest_pos(), &input.events, &panels));
+    // A tool button can retain keyboard focus after a canvas click. Give focus
+    // back to the canvas so shortcuts work, while preserving text-editor focus
+    // when interacting with import/help windows.
+    if !pointer_capture.blocked
+        && !ctx.is_pointer_over_egui()
+        && ctx.input(|input| input.pointer.any_pressed())
+    {
+        ctx.memory_mut(|memory| {
+            if let Some(focused) = memory.focused() {
+                memory.surrender_focus(focused);
+            }
+        });
+    }
 }
 
 fn pointer_over_panels(
@@ -300,50 +351,6 @@ fn pointer_over_panels(
             matches!(event,
         egui::Event::PointerButton { pos, .. } if over_panel(*pos))
         })
-}
-
-#[cfg(test)]
-mod pointer_tests {
-    use super::*;
-
-    #[test]
-    fn toolbar_click_is_captured_even_if_pointer_moves_back_to_canvas_in_same_frame() {
-        let panels = [egui::Rect::from_min_max(
-            egui::pos2(0.0, 0.0),
-            egui::pos2(800.0, 48.0),
-        )];
-        let click = egui::Event::PointerButton {
-            pos: egui::pos2(80.0, 24.0),
-            button: egui::PointerButton::Primary,
-            pressed: true,
-            modifiers: egui::Modifiers::default(),
-        };
-        assert!(pointer_over_panels(
-            Some(egui::pos2(500.0, 300.0)),
-            &[click],
-            &panels
-        ));
-        assert!(!pointer_over_panels(
-            Some(egui::pos2(500.0, 300.0)),
-            &[],
-            &panels
-        ));
-    }
-
-    #[test]
-    fn panel_background_blocks_painting_even_without_an_interactive_widget() {
-        let sidebar = egui::Rect::from_min_max(egui::pos2(0.0, 48.0), egui::pos2(280.0, 760.0));
-        assert!(pointer_over_panels(
-            Some(egui::pos2(100.0, 700.0)),
-            &[],
-            &[sidebar]
-        ));
-        assert!(!pointer_over_panels(
-            Some(egui::pos2(100.0, 700.0)),
-            &[],
-            &[]
-        ));
-    }
 }
 
 fn render_speed(ui: &mut egui::Ui, app: &mut GolApp) {
@@ -406,8 +413,54 @@ fn render_tools(ui: &mut egui::Ui, app: &mut GolApp) {
     }
 }
 
-fn render_board_controls(ui: &mut egui::Ui, app: &mut GolApp) {
+fn render_board_size(ui: &mut egui::Ui, app: &GolApp, settings: &mut BoardSettings) {
+    let (cols, rows) = app.board.size();
+    ui.label(egui::RichText::new("Size").color(MUTED));
+    ui.horizontal_wrapped(|ui| {
+        for (preset_cols, preset_rows) in BOARD_SIZE_PRESETS {
+            let selected = (cols, rows) == (preset_cols, preset_rows);
+            if ui
+                .selectable_label(selected, format!("{preset_cols}²"))
+                .on_hover_text("Resize the board · clears undo history")
+                .clicked()
+                && !selected
+            {
+                settings.set(preset_cols, preset_rows);
+            }
+        }
+    });
+
+    let mut requested_cols = cols;
+    let mut requested_rows = rows;
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::DragValue::new(&mut requested_cols)
+                .range(BOARD_SIZE_MIN..=BOARD_SIZE_MAX)
+                .prefix("W "),
+        );
+        ui.add(
+            egui::DragValue::new(&mut requested_rows)
+                .range(BOARD_SIZE_MIN..=BOARD_SIZE_MAX)
+                .prefix("H "),
+        );
+    });
+    if (requested_cols, requested_rows) != (cols, rows) {
+        settings.set(requested_cols, requested_rows);
+    }
+
+    ui.label(
+        egui::RichText::new(format!(
+            "{cols} × {rows} cells · window resizing no longer resizes"
+        ))
+        .small()
+        .color(MUTED),
+    );
+}
+
+fn render_board_controls(ui: &mut egui::Ui, app: &mut GolApp, settings: &mut BoardSettings) {
     ui.label(egui::RichText::new("BOARD").small().color(MUTED));
+    render_board_size(ui, app, settings);
+    ui.add_space(4.0);
     ui.horizontal_wrapped(|ui| {
         if ui
             .button("Randomize")
@@ -578,10 +631,13 @@ fn render_pattern_lab(ui: &mut egui::Ui, sim: &mut Simulation, state: &mut UiSta
         };
         state.import_feedback = Some(
             match sim.app.import_rle_pattern(name.clone(), &state.rle_source) {
-                Ok(()) => (
-                    true,
-                    format!("Imported '{name}'. Click the board to place it."),
-                ),
+                Ok(import) => {
+                    let mut message = format!("Imported '{name}'. Click the board to place it.");
+                    if let Some(rule) = import.applied_rule {
+                        message.push_str(&format!(" Board rule set to {rule}."));
+                    }
+                    (true, message)
+                }
                 Err(err) => (false, format!("Could not import: {err}")),
             },
         );
@@ -627,24 +683,32 @@ fn initialize_visuals(state: &mut UiState, ctx: &egui::Context) {
     state.style_initialized = true;
 }
 
-fn setup_layout_persistence(mut commands: Commands, mut ui_layout: ResMut<UiLayout>) {
+fn setup_layout_persistence(
+    mut commands: Commands,
+    mut ui_layout: ResMut<UiLayout>,
+    mut board_settings: ResMut<BoardSettings>,
+) {
     let path = ui_layout_config_path();
 
     match std::fs::read_to_string(&path) {
         Ok(contents) => {
-            if let Some(preset) = parse_layout_preset_from_toml(&contents) {
-                ui_layout.preset = preset;
-            } else {
-                warn!(
+            let settings = parse_settings_from_toml(&contents);
+            match settings.preset {
+                Some(preset) => ui_layout.preset = preset,
+                None => warn!(
                     "Ignoring invalid persisted layout preset in {}",
                     path.display()
-                );
+                ),
+            }
+            // Left unset, startup falls back to a board that fills the window.
+            if let Some((cols, rows)) = settings.board {
+                board_settings.set(cols, rows);
             }
         }
         Err(err) => {
             if err.kind() != std::io::ErrorKind::NotFound {
                 warn!(
-                    "Failed to read persisted layout preset from {}: {}",
+                    "Failed to read persisted settings from {}: {}",
                     path.display(),
                     err
                 );
@@ -654,12 +718,23 @@ fn setup_layout_persistence(mut commands: Commands, mut ui_layout: ResMut<UiLayo
 
     commands.insert_resource(UiLayoutPersistence {
         path,
-        last_saved: Some(ui_layout.preset),
+        last_saved: None,
     });
 }
 
-fn persist_layout_preset(ui_layout: Res<UiLayout>, mut persistence: ResMut<UiLayoutPersistence>) {
-    if persistence.last_saved == Some(ui_layout.preset) {
+fn persist_settings(
+    ui_layout: Res<UiLayout>,
+    board_settings: Res<BoardSettings>,
+    mut persistence: ResMut<UiLayoutPersistence>,
+) {
+    if !board_settings.is_set() {
+        return;
+    }
+    let current = PersistedSettings {
+        preset: ui_layout.preset,
+        board: (board_settings.cols, board_settings.rows),
+    };
+    if persistence.last_saved == Some(current) {
         return;
     }
 
@@ -675,51 +750,64 @@ fn persist_layout_preset(ui_layout: Res<UiLayout>, mut persistence: ResMut<UiLay
     }
 
     let contents = format!(
-        "layout_preset = \"{}\"\n",
-        ui_layout.preset.as_storage_str()
+        "layout_preset = \"{}\"\nboard_cols = {}\nboard_rows = {}\n",
+        current.preset.as_storage_str(),
+        current.board.0,
+        current.board.1
     );
     if let Err(err) = std::fs::write(&persistence.path, contents) {
         warn!(
-            "Failed to persist layout preset to {}: {}",
+            "Failed to persist settings to {}: {}",
             persistence.path.display(),
             err
         );
         return;
     }
 
-    persistence.last_saved = Some(ui_layout.preset);
+    persistence.last_saved = Some(current);
 }
 
-fn parse_layout_preset_from_toml(contents: &str) -> Option<UiLayoutPreset> {
+/// Minimal key/value reader for the handful of scalars this app persists.
+fn parse_settings_from_toml(contents: &str) -> ParsedSettings {
+    let mut parsed = ParsedSettings::default();
+    let mut cols = None;
+    let mut rows = None;
+
     for line in contents.lines() {
         let line = line.split('#').next().unwrap_or("").trim();
         if line.is_empty() {
             continue;
         }
-
         let Some((key, raw_value)) = line.split_once('=') else {
             continue;
         };
-        if key.trim() != "layout_preset" {
-            continue;
+        let value = unquote(raw_value.trim());
+
+        match key.trim() {
+            "layout_preset" => parsed.preset = UiLayoutPreset::from_storage_str(value),
+            "board_cols" => cols = value.parse::<usize>().ok(),
+            "board_rows" => rows = value.parse::<usize>().ok(),
+            _ => {}
         }
-
-        let value = raw_value.trim();
-        let value = value
-            .strip_prefix('"')
-            .and_then(|inner| inner.strip_suffix('"'))
-            .or_else(|| {
-                value
-                    .strip_prefix('\'')
-                    .and_then(|inner| inner.strip_suffix('\''))
-            })
-            .unwrap_or(value)
-            .trim();
-
-        return UiLayoutPreset::from_storage_str(value);
     }
 
-    None
+    if let (Some(cols), Some(rows)) = (cols, rows) {
+        parsed.board = Some((cols, rows));
+    }
+    parsed
+}
+
+fn unquote(value: &str) -> &str {
+    value
+        .strip_prefix('"')
+        .and_then(|inner| inner.strip_suffix('"'))
+        .or_else(|| {
+            value
+                .strip_prefix('\'')
+                .and_then(|inner| inner.strip_suffix('\''))
+        })
+        .unwrap_or(value)
+        .trim()
 }
 
 fn ui_layout_config_path() -> PathBuf {
@@ -743,4 +831,84 @@ fn ui_layout_config_path_with_file(file_name: &str) -> PathBuf {
     }
 
     PathBuf::from(".gol-bevy").join("config").join(file_name)
+}
+
+#[cfg(test)]
+mod pointer_tests {
+    use super::*;
+
+    #[test]
+    fn toolbar_click_is_captured_even_if_pointer_moves_back_to_canvas_in_same_frame() {
+        let panels = [egui::Rect::from_min_max(
+            egui::pos2(0.0, 0.0),
+            egui::pos2(800.0, 48.0),
+        )];
+        let click = egui::Event::PointerButton {
+            pos: egui::pos2(80.0, 24.0),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        };
+        assert!(pointer_over_panels(
+            Some(egui::pos2(500.0, 300.0)),
+            &[click],
+            &panels
+        ));
+        assert!(!pointer_over_panels(
+            Some(egui::pos2(500.0, 300.0)),
+            &[],
+            &panels
+        ));
+    }
+
+    #[test]
+    fn panel_background_blocks_painting_even_without_an_interactive_widget() {
+        let sidebar = egui::Rect::from_min_max(egui::pos2(0.0, 48.0), egui::pos2(280.0, 760.0));
+        assert!(pointer_over_panels(
+            Some(egui::pos2(100.0, 700.0)),
+            &[],
+            &[sidebar]
+        ));
+        assert!(!pointer_over_panels(
+            Some(egui::pos2(100.0, 700.0)),
+            &[],
+            &[]
+        ));
+    }
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::{parse_settings_from_toml, unquote};
+    use crate::shared::UiLayoutPreset;
+
+    #[test]
+    fn reads_layout_preset_and_board_size() {
+        let parsed = parse_settings_from_toml(
+            "# saved by gol-bevy\nlayout_preset = \"compact\"\nboard_cols = 512\nboard_rows = 256\n",
+        );
+        assert_eq!(parsed.preset, Some(UiLayoutPreset::Compact));
+        assert_eq!(parsed.board, Some((512, 256)));
+    }
+
+    #[test]
+    fn a_partial_or_invalid_file_leaves_fields_unset() {
+        // Only one of the two dimensions is useless on its own.
+        let half = parse_settings_from_toml("layout_preset = 'minimal'\nboard_cols = 512\n");
+        assert_eq!(half.preset, Some(UiLayoutPreset::Minimal));
+        assert_eq!(half.board, None);
+
+        let junk = parse_settings_from_toml("layout_preset = \"nope\"\nboard_cols = wide\n");
+        assert_eq!(junk.preset, None);
+        assert_eq!(junk.board, None);
+
+        assert_eq!(parse_settings_from_toml("").board, None);
+    }
+
+    #[test]
+    fn unquote_handles_both_quote_styles_and_bare_values() {
+        assert_eq!(unquote("\"full\""), "full");
+        assert_eq!(unquote("'full'"), "full");
+        assert_eq!(unquote("512"), "512");
+    }
 }

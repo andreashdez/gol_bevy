@@ -1,3 +1,4 @@
+use crate::board::{Rule, RuleParseError};
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -6,6 +7,8 @@ pub struct Pattern {
     pub cells: Vec<(usize, usize)>,
     pub width: usize,
     pub height: usize,
+    /// Rule declared by the source RLE header, if it carried one.
+    pub rule: Option<Rule>,
 }
 
 impl Pattern {
@@ -20,6 +23,7 @@ impl Pattern {
             cells,
             width,
             height,
+            rule: None,
         }
     }
 
@@ -31,6 +35,7 @@ impl Pattern {
             cells: parsed.cells,
             width: parsed.width,
             height: parsed.height,
+            rule: parsed.rule,
         })
     }
 
@@ -68,6 +73,7 @@ pub enum PatternParseError {
     InvalidToken(char),
     MissingTerminator,
     Overflow,
+    InvalidRule(RuleParseError),
 }
 
 impl fmt::Display for PatternParseError {
@@ -79,6 +85,7 @@ impl fmt::Display for PatternParseError {
             Self::InvalidToken(ch) => write!(f, "invalid RLE token '{ch}'"),
             Self::MissingTerminator => write!(f, "RLE body missing '!' terminator"),
             Self::Overflow => write!(f, "RLE run length overflows pattern bounds"),
+            Self::InvalidRule(err) => write!(f, "unsupported rule in RLE header: {err}"),
         }
     }
 }
@@ -89,6 +96,7 @@ struct ParsedRle {
     cells: Vec<(usize, usize)>,
     width: usize,
     height: usize,
+    rule: Option<Rule>,
 }
 
 fn parse_rle(source: &str) -> Result<ParsedRle, PatternParseError> {
@@ -112,7 +120,11 @@ fn parse_rle(source: &str) -> Result<ParsedRle, PatternParseError> {
         return Err(PatternParseError::MissingHeader);
     };
 
-    let (declared_w, declared_h) = parse_dimensions(&header)?;
+    let RleHeader {
+        width: declared_w,
+        height: declared_h,
+        rule,
+    } = parse_header(&header)?;
     let mut cells = Vec::new();
     let mut x = 0usize;
     let mut y = 0usize;
@@ -172,12 +184,20 @@ fn parse_rle(source: &str) -> Result<ParsedRle, PatternParseError> {
         cells,
         width,
         height,
+        rule,
     })
 }
 
-fn parse_dimensions(header: &str) -> Result<(usize, usize), PatternParseError> {
+struct RleHeader {
+    width: usize,
+    height: usize,
+    rule: Option<Rule>,
+}
+
+fn parse_header(header: &str) -> Result<RleHeader, PatternParseError> {
     let mut width = None;
     let mut height = None;
+    let mut rule = None;
 
     for entry in header.split(',') {
         let mut parts = entry.splitn(2, '=');
@@ -199,12 +219,21 @@ fn parse_dimensions(header: &str) -> Result<(usize, usize), PatternParseError> {
                         .map_err(|_| PatternParseError::InvalidDimension)?,
                 );
             }
+            // A declared rule used to be discarded, which silently simulated
+            // non-Life patterns under B3/S23.
+            "rule" => {
+                rule = Some(Rule::parse(value).map_err(PatternParseError::InvalidRule)?);
+            }
             _ => {}
         }
     }
 
     match (width, height) {
-        (Some(w), Some(h)) => Ok((w, h)),
+        (Some(w), Some(h)) => Ok(RleHeader {
+            width: w,
+            height: h,
+            rule,
+        }),
         _ => Err(PatternParseError::MissingDimension),
     }
 }

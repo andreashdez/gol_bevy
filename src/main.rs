@@ -1,19 +1,13 @@
-pub mod app;
-pub mod board;
-pub mod input_plugin;
-pub mod patterns;
-pub mod render_plugin;
-pub mod shared;
-pub mod simulation_plugin;
-pub mod ui_plugin;
-
 use bevy::{prelude::*, window::WindowResolution};
 use bevy_egui::EguiPlugin;
-use input_plugin::InputPlugin;
-use render_plugin::RenderPlugin;
-use shared::{BG_COLOR, DiagnosticsOverlay, GridOverlay, RedrawRequested, UpdateSet};
-use simulation_plugin::SimulationPlugin;
-use ui_plugin::UiPlugin;
+use gol_bevy::input_plugin::InputPlugin;
+use gol_bevy::render_plugin::RenderPlugin;
+use gol_bevy::shared::{
+    BG_COLOR, BoardSettings, DiagnosticsOverlay, GridOverlay, RedrawRequested, StartupSet,
+    UpdateSet,
+};
+use gol_bevy::simulation_plugin::SimulationPlugin;
+use gol_bevy::ui_plugin::UiPlugin;
 
 fn main() {
     bevy::prelude::App::new()
@@ -31,6 +25,11 @@ fn main() {
         .insert_resource(RedrawRequested::default())
         .insert_resource(DiagnosticsOverlay { enabled: false })
         .insert_resource(GridOverlay { enabled: false })
+        .init_resource::<BoardSettings>()
+        .configure_sets(
+            Startup,
+            (StartupSet::LoadSettings, StartupSet::BuildWorld).chain(),
+        )
         .configure_sets(
             Update,
             (

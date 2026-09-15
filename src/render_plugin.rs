@@ -4,19 +4,21 @@ use crate::app::{App as GolApp, EditTool};
 use crate::board::{BoundaryMode, DirtyCells};
 use crate::shared::UiPointerCapture;
 use crate::shared::{
-    CELL_SIZE, Cell, DEAD_COLOR, GHOST_LIVE_COLOR, GRID_LINE_COLOR, GridLine, GridOverlay,
-    LIVE_COLOR, MainCamera, RedrawRequested, Simulation, UpdateSet, WALL_BRIGHT_COLOR, WALL_COLOR,
-    board_size_for_window, cell_to_world, world_to_cell,
+    BoardSettings, CELL_SIZE, DEAD_COLOR, GHOST_LIVE_COLOR, GRID_LINE_COLOR, GridOverlay,
+    LIVE_COLOR, MainCamera, RedrawRequested, Simulation, StartupSet, UpdateSet, WALL_BRIGHT_COLOR,
+    WALL_COLOR, board_size_for_window, camera_scale_to_fit_board, cell_to_world, world_to_cell,
 };
 use bevy::{
+    asset::RenderAssetUsages,
+    ecs::system::SystemParam,
+    image::ImageSampler,
     prelude::*,
-    window::{PrimaryWindow, WindowResized},
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+    window::PrimaryWindow,
 };
 use bevy_egui::input::EguiWantsInput;
 
 pub struct RenderPlugin;
-
-type BoardEntityFilter = Or<(With<Cell>, With<GridLine>, With<BoundaryWall>)>;
 
 #[derive(Resource, Default)]
 struct HoveredCell(Option<(usize, usize)>);
@@ -27,23 +29,76 @@ struct GhostPreviewCell;
 #[derive(Component)]
 struct BoundaryWall;
 
+/// The board is drawn as one texture with a single texel per cell, so rendering
+/// cost tracks the cells that changed instead of one sprite entity per cell.
 #[derive(Resource, Default)]
-struct CellEntities {
+struct BoardTexture {
+    handle: Handle<Image>,
     cols: usize,
-    entities: Vec<Entity>,
+    rows: usize,
 }
 
-impl CellEntities {
-    fn replace(&mut self, cols: usize, entities: Vec<Entity>) {
-        self.cols = cols;
-        self.entities = entities;
-    }
+#[derive(Component)]
+struct BoardSprite;
 
-    fn coords_for_index(&self, idx: usize) -> Option<(usize, usize)> {
-        if self.cols == 0 || idx >= self.entities.len() {
-            return None;
+fn color_to_texel(color: Color) -> [u8; 4] {
+    let srgba = color.to_srgba();
+    [
+        (srgba.red * 255.0).round().clamp(0.0, 255.0) as u8,
+        (srgba.green * 255.0).round().clamp(0.0, 255.0) as u8,
+        (srgba.blue * 255.0).round().clamp(0.0, 255.0) as u8,
+        (srgba.alpha * 255.0).round().clamp(0.0, 255.0) as u8,
+    ]
+}
+
+/// Board row 0 sits at the bottom in world space while texel row 0 sits at the
+/// top, so the vertical axis is flipped when addressing the texture.
+fn texel_offset(idx: usize, cols: usize, rows: usize) -> usize {
+    let col = idx % cols;
+    let row = idx / cols;
+    ((rows - 1 - row) * cols + col) * 4
+}
+
+fn board_sprite_size(cols: usize, rows: usize) -> Vec2 {
+    Vec2::new(cols as f32 * CELL_SIZE, rows as f32 * CELL_SIZE)
+}
+
+fn create_board_image(images: &mut Assets<Image>, cols: usize, rows: usize) -> Handle<Image> {
+    let mut image = Image::new_fill(
+        Extent3d {
+            width: cols as u32,
+            height: rows as u32,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &color_to_texel(DEAD_COLOR),
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    // Cells are crisp squares; filtering would smear neighbours together.
+    image.sampler = ImageSampler::nearest();
+    images.add(image)
+}
+
+/// The board texture, its dimensions, and the sprite that draws it always change
+/// together, so they travel as one system parameter.
+#[derive(SystemParam)]
+struct BoardCanvas<'w, 's> {
+    images: ResMut<'w, Assets<Image>>,
+    texture: ResMut<'w, BoardTexture>,
+    sprite_q: Query<'w, 's, &'static mut Sprite, With<BoardSprite>>,
+}
+
+impl BoardCanvas<'_, '_> {
+    /// Point the sprite at a freshly sized texture. The previous image is dropped
+    /// once the old handle goes away.
+    fn rebuild(&mut self, cols: usize, rows: usize) {
+        let handle = create_board_image(&mut self.images, cols, rows);
+        if let Ok(mut sprite) = self.sprite_q.single_mut() {
+            sprite.image = handle.clone();
+            sprite.custom_size = Some(board_sprite_size(cols, rows));
         }
-        Some((idx % self.cols, idx / self.cols))
+        *self.texture = BoardTexture { handle, cols, rows };
     }
 }
 
@@ -75,15 +130,15 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HoveredCell>()
             .insert_resource(BoundaryWallPulse::default())
-            .insert_resource(CellEntities::default())
+            .insert_resource(BoardTexture::default())
             .insert_resource(PatternPreviewPool::default())
-            .add_systems(Startup, setup_world)
+            .add_systems(Startup, setup_world.in_set(StartupSet::BuildWorld))
             .add_systems(
                 Update,
                 (
-                    handle_resize.in_set(UpdateSet::Resize),
+                    apply_board_settings.in_set(UpdateSet::Resize),
                     sync_cells.in_set(UpdateSet::Render),
-                    sync_grid_visibility.in_set(UpdateSet::Render),
+                    render_grid.in_set(UpdateSet::Render),
                     sync_boundary_wall_visibility.in_set(UpdateSet::Render),
                     update_hovered_cell
                         .in_set(UpdateSet::Render)
@@ -99,13 +154,19 @@ impl Plugin for RenderPlugin {
 fn setup_world(
     mut commands: Commands,
     window_q: Query<&Window, With<PrimaryWindow>>,
-    grid_overlay: Res<GridOverlay>,
-    mut cell_entities: ResMut<CellEntities>,
+    mut images: ResMut<Assets<Image>>,
+    mut board_texture: ResMut<BoardTexture>,
+    mut settings: ResMut<BoardSettings>,
 ) {
     let Ok(window) = window_q.single() else {
         return;
     };
-    let (cols, rows) = board_size_for_window(window);
+    // A persisted size wins; otherwise start with a board that fills the window.
+    if !settings.is_set() {
+        let (cols, rows) = board_size_for_window(window);
+        settings.set(cols, rows);
+    }
+    let (cols, rows) = (settings.cols, settings.rows);
 
     commands.spawn((Camera2d, MainCamera));
     commands.insert_resource(Simulation {
@@ -115,57 +176,19 @@ fn setup_world(
         step_samples: 0,
     });
 
-    let cells = spawn_cells(&mut commands, cols, rows);
-    cell_entities.replace(cols, cells);
-    spawn_grid_lines(&mut commands, cols, rows, grid_overlay.enabled);
+    let handle = create_board_image(&mut images, cols, rows);
+    commands.spawn((
+        Sprite {
+            image: handle.clone(),
+            custom_size: Some(board_sprite_size(cols, rows)),
+            ..default()
+        },
+        Transform::from_translation(Vec3::ZERO),
+        BoardSprite,
+    ));
+    *board_texture = BoardTexture { handle, cols, rows };
+
     spawn_boundary_walls(&mut commands, cols, rows);
-}
-
-fn spawn_cells(commands: &mut Commands, cols: usize, rows: usize) -> Vec<Entity> {
-    let mut entities = Vec::with_capacity(cols.saturating_mul(rows));
-    for row in 0..rows {
-        for col in 0..cols {
-            let entity = commands
-                .spawn((
-                    Sprite::from_color(DEAD_COLOR, Vec2::splat(CELL_SIZE - 1.0)),
-                    Transform::from_translation(cell_to_world(col, row, cols, rows)),
-                    Cell { col, row },
-                ))
-                .id();
-            entities.push(entity);
-        }
-    }
-    entities
-}
-
-fn spawn_grid_lines(commands: &mut Commands, cols: usize, rows: usize, is_visible: bool) {
-    let visibility = if is_visible {
-        Visibility::Visible
-    } else {
-        Visibility::Hidden
-    };
-    let width = cols as f32 * CELL_SIZE;
-    let height = rows as f32 * CELL_SIZE;
-
-    for x in 0..=cols {
-        let x_pos = -width / 2.0 + x as f32 * CELL_SIZE;
-        commands.spawn((
-            Sprite::from_color(GRID_LINE_COLOR, Vec2::new(1.0, height)),
-            Transform::from_translation(Vec3::new(x_pos, 0.0, 1.0)),
-            visibility,
-            GridLine,
-        ));
-    }
-
-    for y in 0..=rows {
-        let y_pos = -height / 2.0 + y as f32 * CELL_SIZE;
-        commands.spawn((
-            Sprite::from_color(GRID_LINE_COLOR, Vec2::new(width, 1.0)),
-            Transform::from_translation(Vec3::new(0.0, y_pos, 1.0)),
-            visibility,
-            GridLine,
-        ));
-    }
 }
 
 fn spawn_boundary_walls(commands: &mut Commands, cols: usize, rows: usize) {
@@ -227,110 +250,159 @@ fn ensure_preview_pool(commands: &mut Commands, pool: &mut PatternPreviewPool, t
     }
 }
 
-fn handle_resize(
-    mut resize_events: MessageReader<WindowResized>,
+/// Window resizes no longer touch the board; only an explicit size change does.
+fn apply_board_settings(
+    settings: Res<BoardSettings>,
     mut commands: Commands,
     window_q: Query<&Window, With<PrimaryWindow>>,
     mut sim: ResMut<Simulation>,
-    mut cell_entities: ResMut<CellEntities>,
-    board_entities_q: Query<Entity, BoardEntityFilter>,
-    grid_overlay: Res<GridOverlay>,
+    mut canvas: BoardCanvas,
+    wall_q: Query<Entity, With<BoundaryWall>>,
+    mut camera_q: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
 ) {
-    let mut saw_resize = false;
-    for _ in resize_events.read() {
-        saw_resize = true;
+    if !settings.is_changed() || !settings.is_set() {
+        return;
     }
-    if !saw_resize {
+    let (cols, rows) = (settings.cols, settings.rows);
+    if sim.app.board.size() == (cols, rows) {
         return;
     }
 
-    let Ok(window) = window_q.single() else {
-        return;
-    };
-    let (new_cols, new_rows) = board_size_for_window(window);
-    let (cols, rows) = sim.app.board.size();
-    if cols == new_cols && rows == new_rows {
-        return;
-    }
+    sim.app.resize_board(cols, rows);
+    // resize_board already marked the board fully dirty, so the next sync repaints
+    // the new texture.
+    canvas.rebuild(cols, rows);
 
-    sim.app.resize_board(new_cols, new_rows);
-
-    for entity in &board_entities_q {
+    for entity in &wall_q {
         commands.entity(entity).despawn();
     }
-    let cells = spawn_cells(&mut commands, new_cols, new_rows);
-    cell_entities.replace(new_cols, cells);
-    spawn_grid_lines(&mut commands, new_cols, new_rows, grid_overlay.enabled);
-    spawn_boundary_walls(&mut commands, new_cols, new_rows);
+    spawn_boundary_walls(&mut commands, cols, rows);
+
+    // The old view rarely frames the new board, so recentre and fit it.
+    if let (Ok(window), Ok((mut transform, mut projection))) =
+        (window_q.single(), camera_q.single_mut())
+    {
+        transform.translation.x = 0.0;
+        transform.translation.y = 0.0;
+        if let Projection::Orthographic(ref mut ortho) = *projection {
+            ortho.scale = camera_scale_to_fit_board(window, cols, rows);
+        }
+    }
+}
+
+/// Draws only the grid lines that intersect the viewport, so the cost tracks
+/// screen area rather than board area. Spawning a sprite per line would put the
+/// per-cell entity problem straight back.
+fn render_grid(
+    grid_overlay: Res<GridOverlay>,
+    sim: Res<Simulation>,
+    camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    mut gizmos: Gizmos,
+) {
+    if !grid_overlay.enabled {
+        return;
+    }
+    let (cols, rows) = sim.app.board.size();
+    if cols == 0 || rows == 0 {
+        return;
+    }
+    let Ok((camera, camera_transform)) = camera_q.single() else {
+        return;
+    };
+    let Some(viewport) = camera.logical_viewport_size() else {
+        return;
+    };
+    let (Ok(corner_a), Ok(corner_b)) = (
+        camera.viewport_to_world_2d(camera_transform, Vec2::ZERO),
+        camera.viewport_to_world_2d(camera_transform, viewport),
+    ) else {
+        return;
+    };
+
+    let visible_min = corner_a.min(corner_b);
+    let visible_max = corner_a.max(corner_b);
+    let visible_width = (visible_max.x - visible_min.x).max(f32::EPSILON);
+
+    // Below a few pixels per cell the lines are denser than the display can
+    // resolve, so the grid reads as noise rather than structure.
+    if CELL_SIZE * viewport.x / visible_width < 3.0 {
+        return;
+    }
+
+    let half_width = cols as f32 * CELL_SIZE / 2.0;
+    let half_height = rows as f32 * CELL_SIZE / 2.0;
+
+    let x_min = (-half_width).max(visible_min.x);
+    let x_max = half_width.min(visible_max.x);
+    let y_min = (-half_height).max(visible_min.y);
+    let y_max = half_height.min(visible_max.y);
+    if x_min > x_max || y_min > y_max {
+        return;
+    }
+
+    let first_col = line_index(visible_min.x + half_width, cols);
+    let last_col = line_index((visible_max.x + half_width).ceil(), cols);
+    for col in first_col..=last_col {
+        let x = -half_width + col as f32 * CELL_SIZE;
+        gizmos.line_2d(Vec2::new(x, y_min), Vec2::new(x, y_max), GRID_LINE_COLOR);
+    }
+
+    let first_row = line_index(visible_min.y + half_height, rows);
+    let last_row = line_index((visible_max.y + half_height).ceil(), rows);
+    for row in first_row..=last_row {
+        let y = -half_height + row as f32 * CELL_SIZE;
+        gizmos.line_2d(Vec2::new(x_min, y), Vec2::new(x_max, y), GRID_LINE_COLOR);
+    }
+}
+
+/// Board-local offset to a grid line index, clamped to the lines that exist.
+fn line_index(offset_from_edge: f32, cells: usize) -> usize {
+    ((offset_from_edge / CELL_SIZE).floor().max(0.0) as usize).min(cells)
 }
 
 fn sync_cells(
     redraw_requested: Res<RedrawRequested>,
     mut sim: ResMut<Simulation>,
-    cell_entities: Res<CellEntities>,
-    mut cell_q: Query<&mut Sprite, With<Cell>>,
+    board_texture: Res<BoardTexture>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     if !redraw_requested.0 {
         return;
     }
 
-    let dirty = sim.app.board.take_dirty_cells();
-    match dirty {
-        DirtyCells::None => {}
-        DirtyCells::Full => {
-            for idx in 0..cell_entities.entities.len() {
-                let Some((col, row)) = cell_entities.coords_for_index(idx) else {
-                    continue;
-                };
-                let Some(entity) = cell_entities.entities.get(idx).copied() else {
-                    continue;
-                };
-                let Ok(mut sprite) = cell_q.get_mut(entity) else {
-                    continue;
-                };
-                sprite.color = if sim.app.board.is_alive(col, row) {
-                    LIVE_COLOR
-                } else {
-                    DEAD_COLOR
-                };
-            }
-        }
-        DirtyCells::Cells(indices) => {
-            for idx in indices {
-                let Some((col, row)) = cell_entities.coords_for_index(idx) else {
-                    continue;
-                };
-                let Some(entity) = cell_entities.entities.get(idx).copied() else {
-                    continue;
-                };
-                let Ok(mut sprite) = cell_q.get_mut(entity) else {
-                    continue;
-                };
-                sprite.color = if sim.app.board.is_alive(col, row) {
-                    LIVE_COLOR
-                } else {
-                    DEAD_COLOR
-                };
-            }
-        }
-    }
-}
-
-fn sync_grid_visibility(
-    grid_overlay: Res<GridOverlay>,
-    mut grid_q: Query<&mut Visibility, With<GridLine>>,
-) {
-    if !grid_overlay.is_changed() {
+    let (cols, rows) = sim.app.board.size();
+    // A resize rebuilds the texture and marks the board fully dirty, so bailing
+    // out on a mismatch defers the repaint by a frame rather than dropping it.
+    if cols == 0 || rows == 0 || cols != board_texture.cols || rows != board_texture.rows {
         return;
     }
-
-    let visibility = if grid_overlay.enabled {
-        Visibility::Visible
-    } else {
-        Visibility::Hidden
+    let Some(mut image) = images.get_mut(&board_texture.handle) else {
+        return;
     };
-    for mut line_visibility in &mut grid_q {
-        *line_visibility = visibility;
+    let Some(data) = image.data.as_mut() else {
+        return;
+    };
+
+    let dirty = sim.app.board.take_dirty_cells();
+    let indices: Box<dyn Iterator<Item = usize>> = match dirty {
+        DirtyCells::None => return,
+        DirtyCells::Full => Box::new(0..cols * rows),
+        DirtyCells::Cells(cells) => Box::new(cells.into_iter()),
+    };
+
+    let live = color_to_texel(LIVE_COLOR);
+    let dead = color_to_texel(DEAD_COLOR);
+    for idx in indices {
+        if idx >= cols * rows {
+            continue;
+        }
+        let texel = if sim.app.board.is_alive(idx % cols, idx / cols) {
+            &live
+        } else {
+            &dead
+        };
+        let offset = texel_offset(idx, cols, rows);
+        data[offset..offset + 4].copy_from_slice(texel);
     }
 }
 
@@ -497,4 +569,55 @@ fn render_hover_cell(
         Vec2::splat(CELL_SIZE),
         color,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{color_to_texel, texel_offset};
+    use crate::shared::{CELL_SIZE, DEAD_COLOR, LIVE_COLOR, cell_to_world};
+
+    #[test]
+    fn texel_rows_are_flipped_relative_to_board_rows() {
+        let (cols, rows) = (4, 3);
+
+        // Board row 0 is the bottom row, so it maps to the last texel row.
+        assert_eq!(texel_offset(0, cols, rows), (2 * cols) * 4);
+        assert_eq!(texel_offset(3, cols, rows), (2 * cols + 3) * 4);
+        // The top board row maps to texel row 0.
+        assert_eq!(texel_offset(2 * cols, cols, rows), 0);
+        assert_eq!(texel_offset(2 * cols + 1, cols, rows), 4);
+        // Every cell lands on a distinct, in-bounds texel.
+        let mut offsets: Vec<_> = (0..cols * rows)
+            .map(|idx| texel_offset(idx, cols, rows))
+            .collect();
+        offsets.sort_unstable();
+        offsets.dedup();
+        assert_eq!(offsets.len(), cols * rows);
+        assert_eq!(offsets.last(), Some(&((cols * rows - 1) * 4)));
+    }
+
+    #[test]
+    fn texel_order_matches_world_space_vertical_order() {
+        let (cols, rows) = (4, 3);
+        // A cell higher up in world space must sit earlier in the texture.
+        for row in 1..rows {
+            let lower = cell_to_world(0, row - 1, cols, rows).y;
+            let upper = cell_to_world(0, row, cols, rows).y;
+            assert!(upper > lower);
+            assert!(
+                texel_offset(row * cols, cols, rows) < texel_offset((row - 1) * cols, cols, rows)
+            );
+        }
+        // Sanity check the world mapping the texture has to agree with.
+        assert_eq!(
+            cell_to_world(0, 0, cols, rows).y,
+            -(rows as f32) * CELL_SIZE / 2.0 + CELL_SIZE * 0.5
+        );
+    }
+
+    #[test]
+    fn cell_colors_round_trip_to_srgb_bytes() {
+        assert_eq!(color_to_texel(LIVE_COLOR), [56, 217, 143, 255]);
+        assert_eq!(color_to_texel(DEAD_COLOR), [20, 23, 28, 255]);
+    }
 }

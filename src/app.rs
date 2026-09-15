@@ -1,5 +1,5 @@
 use crate::{
-    board,
+    board::{self, Rule},
     patterns::{Pattern, PatternParseError},
 };
 use std::collections::VecDeque;
@@ -12,10 +12,30 @@ pub enum EditTool {
     Stamp,
 }
 
+/// What an RLE import changed beyond adding a stamp.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PatternImport {
+    /// Set when the pattern declared a rule that differed from the board's.
+    pub applied_rule: Option<Rule>,
+}
+
 #[derive(Debug)]
 struct EditSnapshot {
     cells: Vec<u8>,
     epoch: usize,
+}
+
+const EDIT_HISTORY_MAX: usize = 32;
+const EDIT_HISTORY_BYTE_BUDGET: usize = 16 * 1024 * 1024;
+
+/// Keeps a history within both the edit-count cap and the byte budget, always
+/// retaining at least one entry.
+fn push_bounded(history: &mut VecDeque<EditSnapshot>, snapshot: EditSnapshot) {
+    let limit = (EDIT_HISTORY_BYTE_BUDGET / snapshot.cells.len().max(1)).clamp(1, EDIT_HISTORY_MAX);
+    while history.len() >= limit {
+        history.pop_front();
+    }
+    history.push_back(snapshot);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +88,7 @@ pub struct App {
     patterns: Vec<Pattern>,
     tool: EditTool,
     undo_history: VecDeque<EditSnapshot>,
+    redo_history: VecDeque<EditSnapshot>,
     stroke_active: bool,
     stroke_saved: bool,
 
@@ -94,6 +115,7 @@ impl App {
             patterns: Pattern::builtins(),
             tool: EditTool::Draw,
             undo_history: VecDeque::new(),
+            redo_history: VecDeque::new(),
             stroke_active: false,
             stroke_saved: false,
             board,
@@ -253,6 +275,7 @@ impl App {
         if self.board.resize(new_cols, new_rows) {
             // Window resizing changes board dimensions; old snapshots no longer fit.
             self.undo_history.clear();
+            self.redo_history.clear();
             self.end_stroke();
             self.needs_redraw = true;
         }
@@ -294,13 +317,26 @@ impl App {
         &mut self,
         name: impl Into<String>,
         source: &str,
-    ) -> Result<(), PatternParseError> {
+    ) -> Result<PatternImport, PatternParseError> {
         let pattern = Pattern::from_rle(name, source)?;
+
+        // Honour a declared rule instead of simulating the pattern as plain Life.
+        let mut applied_rule = None;
+        if let Some(rule) = pattern.rule
+            && self.board.set_rule(rule)
+        {
+            applied_rule = Some(rule);
+        }
+
         self.patterns.push(pattern);
         self.selected_pattern = Some(self.patterns.len() - 1);
         self.tool = EditTool::Stamp;
         self.needs_redraw = true;
-        Ok(())
+        Ok(PatternImport { applied_rule })
+    }
+
+    pub fn rule_label(&self) -> String {
+        self.board.rule().to_string()
     }
 
     pub fn clear_selected_pattern(&mut self) {
@@ -485,21 +521,33 @@ impl App {
         if self.stroke_active && self.stroke_saved {
             return;
         }
-        let cells = self.board.snapshot_cells();
-        // Limit history to 32 edits and approximately 16 MiB (at least one edit).
-        let limit = (16 * 1024 * 1024 / cells.len().max(1)).clamp(1, 32);
-        while self.undo_history.len() >= limit {
-            self.undo_history.pop_front();
-        }
-        self.undo_history.push_back(EditSnapshot {
-            cells,
-            epoch: self.epoch,
-        });
+        let snapshot = self.current_snapshot();
+        push_bounded(&mut self.undo_history, snapshot);
+        // A fresh edit invalidates whatever had been undone.
+        self.redo_history.clear();
         self.stroke_saved = self.stroke_active;
+    }
+
+    fn current_snapshot(&self) -> EditSnapshot {
+        EditSnapshot {
+            cells: self.board.snapshot_cells(),
+            epoch: self.epoch,
+        }
+    }
+
+    fn restore(&mut self, snapshot: EditSnapshot) {
+        self.board.restore_cells(snapshot.cells);
+        self.epoch = snapshot.epoch;
+        self.running = false;
+        self.needs_redraw = true;
     }
 
     pub fn can_undo(&self) -> bool {
         !self.undo_history.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo_history.is_empty()
     }
 
     pub fn undo(&mut self) -> bool {
@@ -507,10 +555,20 @@ impl App {
         let Some(snapshot) = self.undo_history.pop_back() else {
             return false;
         };
-        self.board.restore_cells(snapshot.cells);
-        self.epoch = snapshot.epoch;
-        self.running = false;
-        self.needs_redraw = true;
+        let current = self.current_snapshot();
+        push_bounded(&mut self.redo_history, current);
+        self.restore(snapshot);
+        true
+    }
+
+    pub fn redo(&mut self) -> bool {
+        self.end_stroke();
+        let Some(snapshot) = self.redo_history.pop_back() else {
+            return false;
+        };
+        let current = self.current_snapshot();
+        push_bounded(&mut self.undo_history, current);
+        self.restore(snapshot);
         true
     }
 
@@ -611,6 +669,88 @@ mod tests {
         assert_eq!(app.board.snapshot_cells(), original);
         assert!(app.undo());
         assert_eq!(app.board.live_cells_count(), 0);
+    }
+
+    #[test]
+    fn redo_reapplies_undone_edits_until_a_new_edit_discards_the_chain() {
+        let mut app = App::new(8, 8);
+        assert!(!app.can_redo());
+        assert!(!app.redo());
+
+        app.populate_board(1, 1);
+        app.populate_board(2, 2);
+        let two_edits = app.board.snapshot_cells();
+
+        assert!(app.undo());
+        assert!(app.can_redo());
+        assert_eq!(app.board.live_cells_count(), 1);
+
+        assert!(app.redo());
+        assert_eq!(app.board.snapshot_cells(), two_edits);
+        assert!(!app.can_redo());
+
+        // Undo twice, then make a different edit: the redo chain must be dropped.
+        assert!(app.undo());
+        assert!(app.undo());
+        assert_eq!(app.board.live_cells_count(), 0);
+        assert!(app.can_redo());
+        app.populate_board(5, 5);
+        assert!(!app.can_redo());
+        assert!(!app.redo());
+    }
+
+    #[test]
+    fn redo_restores_generation_and_leaves_playback_paused() {
+        let mut app = App::new(8, 8);
+        app.insert_blinker();
+        app.increment_epoch();
+        app.increment_epoch();
+        let epoch_before_clear = app.epoch;
+
+        app.clear_board();
+        assert!(app.undo());
+        assert_eq!(app.epoch, epoch_before_clear);
+
+        app.toggle_running();
+        assert!(app.redo());
+        assert_eq!(app.board.live_cells_count(), 0);
+        assert_eq!(app.epoch, epoch_before_clear);
+        assert!(!app.is_running());
+    }
+
+    #[test]
+    fn resize_invalidates_the_redo_chain_too() {
+        let mut app = App::new(8, 8);
+        app.populate_board(1, 1);
+        assert!(app.undo());
+        assert!(app.can_redo());
+
+        app.resize_board(9, 8);
+        assert!(!app.can_redo());
+        assert!(!app.can_undo());
+    }
+
+    #[test]
+    fn importing_rle_applies_a_declared_rule() {
+        let mut app = App::new(12, 12);
+        assert_eq!(app.rule_label(), "B3/S23");
+
+        // HighLife: the same survival counts plus birth on six neighbours.
+        let import = app
+            .import_rle_pattern("HighLife", "x = 3, y = 1, rule = B36/S23\n3o!")
+            .expect("RLE with a rule should import");
+        assert_eq!(
+            import.applied_rule.map(|rule| rule.to_string()),
+            Some("B36/S23".to_string())
+        );
+        assert_eq!(app.rule_label(), "B36/S23");
+
+        // A header without a rule leaves the board rule alone.
+        let plain = app
+            .import_rle_pattern("Plain", "x = 3, y = 1\n3o!")
+            .expect("RLE without a rule should import");
+        assert!(plain.applied_rule.is_none());
+        assert_eq!(app.rule_label(), "B36/S23");
     }
 
     #[test]

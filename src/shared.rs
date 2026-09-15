@@ -10,10 +10,12 @@ pub const GHOST_LIVE_COLOR: Color = Color::srgba(0.22, 0.85, 0.56, 0.30);
 pub const BG_COLOR: Color = Color::srgb(0.02, 0.02, 0.03);
 pub const WALL_COLOR: Color = Color::srgba(0.96, 0.92, 0.70, 0.55);
 pub const WALL_BRIGHT_COLOR: Color = Color::srgba(1.0, 0.98, 0.82, 0.92);
-pub const GRID_LINE_COLOR: Color = Color::srgba(0.9, 0.9, 0.95, 0.14);
+pub const GRID_LINE_COLOR: Color = Color::srgba(0.02, 0.02, 0.03, 0.8);
 pub const CAMERA_ZOOM_STEP: f32 = 0.10;
 pub const CAMERA_ZOOM_MIN: f32 = 0.25;
-pub const CAMERA_ZOOM_MAX: f32 = 8.0;
+// Large boards are many times wider than the window, so the ceiling has to be
+// high enough to frame one whole.
+pub const CAMERA_ZOOM_MAX: f32 = 64.0;
 pub const CAMERA_PAN_SPEED: f32 = 700.0;
 
 #[derive(Clone, Copy)]
@@ -238,7 +240,8 @@ fn build_controls_text() -> String {
     out.push_str("Left drag: draw or erase with the selected tool\n");
     out.push_str("Left click (stamp): place pattern\n");
     out.push_str("Right drag: erase\n");
-    out.push_str("Cmd/Ctrl+Z: undo last edit and pause\n");
+    out.push_str("U or Cmd/Ctrl+Z: undo last edit and pause\n");
+    out.push_str("Cmd/Ctrl+Shift+Z: redo last undone edit\n");
     out.push_str(BINDING_QUIT.label);
     out.push_str(": ");
     out.push_str(BINDING_QUIT.action);
@@ -253,7 +256,7 @@ fn build_controls_text() -> String {
     out
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum UiLayoutPreset {
     #[default]
     Full,
@@ -377,6 +380,47 @@ pub struct GridOverlay {
     pub enabled: bool,
 }
 
+pub const BOARD_SIZE_MIN: usize = 8;
+pub const BOARD_SIZE_MAX: usize = 2048;
+pub const BOARD_SIZE_PRESETS: [(usize, usize); 4] =
+    [(128, 128), (256, 256), (512, 512), (1024, 1024)];
+
+/// Board dimensions, held independently of the window. Resizing the window only
+/// changes how much of the board is visible; only a change here resizes the board.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+pub struct BoardSettings {
+    pub cols: usize,
+    pub rows: usize,
+}
+
+impl BoardSettings {
+    /// Zero means "not chosen yet"; startup fills it from persistence or the window.
+    pub fn is_set(self) -> bool {
+        self.cols > 0 && self.rows > 0
+    }
+
+    pub fn set(&mut self, cols: usize, rows: usize) {
+        self.cols = cols.clamp(BOARD_SIZE_MIN, BOARD_SIZE_MAX);
+        self.rows = rows.clamp(BOARD_SIZE_MIN, BOARD_SIZE_MAX);
+    }
+}
+
+/// Persisted settings must land before the world is built from them.
+#[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
+pub enum StartupSet {
+    LoadSettings,
+    BuildWorld,
+}
+
+/// Orthographic scale that frames the whole board in the window, with a margin.
+pub fn camera_scale_to_fit_board(window: &Window, cols: usize, rows: usize) -> f32 {
+    let board_width = cols as f32 * CELL_SIZE;
+    let board_height = rows as f32 * CELL_SIZE;
+    let horizontal = board_width / window.width().max(1.0);
+    let vertical = board_height / window.height().max(1.0);
+    (horizontal.max(vertical) * 1.05).clamp(CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+}
+
 /// Embedded egui panels share the background layer, so capture them explicitly.
 #[derive(Resource, Default)]
 pub struct UiPointerCapture {
@@ -384,16 +428,7 @@ pub struct UiPointerCapture {
 }
 
 #[derive(Component)]
-pub struct Cell {
-    pub col: usize,
-    pub row: usize,
-}
-
-#[derive(Component)]
 pub struct MainCamera;
-
-#[derive(Component)]
-pub struct GridLine;
 
 pub fn board_size_for_window(window: &Window) -> (usize, usize) {
     let cols = (window.width() / CELL_SIZE).floor() as usize;
@@ -431,7 +466,64 @@ pub fn world_to_cell(world: Vec2, cols: usize, rows: usize) -> Option<(usize, us
 
 #[cfg(test)]
 mod tests {
-    use super::CONTROLS_TEXT;
+    use super::{
+        BOARD_SIZE_MAX, BOARD_SIZE_MIN, BoardSettings, CAMERA_ZOOM_MAX, CELL_SIZE, CONTROLS_TEXT,
+        camera_scale_to_fit_board,
+    };
+    use bevy::window::{Window, WindowResolution};
+
+    fn window(width: u32, height: u32) -> Window {
+        Window {
+            resolution: WindowResolution::new(width, height),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn board_settings_start_unset_and_clamp_to_supported_sizes() {
+        let mut settings = BoardSettings::default();
+        assert!(!settings.is_set());
+
+        settings.set(256, 128);
+        assert!(settings.is_set());
+        assert_eq!((settings.cols, settings.rows), (256, 128));
+
+        settings.set(0, 999_999);
+        assert_eq!(
+            (settings.cols, settings.rows),
+            (BOARD_SIZE_MIN, BOARD_SIZE_MAX)
+        );
+    }
+
+    #[test]
+    fn camera_fit_frames_the_whole_board() {
+        let window = window(1200, 800);
+
+        // A board smaller than the window still fits at any scale, so the margin
+        // keeps it just inside the viewport.
+        let small = camera_scale_to_fit_board(&window, 10, 10);
+        assert!(small * 1200.0 >= 10.0 * CELL_SIZE, "small board must fit");
+
+        // A board far wider than the window must zoom out enough to show it all.
+        let large = camera_scale_to_fit_board(&window, 1024, 1024);
+        assert!(
+            large * 800.0 >= 1024.0 * CELL_SIZE,
+            "1024 rows must fit vertically"
+        );
+        assert!(large <= CAMERA_ZOOM_MAX);
+
+        // The limiting axis wins: a wide, short board is framed by its width.
+        let wide = camera_scale_to_fit_board(&window, 1024, 16);
+        assert!(wide * 1200.0 >= 1024.0 * CELL_SIZE);
+    }
+
+    #[test]
+    fn largest_supported_board_still_fits_within_the_zoom_ceiling() {
+        let window = window(1200, 800);
+        let scale = camera_scale_to_fit_board(&window, BOARD_SIZE_MAX, BOARD_SIZE_MAX);
+        assert!(scale < CAMERA_ZOOM_MAX, "zoom ceiling is too low: {scale}");
+        assert!(scale * 800.0 >= BOARD_SIZE_MAX as f32 * CELL_SIZE);
+    }
 
     #[test]
     fn readme_contains_controls_text() {

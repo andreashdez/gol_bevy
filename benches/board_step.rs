@@ -1,11 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
+use gol_bevy::board::{Board, DirtyCells};
 use std::hint::black_box;
-
-#[allow(dead_code, unused_imports)]
-#[path = "../src/board.rs"]
-mod board;
-
-use board::{Board, DirtyCells};
 
 fn seed_glider(board: &mut Board) {
     let (cols, rows) = board.size();

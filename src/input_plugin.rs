@@ -79,13 +79,28 @@ fn handle_keyboard(
     mut grid_overlay: ResMut<GridOverlay>,
     mut ui_layout: ResMut<UiLayout>,
 ) {
-    let command = keys.pressed(KeyCode::SuperLeft)
-        || keys.pressed(KeyCode::SuperRight)
-        || keys.pressed(KeyCode::ControlLeft)
-        || keys.pressed(KeyCode::ControlRight);
+    let command_keys = [
+        KeyCode::SuperLeft,
+        KeyCode::SuperRight,
+        KeyCode::ControlLeft,
+        KeyCode::ControlRight,
+    ];
+    // Fast chords can press and release the modifier within one frame.
+    let command = keys.any_pressed(command_keys)
+        || keys.any_just_pressed(command_keys)
+        || keys.any_just_released(command_keys);
+    if keys.just_pressed(KeyCode::KeyU) {
+        sim.app.undo();
+        return;
+    }
     if command {
         if keys.just_pressed(KeyCode::KeyZ) {
-            sim.app.undo();
+            let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+            if shift {
+                sim.app.redo();
+            } else {
+                sim.app.undo();
+            }
         }
         return;
     }
@@ -291,5 +306,45 @@ fn handle_camera_reset(
 
     if let Projection::Orthographic(ref mut ortho) = *projection {
         ortho.scale = 1.0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn fast_undo_chord_does_not_rotate_stamp() {
+        for modifier in [Some(KeyCode::SuperLeft), Some(KeyCode::ControlLeft), None] {
+            let mut world = World::new();
+            let mut app = crate::app::App::new(8, 8);
+            app.populate_board(3, 3);
+            app.select_pattern(PatternKind::Glider);
+            world.insert_resource(Simulation {
+                app,
+                accumulator: std::time::Duration::ZERO,
+                avg_step_ms: 0.0,
+                step_samples: 0,
+            });
+            let mut keys = ButtonInput::<KeyCode>::default();
+            if let Some(modifier) = modifier {
+                keys.press(modifier);
+                keys.press(KeyCode::KeyZ);
+                keys.release(KeyCode::KeyZ);
+                keys.release(modifier);
+            } else {
+                keys.press(KeyCode::KeyU);
+                keys.release(KeyCode::KeyU);
+            }
+            world.insert_resource(keys);
+            world.insert_resource(DiagnosticsOverlay { enabled: false });
+            world.insert_resource(GridOverlay { enabled: false });
+            world.insert_resource(UiLayout::default());
+            world.run_system_once(handle_keyboard).unwrap();
+            let app = &world.resource::<Simulation>().app;
+            assert_eq!(app.board.live_cells_count(), 0);
+            assert_eq!(app.selected_pattern_status_label(), "Glider");
+        }
     }
 }
