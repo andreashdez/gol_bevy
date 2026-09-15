@@ -1,5 +1,6 @@
 use crate::{
     app::{EditTool, PatternKind},
+    native_ui_plugin::{NativeUi, canvas_keyboard_available, pointer_over_native},
     shared::{
         BINDING_CLEAR, BINDING_CLEAR_STAMP, BINDING_CYCLE_LAYOUT, BINDING_FLIP_STAMP,
         BINDING_PAN_DOWN, BINDING_PAN_LEFT, BINDING_PAN_RIGHT, BINDING_PAN_UP, BINDING_QUIT,
@@ -41,6 +42,7 @@ impl Plugin for InputPlugin {
         .add_systems(
             PostUpdate,
             handle_keyboard
+                .run_if(canvas_keyboard_available)
                 .in_set(UpdateSet::Input)
                 .run_if(not(egui_wants_any_keyboard_input)),
         )
@@ -235,7 +237,17 @@ fn handle_mouse(
 fn handle_camera_zoom(
     mut wheel_events: MessageReader<MouseWheel>,
     mut camera_q: Query<&mut Projection, With<MainCamera>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mode: Res<NativeUi>,
+    layout: Res<UiLayout>,
 ) {
+    if windows
+        .single()
+        .is_ok_and(|w| pointer_over_native(w, &mode, &layout))
+    {
+        wheel_events.clear();
+        return;
+    }
     let Ok(mut projection) = camera_q.single_mut() else {
         return;
     };

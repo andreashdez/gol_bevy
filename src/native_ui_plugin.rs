@@ -1,0 +1,678 @@
+//! A native Bevy UI prototype. Both frontends edit the same Simulation resource.
+use crate::{
+    app::{App as GolApp, EditTool},
+    shared::{GridOverlay, Simulation, StartupSet, UiLayout, UpdateSet},
+};
+use bevy::{
+    asset::RenderAssetUsages,
+    ecs::system::SystemParam,
+    image::ImageSampler,
+    input_focus::{
+        InputFocus,
+        tab_navigation::{TabGroup, TabIndex, TabNavigationPlugin},
+    },
+    picking::hover::Hovered,
+    prelude::*,
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+    ui::{InteractionDisabled, Pressed},
+    ui_widgets::{Activate, Button as WidgetButton, ScrollArea},
+    window::PrimaryWindow,
+};
+
+const PANEL: Color = Color::srgb(0.055, 0.075, 0.095);
+const SURFACE: Color = Color::srgb(0.095, 0.12, 0.145);
+const LINE: Color = Color::srgb(0.18, 0.23, 0.27);
+const INK: Color = Color::srgb(0.88, 0.93, 0.94);
+const MUTED: Color = Color::srgb(0.52, 0.63, 0.68);
+const ACCENT: Color = Color::srgb(0.22, 0.85, 0.56);
+const TOP: f32 = 112.0;
+const BOTTOM: f32 = 44.0;
+const SIDE: f32 = 256.0;
+const UI_FONT: Handle<Font> = bevy::asset::uuid_handle!("67dfd7f0-b829-4a23-a5ae-3e416c5aba2d");
+
+#[derive(Resource)]
+pub struct NativeUi {
+    pub enabled: bool,
+    pub import_requested: bool,
+}
+
+impl Default for NativeUi {
+    fn default() -> Self {
+        Self {
+            enabled: !std::env::args().any(|arg| arg == "--classic-ui"),
+            import_requested: false,
+        }
+    }
+}
+
+pub struct NativeUiPlugin;
+impl Plugin for NativeUiPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<NativeUi>()
+            .add_plugins(TabNavigationPlugin)
+            .add_observer(activate)
+            .add_systems(Startup, setup.after(StartupSet::BuildWorld))
+            .add_systems(
+                Update,
+                (toggle_mode, sync, sync_palette)
+                    .chain()
+                    .before(UpdateSet::Camera),
+            );
+    }
+}
+
+#[derive(Component)]
+struct NativeRoot;
+#[derive(Component)]
+struct Sidebar;
+#[derive(Component)]
+struct Palette;
+#[derive(Component)]
+enum Readout {
+    Speed,
+    Status,
+    Stamp,
+}
+
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+enum Action {
+    Play,
+    Step,
+    Undo,
+    Redo,
+    Slower,
+    Faster,
+    Grid,
+    Sidebar,
+    Classic,
+    Import,
+    Help,
+    Tool(EditTool),
+    Pattern(usize),
+    Rotate,
+    Flip,
+    Randomize,
+    Clear,
+    Boundary,
+}
+
+fn label(value: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+    (
+        Text::new(value),
+        TextFont {
+            font: UI_FONT.into(),
+            font_size: FontSize::Px(size),
+            ..default()
+        },
+        TextColor(color),
+        Pickable::IGNORE,
+    )
+}
+
+fn row() -> Node {
+    Node {
+        align_items: AlignItems::Center,
+        column_gap: px(8),
+        flex_shrink: 0.0,
+        ..default()
+    }
+}
+
+fn button(parent: &mut ChildSpawnerCommands, text: &str, action: Action) {
+    parent
+        .spawn((
+            Node {
+                padding: UiRect::axes(px(12), px(9)),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(7)),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                flex_shrink: 0.0,
+                ..default()
+            },
+            WidgetButton,
+            action,
+            Hovered::default(),
+            TabIndex(0),
+            BackgroundColor(SURFACE),
+            BorderColor::all(LINE),
+            Name::new(text.to_owned()),
+        ))
+        .with_children(|p| {
+            p.spawn(label(text, 14.0, INK));
+        });
+}
+
+fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
+    // Embed the licensed font so launching a desktop bundle works from any directory.
+    fonts
+        .insert(
+            UI_FONT.id(),
+            Font::from_bytes(include_bytes!("../assets/fonts/Ubuntu-Light.ttf").to_vec()),
+        )
+        .expect("static UI font handle is valid");
+    commands
+        .spawn((
+            NativeRoot,
+            TabGroup::default(),
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(0),
+                right: px(0),
+                top: px(0),
+                height: px(TOP),
+                padding: UiRect::all(px(16)),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(10),
+                ..default()
+            },
+            BackgroundColor(PANEL),
+            GlobalZIndex(10),
+        ))
+        .with_children(|p| {
+            p.spawn(row()).with_children(|p| {
+                p.spawn(label("LIFE", 23.0, ACCENT));
+                p.spawn(label("/  NATIVE PREVIEW", 12.0, MUTED));
+                p.spawn(Node {
+                    flex_grow: 1.0,
+                    ..default()
+                });
+                button(p, "Import RLE", Action::Import);
+                button(p, "Help", Action::Help);
+                button(p, "Classic UI", Action::Classic);
+            });
+            p.spawn(row()).with_children(|p| {
+                button(p, "Play", Action::Play);
+                button(p, "Step", Action::Step);
+                button(p, "Undo", Action::Undo);
+                button(p, "Redo", Action::Redo);
+                button(p, "−", Action::Slower);
+                p.spawn(Node {
+                    width: px(84),
+                    height: px(36),
+                    align_items: AlignItems::Center,
+                    ..default()
+                })
+                .with_children(|p| {
+                    p.spawn((label("", 14.0, INK), Readout::Speed));
+                });
+                button(p, "+", Action::Faster);
+                p.spawn(Node {
+                    flex_grow: 1.0,
+                    ..default()
+                });
+                button(p, "Grid", Action::Grid);
+                button(p, "Palette", Action::Sidebar);
+            });
+        });
+    commands.spawn((NativeRoot, Sidebar, TabGroup::default(), ScrollArea, Node {
+        position_type: PositionType::Absolute, left: px(16), top: px(TOP + 16.0),
+        bottom: px(BOTTOM + 16.0), width: px(SIDE), padding: UiRect::all(px(16)),
+        flex_direction: FlexDirection::Column, row_gap: px(14), overflow: Overflow::scroll_y(),
+        border: UiRect::all(px(1)), border_radius: BorderRadius::all(px(12)), ..default()
+    }, BackgroundColor(PANEL), BorderColor::all(LINE), GlobalZIndex(10))).with_children(|p| {
+        p.spawn(label("WORKSPACE", 12.0, MUTED));
+        p.spawn(row()).with_children(|p| {
+            button(p, "Draw", Action::Tool(EditTool::Draw));
+            button(p, "Erase", Action::Tool(EditTool::Erase));
+            button(p, "Stamp", Action::Tool(EditTool::Stamp));
+        });
+        p.spawn(label("Patterns", 21.0, INK));
+        p.spawn(label("Choose a shape, then click the board.", 12.0, MUTED));
+        p.spawn((Palette, Node { flex_direction: FlexDirection::Column, row_gap: px(8), flex_shrink: 0.0, ..default() }));
+        p.spawn((label("", 12.0, MUTED), Readout::Stamp));
+        p.spawn(row()).with_children(|p| {
+                    button(p, "Rotate", Action::Rotate);
+                    button(p, "Flip", Action::Flip);
+        });
+        p.spawn((Node { height: px(1), flex_shrink: 0.0, ..default() }, BackgroundColor(LINE)));
+        p.spawn(label("Board", 21.0, INK));
+        p.spawn(row()).with_children(|p| {
+            button(p, "Randomize", Action::Randomize);
+            button(p, "Clear", Action::Clear);
+        });
+        button(p, "Edges", Action::Boundary);
+        p.spawn(label("Board size and layout settings are available in Classic UI.\n\nF4 switches interfaces at any time.\nScroll for more controls.", 12.0, MUTED));
+    });
+    commands
+        .spawn((
+            NativeRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(0),
+                right: px(0),
+                bottom: px(0),
+                height: px(BOTTOM),
+                padding: UiRect::axes(px(18), px(10)),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(PANEL),
+            GlobalZIndex(10),
+        ))
+        .with_children(|p| {
+            p.spawn((label("", 13.0, MUTED), Readout::Status));
+        });
+}
+
+/// Logical rectangles shared by layout and input routing; gaps remain canvas.
+pub fn panel_rects(size: Vec2, sidebar: bool) -> Vec<Rect> {
+    let mut rects = vec![
+        Rect::new(0.0, 0.0, size.x, TOP),
+        Rect::new(0.0, (size.y - BOTTOM).max(0.0), size.x, size.y),
+    ];
+    if sidebar && size.y > TOP + BOTTOM + 32.0 {
+        rects.push(Rect::new(
+            16.0,
+            TOP + 16.0,
+            SIDE + 16.0,
+            size.y - BOTTOM - 16.0,
+        ));
+    }
+    rects
+}
+
+pub fn pointer_over_native(window: &Window, mode: &NativeUi, layout: &UiLayout) -> bool {
+    mode.enabled
+        && window.cursor_position().is_some_and(|pos| {
+            panel_rects(window.size(), layout.is_control_deck_visible())
+                .iter()
+                .any(|r| r.contains(pos))
+        })
+}
+
+pub fn canvas_keyboard_available(
+    mode: Res<NativeUi>,
+    focus: Res<InputFocus>,
+    keys: Res<ButtonInput<KeyCode>>,
+) -> bool {
+    !(mode.enabled
+        && focus.get().is_some()
+        && (keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter)))
+}
+
+fn toggle_mode(
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    layout: Res<UiLayout>,
+    mut mode: ResMut<NativeUi>,
+    mut focus: ResMut<InputFocus>,
+) {
+    if keys.just_pressed(KeyCode::F4) {
+        mode.enabled = !mode.enabled;
+        focus.clear();
+    }
+    if !mode.enabled
+        || (mouse.just_pressed(MouseButton::Left)
+            && windows
+                .single()
+                .is_ok_and(|w| !pointer_over_native(w, &mode, &layout)))
+    {
+        focus.clear();
+    }
+}
+
+fn activate(
+    event: On<Activate>,
+    actions: Query<&Action>,
+    mut sim: ResMut<Simulation>,
+    mut mode: ResMut<NativeUi>,
+    mut grid: ResMut<GridOverlay>,
+    mut layout: ResMut<UiLayout>,
+) {
+    if !mode.enabled {
+        return;
+    }
+    let Ok(action) = actions.get(event.entity) else {
+        return;
+    };
+    match action {
+        Action::Classic => mode.enabled = false,
+        Action::Import => mode.import_requested = true,
+        Action::Grid => grid.enabled = !grid.enabled,
+        Action::Sidebar => {
+            if !layout.preset.uses_side_panel() {
+                layout.preset = crate::shared::UiLayoutPreset::Compact;
+                layout.control_deck_visible = true;
+            } else {
+                layout.toggle_control_deck();
+            }
+        }
+        _ => apply_action(*action, &mut sim.app),
+    }
+}
+
+fn apply_action(action: Action, app: &mut GolApp) {
+    match action {
+        Action::Play => app.toggle_running(),
+        Action::Step => app.increment_epoch(),
+        Action::Undo => {
+            app.undo();
+        }
+        Action::Redo => {
+            app.redo();
+        }
+        Action::Slower => {
+            app.slow_down();
+        }
+        Action::Faster => {
+            app.speed_up();
+        }
+        Action::Tool(tool) => app.set_tool(tool),
+        Action::Pattern(index) => {
+            app.select_pattern_index(index);
+        }
+        Action::Rotate => app.rotate_stamp_clockwise(),
+        Action::Flip => app.toggle_stamp_flip(),
+        Action::Randomize => app.randomize_board(),
+        Action::Clear => app.clear_board(),
+        Action::Boundary => app.toggle_boundary_mode(),
+        Action::Help => app.toggle_help(),
+        _ => {}
+    }
+}
+
+type ButtonState<'a> = (
+    Entity,
+    &'a Action,
+    &'a Hovered,
+    Has<Pressed>,
+    &'a mut BackgroundColor,
+    &'a mut BorderColor,
+    &'a Children,
+    &'a Name,
+    &'a mut bevy::a11y::AccessibilityNode,
+);
+
+#[derive(SystemParam)]
+struct ViewState<'w> {
+    mode: Res<'w, NativeUi>,
+    layout: Res<'w, UiLayout>,
+    grid: Res<'w, GridOverlay>,
+    focus: Res<'w, InputFocus>,
+}
+
+fn sync(
+    mut commands: Commands,
+    sim: Res<Simulation>,
+    view: ViewState,
+    mut roots: Query<(&mut Node, Has<Sidebar>), With<NativeRoot>>,
+    mut buttons: Query<ButtonState>,
+    mut texts: Query<(&mut Text, &mut TextColor, Option<&Readout>)>,
+) {
+    let ViewState {
+        mode,
+        layout,
+        grid,
+        focus,
+    } = view;
+    for (mut node, sidebar) in &mut roots {
+        let display = if mode.enabled && (!sidebar || layout.is_control_deck_visible()) {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != display {
+            node.display = display;
+        }
+    }
+    if !mode.enabled {
+        return;
+    }
+    for (entity, action, hovered, pressed, mut bg, mut border, children, name, mut accessible) in
+        &mut buttons
+    {
+        let accessible_label = match action {
+            Action::Play => {
+                if sim.app.is_running() {
+                    "Pause"
+                } else {
+                    "Play"
+                }
+            }
+            Action::Slower => "Slower",
+            Action::Faster => "Faster",
+            _ => name.as_str(),
+        };
+        if accessible.label() != Some(accessible_label) {
+            accessible.set_label(accessible_label);
+        }
+        let disabled = match action {
+            Action::Undo => !sim.app.can_undo(),
+            Action::Redo => !sim.app.can_redo(),
+            Action::Rotate | Action::Flip => sim.app.tool() != EditTool::Stamp,
+            Action::Slower => sim.app.tick_rate_ms() >= GolApp::tick_rate_bounds().1,
+            Action::Faster => sim.app.tick_rate_ms() <= GolApp::tick_rate_bounds().0,
+            _ => false,
+        };
+        if disabled {
+            commands.entity(entity).insert_if_new(InteractionDisabled);
+        }
+        if !disabled {
+            commands.entity(entity).remove::<InteractionDisabled>();
+        }
+        let selected = match action {
+            Action::Play => true,
+            Action::Tool(tool) => sim.app.tool() == *tool,
+            Action::Pattern(index) => {
+                sim.app.tool() == EditTool::Stamp
+                    && sim.app.selected_pattern_index() == Some(*index)
+            }
+            Action::Grid => grid.enabled,
+            Action::Sidebar => layout.is_control_deck_visible(),
+            _ => false,
+        };
+        bg.0 = if disabled {
+            PANEL
+        } else if *action == Action::Play {
+            if pressed {
+                Color::srgb(0.15, 0.65, 0.43)
+            } else {
+                ACCENT
+            }
+        } else if pressed || hovered.get() {
+            Color::srgb(0.16, 0.23, 0.26)
+        } else if selected {
+            Color::srgb(0.08, 0.21, 0.17)
+        } else {
+            SURFACE
+        };
+        *border = BorderColor::all(if focus.get() == Some(entity) {
+            INK
+        } else if selected {
+            ACCENT
+        } else {
+            LINE
+        });
+        for child in children.iter() {
+            if let Ok((mut text, mut color, _)) = texts.get_mut(child) {
+                color.0 = if disabled {
+                    MUTED
+                } else if *action == Action::Play {
+                    PANEL
+                } else {
+                    INK
+                };
+                let replacement = match action {
+                    Action::Play => Some(if sim.app.is_running() {
+                        "Pause".to_string()
+                    } else {
+                        "Play".to_string()
+                    }),
+                    Action::Boundary => Some(format!("Edges: {}", sim.app.boundary_mode_label())),
+                    _ => None,
+                };
+                if let Some(value) = replacement
+                    && text.0 != value
+                {
+                    text.0 = value;
+                }
+            }
+        }
+    }
+    for (mut text, _, readout) in &mut texts {
+        let value = match readout {
+            Some(Readout::Speed) => format!("{:.1} gen/s", 1000.0 / sim.app.tick_rate_ms() as f32),
+            Some(Readout::Stamp) => sim.app.selected_pattern_status_label(),
+            Some(Readout::Status) => format!(
+                "{}    /    GENERATION {}    /    {} LIVING    /    {}    /    Space to play · U to undo",
+                if sim.app.is_running() {
+                    "RUNNING"
+                } else {
+                    "PAUSED"
+                },
+                sim.app.epoch,
+                sim.app.board.live_cells_count(),
+                sim.app.rule_label()
+            ),
+            None => continue,
+        };
+        if text.0 != value {
+            text.0 = value;
+        }
+    }
+}
+
+fn sync_palette(
+    mut commands: Commands,
+    sim: Res<Simulation>,
+    palette: Query<Entity, With<Palette>>,
+    mut images: ResMut<Assets<Image>>,
+    mut count: Local<usize>,
+) {
+    if *count == sim.app.pattern_count() {
+        return;
+    }
+    let Ok(entity) = palette.single() else {
+        return;
+    };
+    commands
+        .entity(entity)
+        .despawn_children()
+        .with_children(|p| {
+            for index in 0..sim.app.pattern_count() {
+                let Some(pattern) = sim.app.pattern_at(index) else {
+                    continue;
+                };
+                let preview = images.add(thumbnail(&pattern.cells, pattern.width, pattern.height));
+                p.spawn((
+                    WidgetButton,
+                    Action::Pattern(index),
+                    Hovered::default(),
+                    TabIndex(0),
+                    Name::new(pattern.name.clone()),
+                    BackgroundColor(SURFACE),
+                    BorderColor::all(LINE),
+                    Node {
+                        width: percent(100),
+                        min_height: px(78),
+                        padding: UiRect::all(px(10)),
+                        column_gap: px(12),
+                        align_items: AlignItems::Center,
+                        border: UiRect::all(px(1)),
+                        border_radius: BorderRadius::all(px(8)),
+                        flex_shrink: 0.0,
+                        ..default()
+                    },
+                ))
+                .with_children(|p| {
+                    p.spawn((
+                        ImageNode::new(preview),
+                        Node {
+                            width: px(52),
+                            height: px(52),
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                        Pickable::IGNORE,
+                    ));
+                    p.spawn((
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(5),
+                            min_width: px(0),
+                            ..default()
+                        },
+                        Pickable::IGNORE,
+                    ))
+                    .with_children(|p| {
+                        p.spawn(label(&pattern.name, 15.0, INK));
+                        p.spawn(label(
+                            format!(
+                                "{} × {} · {} cells",
+                                pattern.width,
+                                pattern.height,
+                                pattern.cells.len()
+                            ),
+                            11.0,
+                            MUTED,
+                        ));
+                    });
+                });
+            }
+        });
+    *count = sim.app.pattern_count();
+}
+
+/// A bounded thumbnail keeps large imported patterns from spawning thousands of UI entities.
+fn thumbnail(cells: &[(usize, usize)], width: usize, height: usize) -> Image {
+    let mut image = Image::new_fill(
+        Extent3d {
+            width: 64,
+            height: 64,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &[18, 29, 35, 255],
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::nearest();
+    let scale = (52.0 / width.max(height).max(1) as f32).min(10.0);
+    let x_pad = (64.0 - width as f32 * scale) / 2.0;
+    let y_pad = (64.0 - height as f32 * scale) / 2.0;
+    if let Some(data) = &mut image.data {
+        for &(x, y) in cells {
+            let left = (x_pad + x as f32 * scale) as usize;
+            let top = (y_pad + height.saturating_sub(y + 1) as f32 * scale) as usize;
+            for py in top..(top + (scale - 1.0).max(1.0) as usize).min(64) {
+                for px in left..(left + (scale - 1.0).max(1.0) as usize).min(64) {
+                    data[(py * 64 + px) * 4..(py * 64 + px) * 4 + 4]
+                        .copy_from_slice(&[56, 217, 143, 255]);
+                }
+            }
+        }
+    }
+    image
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_actions_share_edit_history_and_playback() {
+        let mut app = GolApp::new(30, 30);
+        apply_action(Action::Pattern(0), &mut app);
+        app.place_selected_pattern_at(10, 10);
+        assert_eq!(app.board.live_cells_count(), 5);
+        apply_action(Action::Undo, &mut app);
+        assert_eq!(app.board.live_cells_count(), 0);
+        apply_action(Action::Redo, &mut app);
+        assert_eq!(app.board.live_cells_count(), 5);
+        apply_action(Action::Play, &mut app);
+        assert!(app.is_running());
+    }
+
+    #[test]
+    fn chrome_captures_clicks_but_canvas_and_hidden_palette_do_not() {
+        let size = Vec2::new(768.0, 600.0);
+        let contains = |sidebar, pos| panel_rects(size, sidebar).iter().any(|r| r.contains(pos));
+        assert!(contains(true, Vec2::new(300.0, 80.0)));
+        assert!(contains(true, Vec2::new(40.0, 180.0)));
+        assert!(contains(true, Vec2::new(500.0, 590.0)));
+        assert!(!contains(true, Vec2::new(400.0, 300.0)));
+        assert!(!contains(false, Vec2::new(40.0, 180.0)));
+    }
+}

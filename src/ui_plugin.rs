@@ -1,6 +1,7 @@
 use crate::{
     app::{App as GolApp, EditTool},
     board::frontier_dense_threshold_percent_for_diagnostics,
+    native_ui_plugin::{NativeUi, panel_rects},
     patterns::Pattern,
     shared::{
         BOARD_SIZE_MAX, BOARD_SIZE_MIN, BOARD_SIZE_PRESETS, BoardSettings, CONTROLS_TEXT,
@@ -76,6 +77,7 @@ const MUTED: egui::Color32 = egui::Color32::from_rgb(155, 167, 180);
 struct Overlays<'w> {
     diagnostics: ResMut<'w, DiagnosticsOverlay>,
     grid: ResMut<'w, GridOverlay>,
+    native: ResMut<'w, NativeUi>,
 }
 
 fn render_ui(
@@ -99,184 +101,222 @@ fn render_ui(
             .max_rect(ctx.viewport_rect()),
     );
 
-    let toolbar =
-        egui::Panel::top("playback_toolbar")
-            .resizable(false)
-            .show(&mut viewport_ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.strong("LIFE");
-                    ui.separator();
-                    let label = if sim.app.is_running() {
-                        "Pause"
-                    } else {
-                        "Play"
-                    };
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                egui::RichText::new(label)
-                                    .strong()
-                                    .color(egui::Color32::from_rgb(12, 30, 22)),
+    if overlays.native.import_requested {
+        ui_state.import_open = true;
+        overlays.native.import_requested = false;
+    }
+    let panels = if !overlays.native.enabled {
+        let toolbar =
+            egui::Panel::top("playback_toolbar")
+                .resizable(false)
+                .show(&mut viewport_ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.strong("LIFE");
+                        if ui.button("Native preview").clicked() {
+                            overlays.native.enabled = true;
+                        }
+                        ui.separator();
+                        let label = if sim.app.is_running() {
+                            "Pause"
+                        } else {
+                            "Play"
+                        };
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new(label)
+                                        .strong()
+                                        .color(egui::Color32::from_rgb(12, 30, 22)),
+                                )
+                                .fill(ACCENT)
+                                .min_size(egui::vec2(80.0, 32.0)),
                             )
-                            .fill(ACCENT)
-                            .min_size(egui::vec2(80.0, 32.0)),
-                        )
-                        .on_hover_text("Play / pause · Space")
-                        .clicked()
-                    {
-                        sim.app.toggle_running();
-                    }
-                    if ui
-                        .button("Step")
-                        .on_hover_text("Advance one generation · J")
-                        .clicked()
-                    {
-                        sim.app.increment_epoch();
-                    }
-                    render_speed(ui, &mut sim.app);
-                    ui.separator();
-                    if ui
-                        .add_enabled(sim.app.can_undo(), egui::Button::new("Undo"))
-                        .on_hover_text("Restore the previous edit and pause · U or Cmd/Ctrl+Z")
-                        .clicked()
-                    {
-                        sim.app.undo();
-                    }
-                    if ui
-                        .add_enabled(sim.app.can_redo(), egui::Button::new("Redo"))
-                        .on_hover_text("Reapply the last undone edit · Cmd/Ctrl+Shift+Z")
-                        .clicked()
-                    {
-                        sim.app.redo();
-                    }
-                    if !ui_layout.is_control_deck_visible() {
-                        ui.menu_button("Tools", |ui| {
-                            ui.set_width(260.0);
-                            egui::ScrollArea::vertical()
-                                .max_height(420.0)
-                                .show(ui, |ui| {
-                                    render_tools(ui, &mut sim.app);
-                                    ui.separator();
-                                    render_palette(ui, &mut sim.app);
-                                    ui.separator();
-                                    render_board_controls(ui, &mut sim.app, &mut board_settings);
-                                    if ui.button("Import pattern…").clicked() {
-                                        ui_state.import_open = true;
-                                        ui.close();
-                                    }
-                                });
+                            .on_hover_text("Play / pause · Space")
+                            .clicked()
+                        {
+                            sim.app.toggle_running();
+                        }
+                        if ui
+                            .button("Step")
+                            .on_hover_text("Advance one generation · J")
+                            .clicked()
+                        {
+                            sim.app.increment_epoch();
+                        }
+                        render_speed(ui, &mut sim.app);
+                        ui.separator();
+                        if ui
+                            .add_enabled(sim.app.can_undo(), egui::Button::new("Undo"))
+                            .on_hover_text("Restore the previous edit and pause · U or Cmd/Ctrl+Z")
+                            .clicked()
+                        {
+                            sim.app.undo();
+                        }
+                        if ui
+                            .add_enabled(sim.app.can_redo(), egui::Button::new("Redo"))
+                            .on_hover_text("Reapply the last undone edit · Cmd/Ctrl+Shift+Z")
+                            .clicked()
+                        {
+                            sim.app.redo();
+                        }
+                        if !ui_layout.is_control_deck_visible() {
+                            ui.menu_button("Tools", |ui| {
+                                ui.set_width(260.0);
+                                egui::ScrollArea::vertical()
+                                    .max_height(420.0)
+                                    .show(ui, |ui| {
+                                        render_tools(ui, &mut sim.app);
+                                        ui.separator();
+                                        render_palette(ui, &mut sim.app);
+                                        ui.separator();
+                                        render_board_controls(
+                                            ui,
+                                            &mut sim.app,
+                                            &mut board_settings,
+                                        );
+                                        if ui.button("Import pattern…").clicked() {
+                                            ui_state.import_open = true;
+                                            ui.close();
+                                        }
+                                    });
+                            });
+                        }
+                        ui.menu_button("View", |ui| {
+                            ui.checkbox(&mut overlays.grid.enabled, "Grid");
+                            ui.checkbox(&mut overlays.diagnostics.enabled, "Diagnostics");
+                            ui.separator();
+                            ui.label("Layout");
+                            for preset in UiLayoutPreset::ALL {
+                                ui.selectable_value(&mut ui_layout.preset, preset, preset.label());
+                            }
+                            if ui_layout.preset.uses_side_panel() {
+                                ui.checkbox(&mut ui_layout.control_deck_visible, "Pattern sidebar");
+                            }
                         });
-                    }
-                    ui.menu_button("View", |ui| {
-                        ui.checkbox(&mut overlays.grid.enabled, "Grid");
-                        ui.checkbox(&mut overlays.diagnostics.enabled, "Diagnostics");
-                        ui.separator();
-                        ui.label("Layout");
-                        for preset in UiLayoutPreset::ALL {
-                            ui.selectable_value(&mut ui_layout.preset, preset, preset.label());
-                        }
-                        if ui_layout.preset.uses_side_panel() {
-                            ui.checkbox(&mut ui_layout.control_deck_visible, "Pattern sidebar");
-                        }
-                    });
-                    ui.menu_button("More", |ui| {
+                        ui.menu_button("More", |ui| {
+                            if ui
+                                .button("Reset generation counter")
+                                .on_hover_text("Sets the counter to zero; keeps all cells")
+                                .clicked()
+                            {
+                                sim.app.reset_epoch();
+                                ui.close();
+                            }
+                            if ui.button("Quit").clicked() {
+                                sim.app.quit();
+                            }
+                        });
                         if ui
-                            .button("Reset generation counter")
-                            .on_hover_text("Sets the counter to zero; keeps all cells")
+                            .button("Help")
+                            .on_hover_text("Keyboard shortcuts · /")
                             .clicked()
                         {
-                            sim.app.reset_epoch();
-                            ui.close();
-                        }
-                        if ui.button("Quit").clicked() {
-                            sim.app.quit();
+                            sim.app.toggle_help();
                         }
                     });
-                    if ui
-                        .button("Help")
-                        .on_hover_text("Keyboard shortcuts · /")
-                        .clicked()
-                    {
-                        sim.app.toggle_help();
-                    }
                 });
-            });
 
-    let status = egui::Panel::bottom("status_bar")
-        .resizable(false)
-        .show(&mut viewport_ui, |ui| {
-            let live = sim.app.board.live_cells_count();
-            let (cols, rows) = sim.app.board.size();
-            let density = live as f64 / cols.saturating_mul(rows).max(1) as f64 * 100.0;
-            ui.horizontal_wrapped(|ui| {
-                ui.colored_label(
-                    if sim.app.is_running() { ACCENT } else { MUTED },
-                    if sim.app.is_running() {
-                        "Running"
-                    } else {
-                        "Paused"
-                    },
-                );
-                ui.separator();
-                ui.label(egui::RichText::new(format!("Generation {}", sim.app.epoch)).monospace());
-                ui.label(
-                    egui::RichText::new(format!("Population {live} · {density:.1}%")).color(MUTED),
-                );
-                ui.label(
-                    egui::RichText::new(sim.app.rule_label())
-                        .monospace()
-                        .color(MUTED),
-                )
-                .on_hover_text("Birth/survival rule · set by imported RLE headers");
-                ui.separator();
-                ui.colored_label(
-                    MUTED,
-                    match sim.app.tool() {
-                        EditTool::Draw => "Drag to draw · Right-drag to erase",
-                        EditTool::Erase => "Drag to erase · U or Cmd/Ctrl+Z undo",
-                        EditTool::Stamp => "Click to place · Z rotate · F flip",
-                    },
-                );
-            });
-        });
-
-    let sidebar = if ui_layout.is_control_deck_visible() {
-        Some(
-            egui::Panel::left(egui::Id::new((
-                "control_deck",
-                ui_layout.preset.as_storage_str(),
-            )))
-            .default_size(ui_layout.preset.side_panel_width())
-            .size_range(200.0..=420.0)
-            .resizable(true)
-            .show(&mut viewport_ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        render_tools(ui, &mut sim.app);
-                        ui.add_space(8.0);
+        let status =
+            egui::Panel::bottom("status_bar")
+                .resizable(false)
+                .show(&mut viewport_ui, |ui| {
+                    let live = sim.app.board.live_cells_count();
+                    let (cols, rows) = sim.app.board.size();
+                    let density = live as f64 / cols.saturating_mul(rows).max(1) as f64 * 100.0;
+                    ui.horizontal_wrapped(|ui| {
+                        ui.colored_label(
+                            if sim.app.is_running() { ACCENT } else { MUTED },
+                            if sim.app.is_running() {
+                                "Running"
+                            } else {
+                                "Paused"
+                            },
+                        );
                         ui.separator();
-                        render_palette(ui, &mut sim.app);
-                        ui.add_space(8.0);
-                        if ui
-                            .add_sized(
-                                [ui.available_width(), 32.0],
-                                egui::Button::new("Import pattern…"),
-                            )
-                            .clicked()
-                        {
-                            ui_state.import_open = true;
-                        }
-                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new(format!("Generation {}", sim.app.epoch))
+                                .monospace(),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("Population {live} · {density:.1}%"))
+                                .color(MUTED),
+                        );
+                        ui.label(
+                            egui::RichText::new(sim.app.rule_label())
+                                .monospace()
+                                .color(MUTED),
+                        )
+                        .on_hover_text("Birth/survival rule · set by imported RLE headers");
                         ui.separator();
-                        render_board_controls(ui, &mut sim.app, &mut board_settings);
+                        ui.colored_label(
+                            MUTED,
+                            match sim.app.tool() {
+                                EditTool::Draw => "Drag to draw · Right-drag to erase",
+                                EditTool::Erase => "Drag to erase · U or Cmd/Ctrl+Z undo",
+                                EditTool::Stamp => "Click to place · Z rotate · F flip",
+                            },
+                        );
                     });
-            })
-            .response
-            .rect,
-        )
+                });
+
+        let sidebar = if ui_layout.is_control_deck_visible() {
+            Some(
+                egui::Panel::left(egui::Id::new((
+                    "control_deck",
+                    ui_layout.preset.as_storage_str(),
+                )))
+                .default_size(ui_layout.preset.side_panel_width())
+                .size_range(200.0..=420.0)
+                .resizable(true)
+                .show(&mut viewport_ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            render_tools(ui, &mut sim.app);
+                            ui.add_space(8.0);
+                            ui.separator();
+                            render_palette(ui, &mut sim.app);
+                            ui.add_space(8.0);
+                            if ui
+                                .add_sized(
+                                    [ui.available_width(), 32.0],
+                                    egui::Button::new("Import pattern…"),
+                                )
+                                .clicked()
+                            {
+                                ui_state.import_open = true;
+                            }
+                            ui.add_space(8.0);
+                            ui.separator();
+                            render_board_controls(ui, &mut sim.app, &mut board_settings);
+                        });
+                })
+                .response
+                .rect,
+            )
+        } else {
+            None
+        };
+
+        [
+            Some(toolbar.response.rect),
+            Some(status.response.rect),
+            sidebar,
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
     } else {
-        None
+        let size = ctx.viewport_rect().size();
+        panel_rects(
+            Vec2::new(size.x, size.y),
+            ui_layout.is_control_deck_visible(),
+        )
+        .into_iter()
+        .map(|r| {
+            egui::Rect::from_min_max(egui::pos2(r.min.x, r.min.y), egui::pos2(r.max.x, r.max.y))
+        })
+        .collect()
     };
 
     if overlays.diagnostics.enabled {
@@ -315,14 +355,6 @@ fn render_ui(
             ui.label(egui::RichText::new(CONTROLS_TEXT.as_str()).monospace());
         });
     sim.app.set_help_visible(help_open);
-    let panels: Vec<_> = [
-        Some(toolbar.response.rect),
-        Some(status.response.rect),
-        sidebar,
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
     pointer_capture.blocked =
         ctx.input(|input| pointer_over_panels(input.pointer.latest_pos(), &input.events, &panels));
     // A tool button can retain keyboard focus after a canvas click. Give focus

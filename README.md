@@ -14,6 +14,16 @@ Conway's Game of Life with a native desktop GUI built on Bevy.
 cargo run
 ```
 
+The default interface is a native Bevy UI prototype: playback controls, pattern cards,
+editing tools, board actions, and live status. Press **F4** or use **Classic UI / Native
+preview** to compare interfaces without resetting the simulation or edit history.
+Start directly in the original interface with `cargo run -- --classic-ui`.
+
+The native palette scrolls with the mouse wheel; scrolling over the canvas zooms it.
+Tab moves between native buttons and Enter/Space activates the focused button;
+click the canvas to return Space to playback. RLE import, help, and diagnostics
+still use egui windows. Board dimension and layout settings remain in Classic UI.
+
 Local CI-equivalent checks:
 
 ```bash
@@ -79,7 +89,8 @@ Runtime flow from `src/main.rs`:
 main
   -> DefaultPlugins + resources
   -> RenderPlugin (world setup, board texture/grid/wall/preview rendering)
-  -> UiPlugin (playback toolbar + pattern palette + layout presets + RLE import)
+  -> UiPlugin (classic interface + layout persistence + shared egui dialogs)
+  -> NativeUiPlugin (native playback toolbar + scrollable pattern palette + F4 comparison)
   -> InputPlugin (keyboard, mouse, camera controls)
   -> SimulationPlugin (tick advancement, redraw collection, quit)
 
