@@ -2,14 +2,16 @@ use std::{f32::consts::PI, time::Duration};
 
 use crate::app::{App as GolApp, EditTool};
 use crate::board::{BoundaryMode, DirtyCells};
+use crate::canvas_view::cursor_world;
 use crate::shared::UiPointerCapture;
 use crate::shared::{
     BoardSettings, CELL_SIZE, DEAD_COLOR, GHOST_LIVE_COLOR, GRID_LINE_COLOR, GridOverlay,
     LIVE_COLOR, MainCamera, RedrawRequested, Simulation, StartupSet, UpdateSet, WALL_BRIGHT_COLOR,
-    WALL_COLOR, board_size_for_window, camera_scale_to_fit_board, cell_to_world, world_to_cell,
+    WALL_COLOR, board_size_for_window, cell_to_world, world_to_cell,
 };
 use bevy::{
     asset::RenderAssetUsages,
+    camera::visibility::RenderLayers,
     ecs::system::SystemParam,
     image::ImageSampler,
     prelude::*,
@@ -169,6 +171,17 @@ fn setup_world(
     let (cols, rows) = (settings.cols, settings.rows);
 
     commands.spawn((Camera2d, MainCamera));
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: 1,
+            clear_color: ClearColorConfig::None,
+            ..default()
+        },
+        RenderLayers::none(),
+        IsDefaultUiCamera,
+        bevy_egui::PrimaryEguiContext,
+    ));
     commands.insert_resource(Simulation {
         app: GolApp::new(cols, rows),
         accumulator: Duration::ZERO,
@@ -254,11 +267,9 @@ fn ensure_preview_pool(commands: &mut Commands, pool: &mut PatternPreviewPool, t
 fn apply_board_settings(
     settings: Res<BoardSettings>,
     mut commands: Commands,
-    window_q: Query<&Window, With<PrimaryWindow>>,
     mut sim: ResMut<Simulation>,
     mut canvas: BoardCanvas,
     wall_q: Query<Entity, With<BoundaryWall>>,
-    mut camera_q: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
 ) {
     if !settings.is_changed() || !settings.is_set() {
         return;
@@ -277,17 +288,6 @@ fn apply_board_settings(
         commands.entity(entity).despawn();
     }
     spawn_boundary_walls(&mut commands, cols, rows);
-
-    // The old view rarely frames the new board, so recentre and fit it.
-    if let (Ok(window), Ok((mut transform, mut projection))) =
-        (window_q.single(), camera_q.single_mut())
-    {
-        transform.translation.x = 0.0;
-        transform.translation.y = 0.0;
-        if let Projection::Orthographic(ref mut ortho) = *projection {
-            ortho.scale = camera_scale_to_fit_board(window, cols, rows);
-        }
-    }
 }
 
 /// Draws only the grid lines that intersect the viewport, so the cost tracks
@@ -309,12 +309,12 @@ fn render_grid(
     let Ok((camera, camera_transform)) = camera_q.single() else {
         return;
     };
-    let Some(viewport) = camera.logical_viewport_size() else {
+    let Some(viewport) = camera.logical_viewport_rect() else {
         return;
     };
     let (Ok(corner_a), Ok(corner_b)) = (
-        camera.viewport_to_world_2d(camera_transform, Vec2::ZERO),
-        camera.viewport_to_world_2d(camera_transform, viewport),
+        camera.viewport_to_world_2d(camera_transform, viewport.min),
+        camera.viewport_to_world_2d(camera_transform, viewport.max),
     ) else {
         return;
     };
@@ -325,7 +325,7 @@ fn render_grid(
 
     // Below a few pixels per cell the lines are denser than the display can
     // resolve, so the grid reads as noise rather than structure.
-    if CELL_SIZE * viewport.x / visible_width < 3.0 {
+    if CELL_SIZE * viewport.width() / visible_width < 3.0 {
         return;
     }
 
@@ -541,7 +541,7 @@ fn update_hovered_cell(
     let Ok((camera, transform)) = camera_q.single() else {
         return;
     };
-    let Ok(world) = camera.viewport_to_world_2d(transform, cursor) else {
+    let Some(world) = cursor_world(camera, transform, cursor) else {
         return;
     };
     let (cols, rows) = sim.app.board.size();

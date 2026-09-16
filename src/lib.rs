@@ -1,5 +1,6 @@
 pub mod app;
 pub mod board;
+pub mod canvas_view;
 pub mod input_plugin;
 pub mod native_ui_plugin;
 pub mod patterns;

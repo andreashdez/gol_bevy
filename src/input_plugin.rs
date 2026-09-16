@@ -1,5 +1,6 @@
 use crate::{
     app::{EditTool, PatternKind},
+    canvas_view::{CanvasView, cursor_world},
     native_ui_plugin::{NativeUi, canvas_keyboard_available, pointer_over_native},
     shared::{
         BINDING_CLEAR, BINDING_CLEAR_STAMP, BINDING_CYCLE_LAYOUT, BINDING_FLIP_STAMP,
@@ -30,9 +31,17 @@ impl Plugin for InputPlugin {
         // reads the previous frame and lets the first click on a widget paint cells.
         app.configure_sets(
             PostUpdate,
-            UpdateSet::Input.after(EguiPostUpdateSet::ProcessOutput),
+            UpdateSet::Input
+                .after(EguiPostUpdateSet::ProcessOutput)
+                .after(bevy::camera::CameraUpdateSystems)
+                .after(bevy::transform::TransformSystems::Propagate),
         )
-        .add_systems(PostUpdate, handle_layout_cycle.in_set(UpdateSet::Input))
+        .add_systems(
+            PostUpdate,
+            handle_layout_cycle
+                .run_if(canvas_keyboard_available)
+                .in_set(UpdateSet::Input),
+        )
         .add_systems(
             PostUpdate,
             finish_mouse_stroke
@@ -56,12 +65,14 @@ impl Plugin for InputPlugin {
         .add_systems(
             Update,
             handle_camera_pan
+                .run_if(canvas_keyboard_available)
                 .in_set(UpdateSet::Camera)
                 .run_if(not(egui_wants_any_keyboard_input)),
         )
         .add_systems(
             Update,
             handle_camera_reset
+                .run_if(canvas_keyboard_available)
                 .in_set(UpdateSet::Camera)
                 .run_if(not(egui_wants_any_keyboard_input)),
         );
@@ -202,7 +213,7 @@ fn handle_mouse(
     let Ok((camera, camera_transform)) = camera_q.single() else {
         return;
     };
-    let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_pos) else {
+    let Some(world_pos) = cursor_world(camera, camera_transform, cursor_pos) else {
         return;
     };
 
@@ -302,6 +313,7 @@ fn handle_camera_pan(
 }
 
 fn handle_camera_reset(
+    view: Res<CanvasView>,
     keys: Res<ButtonInput<KeyCode>>,
     mut camera_q: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
 ) {
@@ -317,7 +329,7 @@ fn handle_camera_reset(
     transform.translation.y = 0.0;
 
     if let Projection::Orthographic(ref mut ortho) = *projection {
-        ortho.scale = 1.0;
+        ortho.scale = view.fit_scale;
     }
 }
 

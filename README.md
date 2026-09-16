@@ -20,9 +20,32 @@ preview** to compare interfaces without resetting the simulation or edit history
 Start directly in the original interface with `cargo run -- --classic-ui`.
 
 The native palette scrolls with the mouse wheel; scrolling over the canvas zooms it.
-Tab moves between native buttons and Enter/Space activates the focused button;
-click the canvas to return Space to playback. RLE import, help, and diagnostics
-still use egui windows. Board dimension and layout settings remain in Classic UI.
+The board has its own canvas beside the palette and between the toolbar and status
+bar. Startup, board-size changes, and **V** fit the entire board into that space.
+Window and layout changes retain the pan position and zoom relative to the fitted
+view. Drawing and stamp previews stay inside the canvas, including on Retina displays.
+Search patterns by name; builtin and imported patterns have separate groups. The
+stamp preview shows the orientation that will be placed, including rotation and
+horizontal flip. Filtering the library keeps the current stamp selected.
+
+Drag the native speed slider or focus it and use Left/Right (Home/End for the
+limits). Hover or focus buttons for shortcut hints. Empty boards show guidance
+that disappears after the first cells are placed. Search and slider focus block
+board shortcuts; Escape returns keyboard control to the canvas.
+
+Tab moves between visible, enabled native controls and Enter/Space activates the focused button;
+click the canvas to return Space to playback. RLE import, help, diagnostics, and
+workspace settings now use native Bevy dialogs. Escape closes a dialog without
+quitting; typing and scrolling inside dialogs do not affect the board or camera.
+Closing a dialog restores focus to its opener. Native fields expose names and values
+to accessibility tools, buttons expose their actions and selected states, and inline
+validation messages use polite live announcements. Editors support platform clipboard
+shortcuts (Cmd on macOS, Ctrl elsewhere) and Shift+Arrow selection.
+
+Open **Settings** or **Board size…** to choose a preset or enter dimensions, then
+apply the size. Invalid values are rejected with an inline message. Full uses a
+wider palette, Compact a narrower one, and Minimal hides it. Layout and board
+size are saved between runs. Import drafts remain available for the current session.
 
 Local CI-equivalent checks:
 
@@ -70,12 +93,12 @@ Pattern palette:
 - Select a pattern thumbnail, then click the board to place it
 
 Layout presets:
-- Choose Full, Compact, or Minimal from the View menu
+- Choose Full, Compact, or Minimal from Settings (native) or View (classic)
 - Press F2 to cycle Full -> Compact -> Minimal
 - Layout preset is saved between runs
 ```
 
-Board size is set in the sidebar under Board: pick a preset (128², 256², 512², 1024²) or type exact dimensions, from 8 up to 2048 per side. The choice is saved between runs. Resizing the board clears undo history, because old snapshots no longer fit; resizing the window does not.
+Board size is set in native Settings (or under Board in the classic sidebar): pick a preset (128², 256², 512², 1024²) or type exact dimensions, from 8 up to 2048 per side. The choice is saved between runs. Resizing the board clears undo history, because old snapshots no longer fit; resizing the window does not.
 
 The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools share a visual pattern palette; rotate and flip controls appear for stamps. In Minimal mode, open Tools to access the palette and board actions. Grid and diagnostics are available in View; diagnostics start hidden.
 
@@ -89,8 +112,8 @@ Runtime flow from `src/main.rs`:
 main
   -> DefaultPlugins + resources
   -> RenderPlugin (world setup, board texture/grid/wall/preview rendering)
-  -> UiPlugin (classic interface + layout persistence + shared egui dialogs)
-  -> NativeUiPlugin (native playback toolbar + scrollable pattern palette + F4 comparison)
+  -> UiPlugin (classic interface + layout persistence)
+  -> NativeUiPlugin (native toolbar + palette + import/settings/help/diagnostics dialogs)
   -> InputPlugin (keyboard, mouse, camera controls)
   -> SimulationPlugin (tick advancement, redraw collection, quit)
 

@@ -1,4 +1,8 @@
-//! A native Bevy UI prototype. Both frontends edit the same Simulation resource.
+//! Native Bevy controls and dialogs sharing the simulation with the classic frontend.
+mod accessibility;
+mod controls;
+mod dialogs;
+mod palette;
 use crate::{
     app::{App as GolApp, EditTool},
     shared::{GridOverlay, Simulation, StartupSet, UiLayout, UpdateSet},
@@ -18,6 +22,7 @@ use bevy::{
     ui_widgets::{Activate, Button as WidgetButton, ScrollArea},
     window::PrimaryWindow,
 };
+use dialogs::DialogKind;
 
 const PANEL: Color = Color::srgb(0.055, 0.075, 0.095);
 const SURFACE: Color = Color::srgb(0.095, 0.12, 0.145);
@@ -33,17 +38,22 @@ const UI_FONT: Handle<Font> = bevy::asset::uuid_handle!("67dfd7f0-b829-4a23-a5ae
 #[derive(Resource)]
 pub struct NativeUi {
     pub enabled: bool,
-    pub import_requested: bool,
+    pub(crate) dialog: Option<DialogKind>,
+    keyboard_blocked: bool,
 }
 
 impl Default for NativeUi {
     fn default() -> Self {
         Self {
             enabled: !std::env::args().any(|arg| arg == "--classic-ui"),
-            import_requested: false,
+            dialog: None,
+            keyboard_blocked: false,
         }
     }
 }
+
+#[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
+pub(crate) struct NativeLayout;
 
 pub struct NativeUiPlugin;
 impl Plugin for NativeUiPlugin {
@@ -51,11 +61,24 @@ impl Plugin for NativeUiPlugin {
         app.init_resource::<NativeUi>()
             .add_plugins(TabNavigationPlugin)
             .add_observer(activate)
+            .add_observer(controls::speed_changed)
+            .add_plugins(dialogs::NativeDialogsPlugin)
+            .add_plugins(accessibility::NativeAccessibilityPlugin)
             .add_systems(Startup, setup.after(StartupSet::BuildWorld))
             .add_systems(
                 Update,
-                (toggle_mode, sync, sync_palette)
+                (
+                    toggle_mode,
+                    dialogs::update_dialogs,
+                    sync,
+                    sync_palette,
+                    palette::filter,
+                    palette::sync_preview,
+                    controls::sync_speed,
+                    controls::sync_overlays,
+                )
                     .chain()
+                    .in_set(NativeLayout)
                     .before(UpdateSet::Camera),
             );
     }
@@ -69,9 +92,7 @@ struct Sidebar;
 struct Palette;
 #[derive(Component)]
 enum Readout {
-    Speed,
     Status,
-    Stamp,
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
@@ -80,13 +101,19 @@ enum Action {
     Step,
     Undo,
     Redo,
-    Slower,
-    Faster,
     Grid,
     Sidebar,
     Classic,
     Import,
     Help,
+    Settings,
+    Diagnostics,
+    CloseDialog,
+    ImportSubmit,
+    ResizeBoard,
+    BoardPreset(usize),
+    Layout(crate::shared::UiLayoutPreset),
+    ResetEpoch,
     Tool(EditTool),
     Pattern(usize),
     Rotate,
@@ -109,16 +136,19 @@ fn label(value: impl Into<String>, size: f32, color: Color) -> impl Bundle {
     )
 }
 
-fn row() -> Node {
-    Node {
-        align_items: AlignItems::Center,
-        column_gap: px(8),
-        flex_shrink: 0.0,
-        ..default()
-    }
+fn row() -> impl Bundle {
+    (
+        Node {
+            align_items: AlignItems::Center,
+            column_gap: px(8),
+            flex_shrink: 0.0,
+            ..default()
+        },
+        accessibility::named_node(accesskit::Role::GenericContainer, ""),
+    )
 }
 
-fn button(parent: &mut ChildSpawnerCommands, text: &str, action: Action) {
+fn button(parent: &mut ChildSpawnerCommands, text: &str, action: Action) -> Entity {
     parent
         .spawn((
             Node {
@@ -137,10 +167,12 @@ fn button(parent: &mut ChildSpawnerCommands, text: &str, action: Action) {
             BackgroundColor(SURFACE),
             BorderColor::all(LINE),
             Name::new(text.to_owned()),
+            controls::Tooltip(controls::hint(action).to_owned()),
         ))
         .with_children(|p| {
             p.spawn(label(text, 14.0, INK));
-        });
+        })
+        .id()
 }
 
 fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
@@ -172,12 +204,13 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
         .with_children(|p| {
             p.spawn(row()).with_children(|p| {
                 p.spawn(label("LIFE", 23.0, ACCENT));
-                p.spawn(label("/  NATIVE PREVIEW", 12.0, MUTED));
+                p.spawn((controls::WideLabel, label("/  NATIVE PREVIEW", 12.0, MUTED)));
                 p.spawn(Node {
                     flex_grow: 1.0,
                     ..default()
                 });
                 button(p, "Import RLE", Action::Import);
+                button(p, "Settings", Action::Settings);
                 button(p, "Help", Action::Help);
                 button(p, "Classic UI", Action::Classic);
             });
@@ -186,17 +219,7 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
                 button(p, "Step", Action::Step);
                 button(p, "Undo", Action::Undo);
                 button(p, "Redo", Action::Redo);
-                button(p, "−", Action::Slower);
-                p.spawn(Node {
-                    width: px(84),
-                    height: px(36),
-                    align_items: AlignItems::Center,
-                    ..default()
-                })
-                .with_children(|p| {
-                    p.spawn((label("", 14.0, INK), Readout::Speed));
-                });
-                button(p, "+", Action::Faster);
+                controls::speed_slider(p);
                 p.spawn(Node {
                     flex_grow: 1.0,
                     ..default()
@@ -205,35 +228,70 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
                 button(p, "Palette", Action::Sidebar);
             });
         });
-    commands.spawn((NativeRoot, Sidebar, TabGroup::default(), ScrollArea, Node {
-        position_type: PositionType::Absolute, left: px(16), top: px(TOP + 16.0),
-        bottom: px(BOTTOM + 16.0), width: px(SIDE), padding: UiRect::all(px(16)),
-        flex_direction: FlexDirection::Column, row_gap: px(14), overflow: Overflow::scroll_y(),
-        border: UiRect::all(px(1)), border_radius: BorderRadius::all(px(12)), ..default()
-    }, BackgroundColor(PANEL), BorderColor::all(LINE), GlobalZIndex(10))).with_children(|p| {
-        p.spawn(label("WORKSPACE", 12.0, MUTED));
-        p.spawn(row()).with_children(|p| {
-            button(p, "Draw", Action::Tool(EditTool::Draw));
-            button(p, "Erase", Action::Tool(EditTool::Erase));
-            button(p, "Stamp", Action::Tool(EditTool::Stamp));
+    commands
+        .spawn((
+            NativeRoot,
+            Sidebar,
+            TabGroup::default(),
+            ScrollArea,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(16),
+                top: px(TOP + 16.0),
+                bottom: px(BOTTOM + 16.0),
+                width: px(SIDE),
+                padding: UiRect::all(px(16)),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(14),
+                overflow: Overflow::scroll_y(),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(12)),
+                ..default()
+            },
+            BackgroundColor(PANEL),
+            BorderColor::all(LINE),
+            GlobalZIndex(10),
+        ))
+        .with_children(|p| {
+            p.spawn(label("WORKSPACE", 12.0, MUTED));
+            p.spawn(row()).with_children(|p| {
+                button(p, "Draw", Action::Tool(EditTool::Draw));
+                button(p, "Erase", Action::Tool(EditTool::Erase));
+                button(p, "Stamp", Action::Tool(EditTool::Stamp));
+            });
+            p.spawn(label("Patterns", 21.0, INK));
+            palette::search(p);
+            palette::preview(p);
+            p.spawn((
+                Palette,
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(8),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+            ));
+            p.spawn((
+                Node {
+                    height: px(1),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                BackgroundColor(LINE),
+            ));
+            p.spawn(label("Board", 21.0, INK));
+            p.spawn(row()).with_children(|p| {
+                button(p, "Randomize", Action::Randomize);
+                button(p, "Clear", Action::Clear);
+            });
+            button(p, "Edges", Action::Boundary);
+            button(p, "Board size…", Action::Settings);
+            p.spawn(label(
+                "Space to play · U to undo\nF4 switches interfaces.\nScroll for more controls.",
+                12.0,
+                MUTED,
+            ));
         });
-        p.spawn(label("Patterns", 21.0, INK));
-        p.spawn(label("Choose a shape, then click the board.", 12.0, MUTED));
-        p.spawn((Palette, Node { flex_direction: FlexDirection::Column, row_gap: px(8), flex_shrink: 0.0, ..default() }));
-        p.spawn((label("", 12.0, MUTED), Readout::Stamp));
-        p.spawn(row()).with_children(|p| {
-                    button(p, "Rotate", Action::Rotate);
-                    button(p, "Flip", Action::Flip);
-        });
-        p.spawn((Node { height: px(1), flex_shrink: 0.0, ..default() }, BackgroundColor(LINE)));
-        p.spawn(label("Board", 21.0, INK));
-        p.spawn(row()).with_children(|p| {
-            button(p, "Randomize", Action::Randomize);
-            button(p, "Clear", Action::Clear);
-        });
-        button(p, "Edges", Action::Boundary);
-        p.spawn(label("Board size and layout settings are available in Classic UI.\n\nF4 switches interfaces at any time.\nScroll for more controls.", 12.0, MUTED));
-    });
     commands
         .spawn((
             NativeRoot,
@@ -253,42 +311,75 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
         .with_children(|p| {
             p.spawn((label("", 13.0, MUTED), Readout::Status));
         });
+    controls::overlays(&mut commands);
+}
+
+fn sidebar_width(layout: &UiLayout) -> f32 {
+    if layout.preset == crate::shared::UiLayoutPreset::Full {
+        300.0
+    } else {
+        SIDE
+    }
 }
 
 /// Logical rectangles shared by layout and input routing; gaps remain canvas.
-pub fn panel_rects(size: Vec2, sidebar: bool) -> Vec<Rect> {
+pub fn panel_rects(size: Vec2, layout: &UiLayout) -> Vec<Rect> {
     let mut rects = vec![
         Rect::new(0.0, 0.0, size.x, TOP),
         Rect::new(0.0, (size.y - BOTTOM).max(0.0), size.x, size.y),
     ];
-    if sidebar && size.y > TOP + BOTTOM + 32.0 {
+    if layout.is_control_deck_visible() && size.y > TOP + BOTTOM + 32.0 {
         rects.push(Rect::new(
             16.0,
             TOP + 16.0,
-            SIDE + 16.0,
+            sidebar_width(layout) + 16.0,
             size.y - BOTTOM - 16.0,
         ));
     }
     rects
 }
 
+/// The board is clipped to this workspace; the UI camera still covers the window.
+pub fn canvas_rect(size: Vec2, layout: &UiLayout) -> Rect {
+    let left = if layout.is_control_deck_visible() {
+        sidebar_width(layout) + 32.0
+    } else {
+        16.0
+    };
+    let max = (size - Vec2::new(16.0, BOTTOM + 16.0)).max(Vec2::ONE);
+    let min = Vec2::new(left, TOP + 16.0)
+        .min(max - Vec2::ONE)
+        .max(Vec2::ZERO);
+    Rect::from_corners(min, max)
+}
+
 pub fn pointer_over_native(window: &Window, mode: &NativeUi, layout: &UiLayout) -> bool {
     mode.enabled
-        && window.cursor_position().is_some_and(|pos| {
-            panel_rects(window.size(), layout.is_control_deck_visible())
-                .iter()
-                .any(|r| r.contains(pos))
-        })
+        && (mode.dialog.is_some()
+            || window.cursor_position().is_some_and(|pos| {
+                panel_rects(window.size(), layout)
+                    .iter()
+                    .any(|r| r.contains(pos))
+            }))
 }
+
+type NativeEditors = Or<(
+    With<bevy::text::EditableText>,
+    With<bevy::ui_widgets::Slider>,
+)>;
 
 pub fn canvas_keyboard_available(
     mode: Res<NativeUi>,
     focus: Res<InputFocus>,
     keys: Res<ButtonInput<KeyCode>>,
+    editors: Query<(), NativeEditors>,
 ) -> bool {
     !(mode.enabled
-        && focus.get().is_some()
-        && (keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter)))
+        && (mode.dialog.is_some()
+            || mode.keyboard_blocked
+            || focus.get().is_some_and(|entity| editors.contains(entity))
+            || (focus.get().is_some()
+                && (keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter)))))
 }
 
 fn toggle_mode(
@@ -298,7 +389,13 @@ fn toggle_mode(
     layout: Res<UiLayout>,
     mut mode: ResMut<NativeUi>,
     mut focus: ResMut<InputFocus>,
+    editors: Query<(), NativeEditors>,
 ) {
+    let editing = focus.get().is_some_and(|entity| editors.contains(entity));
+    if mode.enabled && mode.dialog.is_none() && editing && keys.just_pressed(KeyCode::Escape) {
+        focus.clear();
+    }
+    mode.keyboard_blocked = mode.dialog.is_some() || editing;
     if keys.just_pressed(KeyCode::F4) {
         mode.enabled = !mode.enabled;
         focus.clear();
@@ -329,7 +426,15 @@ fn activate(
     };
     match action {
         Action::Classic => mode.enabled = false,
-        Action::Import => mode.import_requested = true,
+        Action::Import
+        | Action::Settings
+        | Action::Diagnostics
+        | Action::Help
+        | Action::CloseDialog
+        | Action::ImportSubmit
+        | Action::ResizeBoard
+        | Action::BoardPreset(_)
+        | Action::Layout(_) => {}
         Action::Grid => grid.enabled = !grid.enabled,
         Action::Sidebar => {
             if !layout.preset.uses_side_panel() {
@@ -353,12 +458,6 @@ fn apply_action(action: Action, app: &mut GolApp) {
         Action::Redo => {
             app.redo();
         }
-        Action::Slower => {
-            app.slow_down();
-        }
-        Action::Faster => {
-            app.speed_up();
-        }
         Action::Tool(tool) => app.set_tool(tool),
         Action::Pattern(index) => {
             app.select_pattern_index(index);
@@ -368,7 +467,7 @@ fn apply_action(action: Action, app: &mut GolApp) {
         Action::Randomize => app.randomize_board(),
         Action::Clear => app.clear_board(),
         Action::Boundary => app.toggle_boundary_mode(),
-        Action::Help => app.toggle_help(),
+        Action::ResetEpoch => app.reset_epoch(),
         _ => {}
     }
 }
@@ -408,6 +507,9 @@ fn sync(
         focus,
     } = view;
     for (mut node, sidebar) in &mut roots {
+        if sidebar {
+            node.width = px(sidebar_width(&layout));
+        }
         let display = if mode.enabled && (!sidebar || layout.is_control_deck_visible()) {
             Display::Flex
         } else {
@@ -431,19 +533,20 @@ fn sync(
                     "Play"
                 }
             }
-            Action::Slower => "Slower",
-            Action::Faster => "Faster",
             _ => name.as_str(),
         };
-        if accessible.label() != Some(accessible_label) {
+        let accessible_label = if *action == Action::Boundary {
+            format!("Edges: {}", sim.app.boundary_mode_label())
+        } else {
+            accessible_label.to_owned()
+        };
+        if accessible.label() != Some(accessible_label.as_str()) {
             accessible.set_label(accessible_label);
         }
         let disabled = match action {
             Action::Undo => !sim.app.can_undo(),
             Action::Redo => !sim.app.can_redo(),
             Action::Rotate | Action::Flip => sim.app.tool() != EditTool::Stamp,
-            Action::Slower => sim.app.tick_rate_ms() >= GolApp::tick_rate_bounds().1,
-            Action::Faster => sim.app.tick_rate_ms() <= GolApp::tick_rate_bounds().0,
             _ => false,
         };
         if disabled {
@@ -461,8 +564,23 @@ fn sync(
             }
             Action::Grid => grid.enabled,
             Action::Sidebar => layout.is_control_deck_visible(),
+            Action::Layout(preset) => layout.preset == *preset,
             _ => false,
         };
+        if matches!(
+            action,
+            Action::Tool(_)
+                | Action::Pattern(_)
+                | Action::Grid
+                | Action::Sidebar
+                | Action::Layout(_)
+        ) {
+            accessible.set_toggled(if selected {
+                accesskit::Toggled::True
+            } else {
+                accesskit::Toggled::False
+            });
+        }
         bg.0 = if disabled {
             PANEL
         } else if *action == Action::Play {
@@ -513,10 +631,8 @@ fn sync(
     }
     for (mut text, _, readout) in &mut texts {
         let value = match readout {
-            Some(Readout::Speed) => format!("{:.1} gen/s", 1000.0 / sim.app.tick_rate_ms() as f32),
-            Some(Readout::Stamp) => sim.app.selected_pattern_status_label(),
             Some(Readout::Status) => format!(
-                "{}    /    GENERATION {}    /    {} LIVING    /    {}    /    Space to play · U to undo",
+                "{}    /    GENERATION {}    /    {} LIVING    /    {}   ",
                 if sim.app.is_running() {
                     "RUNNING"
                 } else {
@@ -551,7 +667,14 @@ fn sync_palette(
         .entity(entity)
         .despawn_children()
         .with_children(|p| {
+            let builtin_count = crate::patterns::Pattern::builtins().len();
             for index in 0..sim.app.pattern_count() {
+                if index == 0 || index == builtin_count {
+                    p.spawn((
+                        palette::PatternGroup(index >= builtin_count),
+                        label(if index == 0 { "BUILTIN" } else { "IMPORTED" }, 11.0, MUTED),
+                    ));
+                }
                 let Some(pattern) = sim.app.pattern_at(index) else {
                     continue;
                 };
@@ -559,6 +682,7 @@ fn sync_palette(
                 p.spawn((
                     WidgetButton,
                     Action::Pattern(index),
+                    controls::Tooltip(controls::hint(Action::Pattern(index)).to_owned()),
                     Hovered::default(),
                     TabIndex(0),
                     Name::new(pattern.name.clone()),
@@ -652,6 +776,57 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_widget_bundles_spawn_together() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Assets<Font>>();
+        world.run_system_once(setup).unwrap();
+        assert_eq!(
+            world
+                .query_filtered::<Entity, With<palette::PatternSearch>>()
+                .iter(&world)
+                .count(),
+            1
+        );
+        assert_eq!(
+            world
+                .query_filtered::<Entity, With<controls::SpeedSlider>>()
+                .iter(&world)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn search_and_slider_focus_block_canvas_keys_and_escape_returns_focus() {
+        use bevy::ecs::system::RunSystemOnce;
+        use bevy::input_focus::FocusCause;
+        let mut world = World::new();
+        world.insert_resource(NativeUi::default());
+        world.init_resource::<InputFocus>();
+        world.init_resource::<ButtonInput<KeyCode>>();
+        world.init_resource::<ButtonInput<MouseButton>>();
+        world.init_resource::<UiLayout>();
+        let field = world.spawn(bevy::text::EditableText::new("")).id();
+        let slider = world.spawn(bevy::ui_widgets::Slider::default()).id();
+        for entity in [field, slider] {
+            world
+                .resource_mut::<InputFocus>()
+                .set(entity, FocusCause::Navigated);
+            assert!(!world.run_system_once(canvas_keyboard_available).unwrap());
+        }
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        world.run_system_once(toggle_mode).unwrap();
+        assert!(world.resource::<InputFocus>().get().is_none());
+        assert!(!world.run_system_once(canvas_keyboard_available).unwrap());
+        world.resource_mut::<ButtonInput<KeyCode>>().reset_all();
+        world.run_system_once(toggle_mode).unwrap();
+        assert!(world.run_system_once(canvas_keyboard_available).unwrap());
+    }
+
+    #[test]
     fn native_actions_share_edit_history_and_playback() {
         let mut app = GolApp::new(30, 30);
         apply_action(Action::Pattern(0), &mut app);
@@ -668,7 +843,17 @@ mod tests {
     #[test]
     fn chrome_captures_clicks_but_canvas_and_hidden_palette_do_not() {
         let size = Vec2::new(768.0, 600.0);
-        let contains = |sidebar, pos| panel_rects(size, sidebar).iter().any(|r| r.contains(pos));
+        let contains = |sidebar, pos| {
+            panel_rects(
+                size,
+                &UiLayout {
+                    control_deck_visible: sidebar,
+                    ..default()
+                },
+            )
+            .iter()
+            .any(|r| r.contains(pos))
+        };
         assert!(contains(true, Vec2::new(300.0, 80.0)));
         assert!(contains(true, Vec2::new(40.0, 180.0)));
         assert!(contains(true, Vec2::new(500.0, 590.0)));

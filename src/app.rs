@@ -409,6 +409,13 @@ impl App {
         format!("{name} ({suffix})")
     }
 
+    pub fn stamp_orientation(&self) -> (u8, bool) {
+        (
+            self.stamp_transform.rotation_quarters,
+            self.stamp_transform.flip_horizontal,
+        )
+    }
+
     pub fn rotate_stamp_clockwise(&mut self) {
         self.stamp_transform.rotation_quarters = (self.stamp_transform.rotation_quarters + 1) % 4;
         self.needs_redraw = true;

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+accesskit = "0.24"
 bevy = { version = "0.19", default-features = false, features = ["2d", "ui"] }
 bevy_egui = "0.41"
 fastrand = "2.4"

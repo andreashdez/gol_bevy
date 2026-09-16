@@ -13,9 +13,8 @@ pub const WALL_BRIGHT_COLOR: Color = Color::srgba(1.0, 0.98, 0.82, 0.92);
 pub const GRID_LINE_COLOR: Color = Color::srgba(0.02, 0.02, 0.03, 0.8);
 pub const CAMERA_ZOOM_STEP: f32 = 0.10;
 pub const CAMERA_ZOOM_MIN: f32 = 0.25;
-// Large boards are many times wider than the window, so the ceiling has to be
-// high enough to frame one whole.
-pub const CAMERA_ZOOM_MAX: f32 = 64.0;
+// Fit the largest board even in the native canvas at the minimum window size.
+pub const CAMERA_ZOOM_MAX: f32 = 128.0;
 pub const CAMERA_PAN_SPEED: f32 = 700.0;
 
 #[derive(Clone, Copy)]
@@ -250,7 +249,7 @@ fn build_controls_text() -> String {
     out.push_str("- Use Import pattern to paste RLE and add a stamp\n");
     out.push_str("- Select a pattern thumbnail, then click the board to place it\n\n");
     out.push_str("Layout presets:\n");
-    out.push_str("- Choose Full, Compact, or Minimal from the View menu\n");
+    out.push_str("- Choose Full, Compact, or Minimal from Settings (native) or View (classic)\n");
     out.push_str("- Press F2 to cycle Full -> Compact -> Minimal\n");
     out.push_str("- Layout preset is saved between runs");
     out
@@ -412,12 +411,12 @@ pub enum StartupSet {
     BuildWorld,
 }
 
-/// Orthographic scale that frames the whole board in the window, with a margin.
-pub fn camera_scale_to_fit_board(window: &Window, cols: usize, rows: usize) -> f32 {
+/// Orthographic scale that frames the whole board in the available canvas, with a margin.
+pub fn camera_scale_to_fit_board(size: Vec2, cols: usize, rows: usize) -> f32 {
     let board_width = cols as f32 * CELL_SIZE;
     let board_height = rows as f32 * CELL_SIZE;
-    let horizontal = board_width / window.width().max(1.0);
-    let vertical = board_height / window.height().max(1.0);
+    let horizontal = board_width / size.x.max(1.0);
+    let vertical = board_height / size.y.max(1.0);
     (horizontal.max(vertical) * 1.05).clamp(CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
 }
 
@@ -501,11 +500,11 @@ mod tests {
 
         // A board smaller than the window still fits at any scale, so the margin
         // keeps it just inside the viewport.
-        let small = camera_scale_to_fit_board(&window, 10, 10);
+        let small = camera_scale_to_fit_board(window.size(), 10, 10);
         assert!(small * 1200.0 >= 10.0 * CELL_SIZE, "small board must fit");
 
         // A board far wider than the window must zoom out enough to show it all.
-        let large = camera_scale_to_fit_board(&window, 1024, 1024);
+        let large = camera_scale_to_fit_board(window.size(), 1024, 1024);
         assert!(
             large * 800.0 >= 1024.0 * CELL_SIZE,
             "1024 rows must fit vertically"
@@ -513,14 +512,14 @@ mod tests {
         assert!(large <= CAMERA_ZOOM_MAX);
 
         // The limiting axis wins: a wide, short board is framed by its width.
-        let wide = camera_scale_to_fit_board(&window, 1024, 16);
+        let wide = camera_scale_to_fit_board(window.size(), 1024, 16);
         assert!(wide * 1200.0 >= 1024.0 * CELL_SIZE);
     }
 
     #[test]
     fn largest_supported_board_still_fits_within_the_zoom_ceiling() {
         let window = window(1200, 800);
-        let scale = camera_scale_to_fit_board(&window, BOARD_SIZE_MAX, BOARD_SIZE_MAX);
+        let scale = camera_scale_to_fit_board(window.size(), BOARD_SIZE_MAX, BOARD_SIZE_MAX);
         assert!(scale < CAMERA_ZOOM_MAX, "zoom ceiling is too low: {scale}");
         assert!(scale * 800.0 >= BOARD_SIZE_MAX as f32 * CELL_SIZE);
     }

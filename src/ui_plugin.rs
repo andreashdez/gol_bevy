@@ -92,6 +92,20 @@ fn render_ui(
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
+    if overlays.native.enabled {
+        let size = ctx.viewport_rect().size();
+        let panels: Vec<_> = panel_rects(Vec2::new(size.x, size.y), &ui_layout)
+            .into_iter()
+            .map(|r| {
+                egui::Rect::from_min_max(egui::pos2(r.min.x, r.min.y), egui::pos2(r.max.x, r.max.y))
+            })
+            .collect();
+        pointer_capture.blocked = overlays.native.dialog.is_some()
+            || ctx.input(|input| {
+                pointer_over_panels(input.pointer.latest_pos(), &input.events, &panels)
+            });
+        return;
+    }
     initialize_visuals(&mut ui_state, ctx);
     let mut viewport_ui = egui::Ui::new(
         ctx.clone(),
@@ -101,11 +115,7 @@ fn render_ui(
             .max_rect(ctx.viewport_rect()),
     );
 
-    if overlays.native.import_requested {
-        ui_state.import_open = true;
-        overlays.native.import_requested = false;
-    }
-    let panels = if !overlays.native.enabled {
+    let panels = {
         let toolbar =
             egui::Panel::top("playback_toolbar")
                 .resizable(false)
@@ -306,17 +316,6 @@ fn render_ui(
         .into_iter()
         .flatten()
         .collect::<Vec<_>>()
-    } else {
-        let size = ctx.viewport_rect().size();
-        panel_rects(
-            Vec2::new(size.x, size.y),
-            ui_layout.is_control_deck_visible(),
-        )
-        .into_iter()
-        .map(|r| {
-            egui::Rect::from_min_max(egui::pos2(r.min.x, r.min.y), egui::pos2(r.max.x, r.max.y))
-        })
-        .collect()
     };
 
     if overlays.diagnostics.enabled {
