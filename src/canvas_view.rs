@@ -1,6 +1,6 @@
 //! The board camera occupies the workspace while UI keeps a full-window camera.
 use crate::{
-    native_ui_plugin::{NativeUi, canvas_rect},
+    native_ui_plugin::canvas_rect,
     shared::{
         BoardSettings, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, MainCamera, UiLayout, UpdateSet,
         camera_scale_to_fit_board,
@@ -45,7 +45,6 @@ fn physical_viewport(rect: Rect, scale: f32, target: UVec2) -> Viewport {
 
 fn update_viewport(
     windows: Query<&Window, With<PrimaryWindow>>,
-    mode: Res<NativeUi>,
     layout: Res<UiLayout>,
     settings: Res<BoardSettings>,
     mut view: ResMut<CanvasView>,
@@ -61,14 +60,8 @@ fn update_viewport(
     let Ok((mut camera, mut projection, mut transform)) = cameras.single_mut() else {
         return;
     };
-    let rect = if mode.enabled {
-        canvas_rect(window.size(), &layout)
-    } else {
-        Rect::from_corners(Vec2::ZERO, window.size())
-    };
-    let viewport = mode
-        .enabled
-        .then(|| physical_viewport(rect, window.scale_factor(), physical));
+    let rect = canvas_rect(window.size(), &layout);
+    let viewport = Some(physical_viewport(rect, window.scale_factor(), physical));
     if camera
         .viewport
         .as_ref()
@@ -165,7 +158,6 @@ mod tests {
     #[test]
     fn layout_resize_preserves_pan_and_relative_zoom_but_board_resize_fits() {
         let mut world = World::new();
-        world.insert_resource(NativeUi::default());
         world.insert_resource(UiLayout::default());
         world.insert_resource(BoardSettings {
             cols: 128,
@@ -193,9 +185,6 @@ mod tests {
         };
         assert!((o.scale / fit - 0.5).abs() < 0.0001);
         assert_eq!(world.get::<Transform>(camera).unwrap().translation.x, 123.0);
-        world.resource_mut::<NativeUi>().enabled = false;
-        world.run_system_once(update_viewport).unwrap();
-        assert!(world.get::<Camera>(camera).unwrap().viewport.is_none());
         world.resource_mut::<BoardSettings>().cols = 256;
         world.run_system_once(update_viewport).unwrap();
         let Projection::Orthographic(o) = world.get::<Projection>(camera).unwrap() else {

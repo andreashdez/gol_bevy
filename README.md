@@ -14,10 +14,8 @@ Conway's Game of Life with a native desktop GUI built on Bevy.
 cargo run
 ```
 
-The default interface is a native Bevy UI prototype: playback controls, pattern cards,
-editing tools, board actions, and live status. Press **F4** or use **Classic UI / Native
-preview** to compare interfaces without resetting the simulation or edit history.
-Start directly in the original interface with `cargo run -- --classic-ui`.
+The interface uses native Bevy UI throughout: playback controls, a searchable pattern
+palette, editing tools, live status, and import/settings/help/diagnostics dialogs.
 
 The native palette scrolls with the mouse wheel; scrolling over the canvas zooms it.
 The board has its own canvas beside the palette and between the toolbar and status
@@ -93,14 +91,14 @@ Pattern palette:
 - Select a pattern thumbnail, then click the board to place it
 
 Layout presets:
-- Choose Full, Compact, or Minimal from Settings (native) or View (classic)
+- Choose Full, Compact, or Minimal from Settings
 - Press F2 to cycle Full -> Compact -> Minimal
 - Layout preset is saved between runs
 ```
 
-Board size is set in native Settings (or under Board in the classic sidebar): pick a preset (128², 256², 512², 1024²) or type exact dimensions, from 8 up to 2048 per side. The choice is saved between runs. Resizing the board clears undo history, because old snapshots no longer fit; resizing the window does not.
+Board size is set in Settings: pick a preset (128², 256², 512², 1024²) or type exact dimensions, from 8 up to 2048 per side. The choice is saved between runs. Resizing the board clears undo history, because old snapshots no longer fit; resizing the window does not.
 
-The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools share a visual pattern palette; rotate and flip controls appear for stamps. In Minimal mode, open Tools to access the palette and board actions. Grid and diagnostics are available in View; diagnostics start hidden.
+The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools share a visual pattern palette; rotate and flip controls appear for stamps. Use Palette to show or hide the editing tools and board actions. Grid is available in the toolbar and Settings; diagnostics open from Settings or F3 and start hidden.
 
 Undo restores the board and generation before drawing, erasing, placing a stamp, randomizing, or clearing, and pauses playback. Redo reapplies an undone edit, and making a new edit discards the redo chain. Each drag is one edit. History retains up to 32 edits within an approximate 16 MiB budget (with at least one edit), and clears when the board is resized. Imported patterns remain available for the current session.
 
@@ -112,7 +110,9 @@ Runtime flow from `src/main.rs`:
 main
   -> DefaultPlugins + resources
   -> RenderPlugin (world setup, board texture/grid/wall/preview rendering)
-  -> UiPlugin (classic interface + layout persistence)
+  -> SettingsPlugin (layout and board-size persistence)
+  -> UiInputPlugin (UI regions, modal capture, and keyboard focus)
+  -> CanvasViewPlugin (canvas viewport and board framing)
   -> NativeUiPlugin (native toolbar + palette + import/settings/help/diagnostics dialogs)
   -> InputPlugin (keyboard, mouse, camera controls)
   -> SimulationPlugin (tick advancement, redraw collection, quit)
@@ -123,6 +123,7 @@ Shared resources:
   RedrawRequested
   DiagnosticsOverlay
   GridOverlay
+  UiInputRegions / UiInputCapture
 
 Core domain:
   app::App      (state machine and user actions)

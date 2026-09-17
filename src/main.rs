@@ -1,15 +1,15 @@
 use bevy::{prelude::*, window::WindowResolution};
-use bevy_egui::{EguiGlobalSettings, EguiPlugin};
 use gol_bevy::canvas_view::CanvasViewPlugin;
 use gol_bevy::input_plugin::InputPlugin;
 use gol_bevy::native_ui_plugin::NativeUiPlugin;
 use gol_bevy::render_plugin::RenderPlugin;
+use gol_bevy::settings_plugin::SettingsPlugin;
 use gol_bevy::shared::{
     BG_COLOR, BoardSettings, DiagnosticsOverlay, GridOverlay, RedrawRequested, StartupSet,
     UpdateSet,
 };
 use gol_bevy::simulation_plugin::SimulationPlugin;
-use gol_bevy::ui_plugin::UiPlugin;
+use gol_bevy::ui_input::UiInputPlugin;
 
 fn main() {
     bevy::prelude::App::new()
@@ -27,11 +27,6 @@ fn main() {
             }),
             ..default()
         }))
-        .add_plugins(EguiPlugin::default())
-        .insert_resource(EguiGlobalSettings {
-            auto_create_primary_context: false,
-            ..default()
-        })
         .insert_resource(ClearColor(BG_COLOR))
         .insert_resource(RedrawRequested::default())
         .insert_resource(DiagnosticsOverlay { enabled: false })
@@ -57,7 +52,8 @@ fn main() {
         .add_plugins((
             RenderPlugin,
             CanvasViewPlugin,
-            UiPlugin,
+            SettingsPlugin,
+            UiInputPlugin,
             NativeUiPlugin,
             InputPlugin,
             SimulationPlugin,

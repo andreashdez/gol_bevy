@@ -3,12 +3,12 @@ use std::{f32::consts::PI, time::Duration};
 use crate::app::{App as GolApp, EditTool};
 use crate::board::{BoundaryMode, DirtyCells};
 use crate::canvas_view::cursor_world;
-use crate::shared::UiPointerCapture;
 use crate::shared::{
     BoardSettings, CELL_SIZE, DEAD_COLOR, GHOST_LIVE_COLOR, GRID_LINE_COLOR, GridOverlay,
     LIVE_COLOR, MainCamera, RedrawRequested, Simulation, StartupSet, UpdateSet, WALL_BRIGHT_COLOR,
     WALL_COLOR, board_size_for_window, cell_to_world, world_to_cell,
 };
+use crate::ui_input::UiInputCapture;
 use bevy::{
     asset::RenderAssetUsages,
     camera::visibility::RenderLayers,
@@ -18,7 +18,6 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     window::PrimaryWindow,
 };
-use bevy_egui::input::EguiWantsInput;
 
 pub struct RenderPlugin;
 
@@ -180,7 +179,6 @@ fn setup_world(
         },
         RenderLayers::none(),
         IsDefaultUiCamera,
-        bevy_egui::PrimaryEguiContext,
     ));
     commands.insert_resource(Simulation {
         app: GolApp::new(cols, rows),
@@ -524,12 +522,11 @@ fn update_hovered_cell(
     window_q: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     sim: Res<Simulation>,
-    wants_input: Res<EguiWantsInput>,
     mut hovered: ResMut<HoveredCell>,
-    pointer_capture: Res<UiPointerCapture>,
+    pointer_capture: Res<UiInputCapture>,
 ) {
     hovered.0 = None;
-    if wants_input.wants_any_pointer_input() || pointer_capture.blocked {
+    if pointer_capture.pointer {
         return;
     }
     let Ok(window) = window_q.single() else {

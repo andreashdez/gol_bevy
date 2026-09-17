@@ -1,4 +1,4 @@
-//! Native Bevy controls and dialogs sharing the simulation with the classic frontend.
+//! Native Bevy interface for the simulation.
 mod accessibility;
 mod controls;
 mod dialogs;
@@ -6,6 +6,7 @@ mod palette;
 use crate::{
     app::{App as GolApp, EditTool},
     shared::{GridOverlay, Simulation, StartupSet, UiLayout, UpdateSet},
+    ui_input::{UiInputRegions, UiInputSet},
 };
 use bevy::{
     asset::RenderAssetUsages,
@@ -35,21 +36,9 @@ const BOTTOM: f32 = 44.0;
 const SIDE: f32 = 256.0;
 const UI_FONT: Handle<Font> = bevy::asset::uuid_handle!("67dfd7f0-b829-4a23-a5ae-3e416c5aba2d");
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct NativeUi {
-    pub enabled: bool,
     pub(crate) dialog: Option<DialogKind>,
-    keyboard_blocked: bool,
-}
-
-impl Default for NativeUi {
-    fn default() -> Self {
-        Self {
-            enabled: !std::env::args().any(|arg| arg == "--classic-ui"),
-            dialog: None,
-            keyboard_blocked: false,
-        }
-    }
 }
 
 #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
@@ -68,7 +57,6 @@ impl Plugin for NativeUiPlugin {
             .add_systems(
                 Update,
                 (
-                    toggle_mode,
                     dialogs::update_dialogs,
                     sync,
                     sync_palette,
@@ -76,10 +64,12 @@ impl Plugin for NativeUiPlugin {
                     palette::sync_preview,
                     controls::sync_speed,
                     controls::sync_overlays,
+                    publish_input_regions,
                 )
                     .chain()
                     .in_set(NativeLayout)
-                    .before(UpdateSet::Camera),
+                    .before(UpdateSet::Camera)
+                    .before(UiInputSet::Capture),
             );
     }
 }
@@ -103,7 +93,6 @@ enum Action {
     Redo,
     Grid,
     Sidebar,
-    Classic,
     Import,
     Help,
     Settings,
@@ -204,7 +193,7 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
         .with_children(|p| {
             p.spawn(row()).with_children(|p| {
                 p.spawn(label("LIFE", 23.0, ACCENT));
-                p.spawn((controls::WideLabel, label("/  NATIVE PREVIEW", 12.0, MUTED)));
+                p.spawn((controls::WideLabel, label("/  GAME OF LIFE", 12.0, MUTED)));
                 p.spawn(Node {
                     flex_grow: 1.0,
                     ..default()
@@ -212,7 +201,6 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
                 button(p, "Import RLE", Action::Import);
                 button(p, "Settings", Action::Settings);
                 button(p, "Help", Action::Help);
-                button(p, "Classic UI", Action::Classic);
             });
             p.spawn(row()).with_children(|p| {
                 button(p, "Play", Action::Play);
@@ -287,7 +275,7 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
             button(p, "Edges", Action::Boundary);
             button(p, "Board size…", Action::Settings);
             p.spawn(label(
-                "Space to play · U to undo\nF4 switches interfaces.\nScroll for more controls.",
+                "Space to play · U to undo\nV fits the board.\nScroll for more controls.",
                 12.0,
                 MUTED,
             ));
@@ -353,79 +341,30 @@ pub fn canvas_rect(size: Vec2, layout: &UiLayout) -> Rect {
     Rect::from_corners(min, max)
 }
 
-pub fn pointer_over_native(window: &Window, mode: &NativeUi, layout: &UiLayout) -> bool {
-    mode.enabled
-        && (mode.dialog.is_some()
-            || window.cursor_position().is_some_and(|pos| {
-                panel_rects(window.size(), layout)
-                    .iter()
-                    .any(|r| r.contains(pos))
-            }))
-}
-
-type NativeEditors = Or<(
-    With<bevy::text::EditableText>,
-    With<bevy::ui_widgets::Slider>,
-)>;
-
-pub fn canvas_keyboard_available(
-    mode: Res<NativeUi>,
-    focus: Res<InputFocus>,
-    keys: Res<ButtonInput<KeyCode>>,
-    editors: Query<(), NativeEditors>,
-) -> bool {
-    !(mode.enabled
-        && (mode.dialog.is_some()
-            || mode.keyboard_blocked
-            || focus.get().is_some_and(|entity| editors.contains(entity))
-            || (focus.get().is_some()
-                && (keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter)))))
-}
-
-fn toggle_mode(
-    keys: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
+fn publish_input_regions(
     windows: Query<&Window, With<PrimaryWindow>>,
     layout: Res<UiLayout>,
-    mut mode: ResMut<NativeUi>,
-    mut focus: ResMut<InputFocus>,
-    editors: Query<(), NativeEditors>,
+    state: Res<NativeUi>,
+    mut regions: ResMut<UiInputRegions>,
 ) {
-    let editing = focus.get().is_some_and(|entity| editors.contains(entity));
-    if mode.enabled && mode.dialog.is_none() && editing && keys.just_pressed(KeyCode::Escape) {
-        focus.clear();
-    }
-    mode.keyboard_blocked = mode.dialog.is_some() || editing;
-    if keys.just_pressed(KeyCode::F4) {
-        mode.enabled = !mode.enabled;
-        focus.clear();
-    }
-    if !mode.enabled
-        || (mouse.just_pressed(MouseButton::Left)
-            && windows
-                .single()
-                .is_ok_and(|w| !pointer_over_native(w, &mode, &layout)))
-    {
-        focus.clear();
-    }
+    regions.modal = state.dialog.is_some();
+    regions.panels = windows
+        .single()
+        .map(|window| panel_rects(window.size(), &layout))
+        .unwrap_or_default();
 }
 
 fn activate(
     event: On<Activate>,
     actions: Query<&Action>,
     mut sim: ResMut<Simulation>,
-    mut mode: ResMut<NativeUi>,
     mut grid: ResMut<GridOverlay>,
     mut layout: ResMut<UiLayout>,
 ) {
-    if !mode.enabled {
-        return;
-    }
     let Ok(action) = actions.get(event.entity) else {
         return;
     };
     match action {
-        Action::Classic => mode.enabled = false,
         Action::Import
         | Action::Settings
         | Action::Diagnostics
@@ -501,7 +440,7 @@ fn sync(
     mut texts: Query<(&mut Text, &mut TextColor, Option<&Readout>)>,
 ) {
     let ViewState {
-        mode,
+        mode: _,
         layout,
         grid,
         focus,
@@ -510,7 +449,7 @@ fn sync(
         if sidebar {
             node.width = px(sidebar_width(&layout));
         }
-        let display = if mode.enabled && (!sidebar || layout.is_control_deck_visible()) {
+        let display = if !sidebar || layout.is_control_deck_visible() {
             Display::Flex
         } else {
             Display::None
@@ -518,9 +457,6 @@ fn sync(
         if node.display != display {
             node.display = display;
         }
-    }
-    if !mode.enabled {
-        return;
     }
     for (entity, action, hovered, pressed, mut bg, mut border, children, name, mut accessible) in
         &mut buttons
@@ -795,35 +731,6 @@ mod tests {
                 .count(),
             1
         );
-    }
-
-    #[test]
-    fn search_and_slider_focus_block_canvas_keys_and_escape_returns_focus() {
-        use bevy::ecs::system::RunSystemOnce;
-        use bevy::input_focus::FocusCause;
-        let mut world = World::new();
-        world.insert_resource(NativeUi::default());
-        world.init_resource::<InputFocus>();
-        world.init_resource::<ButtonInput<KeyCode>>();
-        world.init_resource::<ButtonInput<MouseButton>>();
-        world.init_resource::<UiLayout>();
-        let field = world.spawn(bevy::text::EditableText::new("")).id();
-        let slider = world.spawn(bevy::ui_widgets::Slider::default()).id();
-        for entity in [field, slider] {
-            world
-                .resource_mut::<InputFocus>()
-                .set(entity, FocusCause::Navigated);
-            assert!(!world.run_system_once(canvas_keyboard_available).unwrap());
-        }
-        world
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::Escape);
-        world.run_system_once(toggle_mode).unwrap();
-        assert!(world.resource::<InputFocus>().get().is_none());
-        assert!(!world.run_system_once(canvas_keyboard_available).unwrap());
-        world.resource_mut::<ButtonInput<KeyCode>>().reset_all();
-        world.run_system_once(toggle_mode).unwrap();
-        assert!(world.run_system_once(canvas_keyboard_available).unwrap());
     }
 
     #[test]

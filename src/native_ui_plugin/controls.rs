@@ -43,7 +43,6 @@ pub(super) fn hint(action: Action) -> &'static str {
         }
         Action::Grid => "Show / hide the grid · T",
         Action::Sidebar => "Show / hide the palette · H",
-        Action::Classic => "Switch interface · F4",
         Action::Help => "Controls and tips · /",
         Action::Diagnostics => "Simulation diagnostics · F3",
         Action::Rotate => "Rotate stamp 90° clockwise · Z",
@@ -147,11 +146,7 @@ pub(super) fn speed_changed(
     mut sim: ResMut<Simulation>,
     mode: Res<NativeUi>,
 ) {
-    if mode.enabled
-        && mode.dialog.is_none()
-        && sliders.contains(event.source)
-        && event.value.is_finite()
-    {
+    if mode.dialog.is_none() && sliders.contains(event.source) && event.value.is_finite() {
         sim.app.set_tick_rate_ms(rate_to_ms(event.value));
     }
 }
@@ -309,7 +304,7 @@ pub(super) fn sync_overlays(
                 )
             }
         };
-        node.display = if show && view.mode.enabled && view.mode.dialog.is_none() {
+        node.display = if show && view.mode.dialog.is_none() {
             Display::Flex
         } else {
             Display::None

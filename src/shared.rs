@@ -249,7 +249,7 @@ fn build_controls_text() -> String {
     out.push_str("- Use Import pattern to paste RLE and add a stamp\n");
     out.push_str("- Select a pattern thumbnail, then click the board to place it\n\n");
     out.push_str("Layout presets:\n");
-    out.push_str("- Choose Full, Compact, or Minimal from Settings (native) or View (classic)\n");
+    out.push_str("- Choose Full, Compact, or Minimal from Settings\n");
     out.push_str("- Press F2 to cycle Full -> Compact -> Minimal\n");
     out.push_str("- Layout preset is saved between runs");
     out
@@ -418,12 +418,6 @@ pub fn camera_scale_to_fit_board(size: Vec2, cols: usize, rows: usize) -> f32 {
     let horizontal = board_width / size.x.max(1.0);
     let vertical = board_height / size.y.max(1.0);
     (horizontal.max(vertical) * 1.05).clamp(CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
-}
-
-/// Embedded egui panels share the background layer, so capture them explicitly.
-#[derive(Resource, Default)]
-pub struct UiPointerCapture {
-    pub blocked: bool,
 }
 
 #[derive(Component)]

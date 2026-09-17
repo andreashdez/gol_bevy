@@ -82,6 +82,7 @@ impl Plugin for NativeDialogsPlugin {
 #[derive(SystemParam)]
 pub(super) struct DialogState<'w> {
     mode: ResMut<'w, NativeUi>,
+    capture: ResMut<'w, crate::ui_input::UiInputCapture>,
     drafts: ResMut<'w, Drafts>,
     sim: ResMut<'w, Simulation>,
     diagnostics: ResMut<'w, DiagnosticsOverlay>,
@@ -110,6 +111,7 @@ fn save_fields<F: bevy::ecs::query::QueryFilter>(
 }
 
 fn close(state: &mut DialogState) {
+    state.capture.block_modal_frame();
     match state.mode.dialog {
         Some(DialogKind::Help) => state.sim.app.set_help_visible(false),
         Some(DialogKind::Diagnostics) => state.diagnostics.enabled = false,
@@ -131,9 +133,6 @@ fn dialog_action(
     mut state: DialogState,
     mut fields: Query<(&Field, &mut EditableText)>,
 ) {
-    if !state.mode.enabled {
-        return;
-    }
     let Ok(action) = actions.get(event.entity) else {
         return;
     };
@@ -247,40 +246,28 @@ pub(super) fn update_dialogs(
     mut readouts: Query<(&DialogReadout, &mut Text, &mut TextColor)>,
 ) {
     save_fields(&mut state.drafts, &fields);
-    if state.mode.enabled {
-        if state.mode.dialog.is_none() {
-            if state.sim.app.is_help_visible() {
-                state.mode.dialog = Some(DialogKind::Help);
-            } else if state.diagnostics.enabled {
-                state.mode.dialog = Some(DialogKind::Diagnostics);
-            }
-        }
-        if state.mode.dialog.is_some()
-            && (keys.just_pressed(KeyCode::Escape)
-                || (state.mode.dialog == Some(DialogKind::Diagnostics)
-                    && keys.just_pressed(KeyCode::F3))
-                || (state.mode.dialog == Some(DialogKind::Help)
-                    && keys.just_pressed(KeyCode::Slash)))
-        {
-            // Keep canvas shortcuts suppressed on the frame that closes the dialog.
-            state.mode.keyboard_blocked = true;
-            close(&mut state);
+    if state.mode.dialog.is_none() {
+        if state.sim.app.is_help_visible() {
+            state.mode.dialog = Some(DialogKind::Help);
+        } else if state.diagnostics.enabled {
+            state.mode.dialog = Some(DialogKind::Diagnostics);
         }
     }
-    let desired = if state.mode.enabled {
-        state.mode.dialog
-    } else {
-        None
-    };
+    if state.mode.dialog.is_some()
+        && (keys.just_pressed(KeyCode::Escape)
+            || (state.mode.dialog == Some(DialogKind::Diagnostics)
+                && keys.just_pressed(KeyCode::F3))
+            || (state.mode.dialog == Some(DialogKind::Help) && keys.just_pressed(KeyCode::Slash)))
+    {
+        close(&mut state);
+    }
+    let desired = state.mode.dialog;
     if desired != *rendered {
         for root in &roots {
             commands.entity(root).despawn();
         }
-        if desired.is_some() || !state.mode.enabled {
+        if desired.is_some() {
             state.focus.clear();
-        }
-        if !state.mode.enabled {
-            state.drafts.return_focus = None;
         }
         if let Some(kind) = desired {
             build_dialog(&mut commands, kind, &state.drafts);
@@ -410,7 +397,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                     }
                     DialogKind::Help => {
                         p.spawn(label("Choose a stamp or draw cells, then press Space to play. U undoes an edit and pauses; one drag counts as one edit.", 16.0, INK));
-                        p.spawn(label("F4 switches interfaces. Tab moves between controls. Escape closes a dialog. Simulation shortcuts are disabled while a dialog is open.", 14.0, MUTED));
+                        p.spawn(label("Tab moves between controls. Escape closes a dialog. Simulation shortcuts are disabled while a dialog is open.", 14.0, MUTED));
                         p.spawn((label(CONTROLS_TEXT.as_str(), 14.0, INK), super::accessibility::named_node(accesskit::Role::Label, CONTROLS_TEXT.as_str())));
                     }
                     DialogKind::Diagnostics => {
@@ -434,11 +421,10 @@ mod tests {
     fn test_world(dialog: DialogKind) -> World {
         let mut world = World::new();
         world.insert_resource(NativeUi {
-            enabled: true,
             dialog: Some(dialog),
-            keyboard_blocked: false,
         });
         world.insert_resource(Drafts::default());
+        world.init_resource::<crate::ui_input::UiInputCapture>();
         world.insert_resource(Simulation {
             app: GolApp::new(32, 32),
             accumulator: default(),
@@ -504,7 +490,11 @@ mod tests {
             .press(KeyCode::Escape);
         world.run_system_once(update_dialogs).unwrap();
         assert!(world.resource::<NativeUi>().dialog.is_none());
-        assert!(!world.run_system_once(canvas_keyboard_available).unwrap());
+        assert!(
+            !world
+                .run_system_once(crate::ui_input::canvas_keyboard_available)
+                .unwrap()
+        );
         assert!(!world.resource::<Simulation>().app.should_quit);
     }
 

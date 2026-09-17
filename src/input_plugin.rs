@@ -1,7 +1,6 @@
 use crate::{
     app::{EditTool, PatternKind},
     canvas_view::{CanvasView, cursor_world},
-    native_ui_plugin::{NativeUi, canvas_keyboard_available, pointer_over_native},
     shared::{
         BINDING_CLEAR, BINDING_CLEAR_STAMP, BINDING_CYCLE_LAYOUT, BINDING_FLIP_STAMP,
         BINDING_PAN_DOWN, BINDING_PAN_LEFT, BINDING_PAN_RIGHT, BINDING_PAN_UP, BINDING_QUIT,
@@ -11,28 +10,20 @@ use crate::{
         BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_CONTROL_DECK, BINDING_TOGGLE_DIAGNOSTICS,
         BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, CAMERA_PAN_SPEED, CAMERA_ZOOM_MAX,
         CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay, GridOverlay, MainCamera, Simulation,
-        UiLayout, UiPointerCapture, UpdateSet, world_to_cell,
+        UiLayout, UpdateSet, world_to_cell,
     },
+    ui_input::{UiInputCapture, canvas_keyboard_available},
 };
-use bevy::{
-    ecs::schedule::common_conditions::not, input::mouse::MouseWheel, prelude::*,
-    window::PrimaryWindow,
-};
-use bevy_egui::EguiPostUpdateSet;
-use bevy_egui::input::{
-    EguiWantsInput, egui_wants_any_keyboard_input, egui_wants_any_pointer_input,
-};
-
+use bevy::{input::mouse::MouseWheel, prelude::*, window::PrimaryWindow};
 pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
-        // Egui publishes input capture after its UI pass. Using it during Update
-        // reads the previous frame and lets the first click on a widget paint cells.
+        // Capture is refreshed before camera controls and board input. Mouse mapping
+        // waits for the current frame's camera projection and transforms.
         app.configure_sets(
             PostUpdate,
             UpdateSet::Input
-                .after(EguiPostUpdateSet::ProcessOutput)
                 .after(bevy::camera::CameraUpdateSystems)
                 .after(bevy::transform::TransformSystems::Propagate),
         )
@@ -52,29 +43,21 @@ impl Plugin for InputPlugin {
             PostUpdate,
             handle_keyboard
                 .run_if(canvas_keyboard_available)
-                .in_set(UpdateSet::Input)
-                .run_if(not(egui_wants_any_keyboard_input)),
+                .in_set(UpdateSet::Input),
         )
         .add_systems(PostUpdate, handle_mouse.in_set(UpdateSet::Input))
-        .add_systems(
-            Update,
-            handle_camera_zoom
-                .in_set(UpdateSet::Camera)
-                .run_if(not(egui_wants_any_pointer_input)),
-        )
+        .add_systems(Update, handle_camera_zoom.in_set(UpdateSet::Camera))
         .add_systems(
             Update,
             handle_camera_pan
                 .run_if(canvas_keyboard_available)
-                .in_set(UpdateSet::Camera)
-                .run_if(not(egui_wants_any_keyboard_input)),
+                .in_set(UpdateSet::Camera),
         )
         .add_systems(
             Update,
             handle_camera_reset
                 .run_if(canvas_keyboard_available)
-                .in_set(UpdateSet::Camera)
-                .run_if(not(egui_wants_any_keyboard_input)),
+                .in_set(UpdateSet::Camera),
         );
     }
 }
@@ -191,9 +174,8 @@ fn handle_mouse(
     window_q: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     mut sim: ResMut<Simulation>,
-    wants_input: Res<EguiWantsInput>,
     mut canvas_drag: Local<(bool, bool)>,
-    pointer_capture: Res<UiPointerCapture>,
+    pointer_capture: Res<UiInputCapture>,
 ) {
     if !mouse_buttons.pressed(MouseButton::Left) {
         canvas_drag.0 = false;
@@ -201,7 +183,7 @@ fn handle_mouse(
     if !mouse_buttons.pressed(MouseButton::Right) {
         canvas_drag.1 = false;
     }
-    if wants_input.wants_any_pointer_input() || pointer_capture.blocked {
+    if pointer_capture.pointer {
         return;
     }
     let Ok(window) = window_q.single() else {
@@ -248,14 +230,9 @@ fn handle_mouse(
 fn handle_camera_zoom(
     mut wheel_events: MessageReader<MouseWheel>,
     mut camera_q: Query<&mut Projection, With<MainCamera>>,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    mode: Res<NativeUi>,
-    layout: Res<UiLayout>,
+    capture: Res<UiInputCapture>,
 ) {
-    if windows
-        .single()
-        .is_ok_and(|w| pointer_over_native(w, &mode, &layout))
-    {
+    if capture.pointer {
         wheel_events.clear();
         return;
     }

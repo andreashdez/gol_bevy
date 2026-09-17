@@ -12,7 +12,7 @@ use bevy::{
 pub(super) struct NativeAccessibilityPlugin;
 impl Plugin for NativeAccessibilityPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, handle_actions.before(super::toggle_mode))
+        app.add_systems(Update, handle_actions.before(super::NativeLayout))
             .add_systems(
                 PostUpdate,
                 sync_accessibility
@@ -64,9 +64,7 @@ impl NativeTree<'_, '_> {
             return None;
         }
         Some(
-            self.mode.enabled
-                && (self.mode.dialog.is_none()
-                    || ancestors.iter().any(|e| self.dialogs.contains(*e)))
+            (self.mode.dialog.is_none() || ancestors.iter().any(|e| self.dialogs.contains(*e)))
                 && !ancestors.iter().any(|e| {
                     self.nodes
                         .get(*e)
@@ -254,11 +252,7 @@ mod tests {
 
     fn world() -> World {
         let mut world = World::new();
-        world.insert_resource(NativeUi {
-            enabled: true,
-            dialog: None,
-            keyboard_blocked: false,
-        });
+        world.insert_resource(NativeUi { dialog: None });
         world.insert_resource(InputFocus::default());
         world.init_resource::<Messages<ActionRequest>>();
         world
