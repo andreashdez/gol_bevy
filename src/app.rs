@@ -23,6 +23,7 @@ pub struct PatternImport {
 struct EditSnapshot {
     cells: Vec<u8>,
     epoch: usize,
+    rule: Rule,
 }
 
 const EDIT_HISTORY_MAX: usize = 32;
@@ -74,6 +75,8 @@ pub struct App {
     pub epoch: usize,
     /// tick interval in milliseconds
     tick_rate_ms: u64,
+    /// run as many generations per frame as time allows, ignoring the interval
+    max_speed: bool,
     /// whether simulation advances on each tick
     running: bool,
     /// whether UI should redraw
@@ -107,6 +110,7 @@ impl App {
             should_quit: false,
             epoch: 0,
             tick_rate_ms: 25,
+            max_speed: false,
             running: false,
             needs_redraw: true,
             show_help: false,
@@ -119,13 +123,6 @@ impl App {
             stroke_active: false,
             stroke_saved: false,
             board,
-        }
-    }
-
-    /// Handles the tick event of the terminal.
-    pub fn tick(&mut self) {
-        if self.running {
-            self.increment_epoch();
         }
     }
 
@@ -166,13 +163,30 @@ impl App {
         )
     }
 
+    /// Choosing an interval also leaves max speed.
     pub fn set_tick_rate_ms(&mut self, tick_rate_ms: u64) -> bool {
         let clamped = tick_rate_ms.clamp(Self::TICK_RATE_MIN_MS, Self::TICK_RATE_MAX_MS);
-        if self.tick_rate_ms == clamped {
+        if self.tick_rate_ms == clamped && !self.max_speed {
             return false;
         }
 
         self.tick_rate_ms = clamped;
+        self.max_speed = false;
+        self.needs_redraw = true;
+        true
+    }
+
+    pub fn is_max_speed(&self) -> bool {
+        self.max_speed
+    }
+
+    /// Runs generations back to back instead of on the tick interval. The
+    /// interval is kept so slowing down returns to the fastest fixed rate.
+    pub fn set_max_speed(&mut self) -> bool {
+        if self.max_speed {
+            return false;
+        }
+        self.max_speed = true;
         self.needs_redraw = true;
         true
     }
@@ -188,7 +202,8 @@ impl App {
 
     pub fn speed_up(&mut self) -> bool {
         if self.tick_rate_ms <= Self::TICK_RATE_MIN_MS {
-            return false;
+            // Past the fastest interval is max speed.
+            return self.set_max_speed();
         }
 
         self.tick_rate_ms = self
@@ -200,6 +215,9 @@ impl App {
     }
 
     pub fn slow_down(&mut self) -> bool {
+        if self.max_speed {
+            return self.set_tick_rate_ms(Self::TICK_RATE_MIN_MS);
+        }
         if self.tick_rate_ms >= Self::TICK_RATE_MAX_MS {
             return false;
         }
@@ -273,7 +291,7 @@ impl App {
 
     pub fn resize_board(&mut self, new_cols: usize, new_rows: usize) {
         if self.board.resize(new_cols, new_rows) {
-            // Window resizing changes board dimensions; old snapshots no longer fit.
+            // Snapshots hold cells in the old layout, so they no longer fit.
             self.undo_history.clear();
             self.redo_history.clear();
             self.end_stroke();
@@ -285,18 +303,6 @@ impl App {
         let redraw = self.needs_redraw;
         self.needs_redraw = false;
         redraw
-    }
-
-    pub fn insert_glider(&mut self) {
-        self.place_pattern_centered(0);
-    }
-
-    pub fn insert_blinker(&mut self) {
-        self.place_pattern_centered(1);
-    }
-
-    pub fn insert_lwss(&mut self) {
-        self.place_pattern_centered(2);
     }
 
     pub fn select_pattern(&mut self, pattern: PatternKind) {
@@ -321,10 +327,14 @@ impl App {
         let pattern = Pattern::from_rle(name, source)?;
 
         // Honour a declared rule instead of simulating the pattern as plain Life.
+        // Changing it is an undoable edit, so undo can return to the old rule.
         let mut applied_rule = None;
         if let Some(rule) = pattern.rule
-            && self.board.set_rule(rule)
+            && rule != self.board.rule()
         {
+            self.end_stroke();
+            self.save_edit();
+            self.board.set_rule(rule);
             applied_rule = Some(rule);
         }
 
@@ -449,24 +459,6 @@ impl App {
         self.place_pattern_at(&pattern, width, height, col, row);
     }
 
-    fn place_pattern_centered(&mut self, index: usize) {
-        let Some((cells, width, height)) = self
-            .patterns
-            .get(index)
-            .map(|pattern| (pattern.cells.clone(), pattern.width, pattern.height))
-        else {
-            return;
-        };
-        let (cols, rows) = self.board.size();
-        if cols == 0 || rows == 0 {
-            return;
-        }
-
-        let center_col = cols / 2;
-        let center_row = rows / 2;
-        self.place_pattern_at(&cells, width, height, center_col, center_row);
-    }
-
     fn place_pattern_at(
         &mut self,
         pattern: &[(usize, usize)],
@@ -539,10 +531,12 @@ impl App {
         EditSnapshot {
             cells: self.board.snapshot_cells(),
             epoch: self.epoch,
+            rule: self.board.rule(),
         }
     }
 
     fn restore(&mut self, snapshot: EditSnapshot) {
+        self.board.set_rule(snapshot.rule);
         self.board.restore_cells(snapshot.cells);
         self.epoch = snapshot.epoch;
         self.running = false;
@@ -619,6 +613,12 @@ impl App {
 mod tests {
     use super::*;
 
+    fn stamp_centered(app: &mut App, pattern: PatternKind) {
+        app.select_pattern(pattern);
+        let (cols, rows) = app.board.size();
+        app.place_selected_pattern_at(cols / 2, rows / 2);
+    }
+
     #[test]
     fn undo_groups_drag_and_ignores_noop_edits() {
         let mut app = App::new(8, 8);
@@ -639,14 +639,14 @@ mod tests {
     #[test]
     fn undo_restores_clear_and_generation_then_simulation_can_continue() {
         let mut app = App::new(8, 8);
-        app.insert_blinker();
+        stamp_centered(&mut app, PatternKind::Blinker);
         app.increment_epoch();
         let expected = app.board.snapshot_cells();
         let mut next = app.board.clone();
         next.step();
         app.clear_board();
         app.toggle_running();
-        app.tick();
+        app.increment_epoch();
         assert!(app.undo());
         assert_eq!(app.epoch, 1);
         assert!(!app.is_running());
@@ -659,7 +659,7 @@ mod tests {
     #[test]
     fn undo_restores_erased_cells_randomization_and_stamps() {
         let mut app = App::new(8, 8);
-        app.insert_glider();
+        stamp_centered(&mut app, PatternKind::Glider);
         let original = app.board.snapshot_cells();
         app.begin_stroke();
         for row in 0..8 {
@@ -709,7 +709,7 @@ mod tests {
     #[test]
     fn redo_restores_generation_and_leaves_playback_paused() {
         let mut app = App::new(8, 8);
-        app.insert_blinker();
+        stamp_centered(&mut app, PatternKind::Blinker);
         app.increment_epoch();
         app.increment_epoch();
         let epoch_before_clear = app.epoch;
@@ -761,6 +761,37 @@ mod tests {
     }
 
     #[test]
+    fn undo_and_redo_carry_the_rule_an_import_changed() {
+        let mut app = App::new(12, 12);
+        app.populate_board(1, 1);
+
+        app.import_rle_pattern("HighLife", "x = 3, y = 1, rule = B36/S23\n3o!")
+            .expect("RLE with a rule should import");
+        assert_eq!(app.rule_label(), "B36/S23");
+
+        // The rule change is its own edit: undo reverts it and keeps the cells.
+        assert!(app.undo());
+        assert_eq!(app.rule_label(), "B3/S23");
+        assert_eq!(app.board.live_cells_count(), 1);
+
+        assert!(app.redo());
+        assert_eq!(app.rule_label(), "B36/S23");
+
+        // Undoing past the import also lands on the rule of that earlier state.
+        assert!(app.undo());
+        assert!(app.undo());
+        assert_eq!(app.rule_label(), "B3/S23");
+        assert_eq!(app.board.live_cells_count(), 0);
+
+        // An import that leaves the rule alone adds no undo step.
+        let mut plain = App::new(12, 12);
+        plain
+            .import_rle_pattern("Plain", "x = 3, y = 1, rule = B3/S23\n3o!")
+            .expect("RLE should import");
+        assert!(!plain.can_undo());
+    }
+
+    #[test]
     fn undo_history_is_bounded_and_invalidated_only_on_actual_resize() {
         let mut app = App::new(8, 8);
         for i in 0..40 {
@@ -800,6 +831,29 @@ mod tests {
         assert_eq!(app.tick_rate_ms(), 25);
         app.set_tick_rate_ms(2000);
         assert_eq!(app.tick_rate_ms(), 1000);
+    }
+
+    #[test]
+    fn speeding_up_past_the_fastest_interval_reaches_max_speed_and_back() {
+        let mut app = App::new(8, 8);
+        app.set_tick_rate_ms(50);
+        assert!(app.speed_up());
+        assert!(!app.is_max_speed());
+        assert_eq!(app.tick_rate_ms(), 25);
+
+        assert!(app.speed_up());
+        assert!(app.is_max_speed());
+        assert!(!app.speed_up(), "max speed is the ceiling");
+
+        assert!(app.slow_down());
+        assert!(!app.is_max_speed());
+        assert_eq!(app.tick_rate_ms(), 25);
+
+        // Picking any interval, even the current one, leaves max speed.
+        app.set_max_speed();
+        assert!(app.set_tick_rate_ms(25));
+        assert!(!app.is_max_speed());
+        assert!(!app.set_tick_rate_ms(25));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use gol_bevy::board::{Board, DirtyCells};
 use std::hint::black_box;
 
@@ -84,5 +84,28 @@ fn bench_board_step_and_dirty(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_board_step_and_dirty);
+/// The groups above step one board thousands of times, so noise settles into
+/// sparse debris and mostly exercises the frontier path. Stepping a fresh copy
+/// of a 30%-live board each iteration keeps every measurement on the dense scan.
+fn bench_dense_scan(c: &mut Criterion) {
+    let mut group = c.benchmark_group("board_step_dense");
+    group.sample_size(20);
+
+    for size in [512, 1024, 2048] {
+        let mut seeded = Board::new(size, size);
+        seed_noise(&mut seeded, 30);
+        let _ = seeded.take_dirty_cells();
+        group.bench_function(format!("fresh_noise30_{size}"), |b| {
+            b.iter_batched_ref(
+                || seeded.clone(),
+                |board| black_box(step_and_extract(board)),
+                BatchSize::LargeInput,
+            )
+        });
+    }
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_board_step_and_dirty, bench_dense_scan);
 criterion_main!(benches);

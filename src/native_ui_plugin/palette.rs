@@ -203,12 +203,7 @@ mod tests {
         let mut world = World::new();
         let mut app = GolApp::new(30, 30);
         app.select_pattern_index(0);
-        world.insert_resource(Simulation {
-            app,
-            accumulator: std::time::Duration::ZERO,
-            avg_step_ms: 0.0,
-            step_samples: 0,
-        });
+        world.insert_resource(Simulation::new(app));
         world.init_resource::<Assets<Image>>();
         let shared = ImageNode::default().image;
         let placeholder = thumbnail(&[], 1, 1);
@@ -260,12 +255,7 @@ mod tests {
         app.import_rle_pattern("Glider imported", "x = 1, y = 1\no!")
             .unwrap();
         let mut world = World::new();
-        world.insert_resource(Simulation {
-            app,
-            accumulator: std::time::Duration::ZERO,
-            avg_step_ms: 0.0,
-            step_samples: 0,
-        });
+        world.insert_resource(Simulation::new(app));
         world.spawn((PatternSearch, EditableText::new("imported")));
         let builtin = world.spawn((Node::default(), Action::Pattern(0))).id();
         let imported = world.spawn((Node::default(), Action::Pattern(4))).id();

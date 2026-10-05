@@ -27,7 +27,9 @@ stamp preview shows the orientation that will be placed, including rotation and
 horizontal flip. Filtering the library keeps the current stamp selected.
 
 Drag the native speed slider or focus it and use Left/Right (Home/End for the
-limits). Hover or focus buttons for shortcut hints. Empty boards show guidance
+limits). The notch past 40 gen/s is **Max**: each frame runs as many generations
+as fit in about 8 ms, and the label shows the rate actually achieved. **+** at
+40 gen/s also selects Max, and **-** returns to 40 gen/s. Hover or focus buttons for shortcut hints. Empty boards show guidance
 that disappears after the first cells are placed. Search and slider focus block
 board shortcuts; Escape returns keyboard control to the canvas.
 
@@ -100,7 +102,7 @@ Board size is set in Settings: pick a preset (128², 256², 512², 1024²) or ty
 
 The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools share a visual pattern palette; rotate and flip controls appear for stamps. Use Palette to show or hide the editing tools and board actions. Grid is available in the toolbar and Settings; diagnostics open from Settings or F3 and start hidden.
 
-Undo restores the board and generation before drawing, erasing, placing a stamp, randomizing, or clearing, and pauses playback. Redo reapplies an undone edit, and making a new edit discards the redo chain. Each drag is one edit. History retains up to 32 edits within an approximate 16 MiB budget (with at least one edit), and clears when the board is resized. Imported patterns remain available for the current session.
+Undo restores the board, generation, and rule before drawing, erasing, placing a stamp, randomizing, clearing, or importing a pattern that changes the rule, and pauses playback. Redo reapplies an undone edit, and making a new edit discards the redo chain. Each drag is one edit. History retains up to 32 edits within an approximate 16 MiB budget (with at least one edit), and clears when the board is resized. Imported patterns remain available for the current session.
 
 ## Architecture map
 
@@ -158,9 +160,10 @@ x = 8, y = 4
 - Cells away from every edge take a neighbour-counting fast path of plain index offsets; only edge cells pay for wrapping or clamping.
 - Population is tracked incrementally rather than rescanned, so the status bar does not walk the board every frame.
 - Step buffers are recycled between generations, and dirty/frontier flags are cleared by index instead of by full-array fill.
-- Dense fallback threshold defaults to 60% candidate coverage and can be overridden with `GOL_FRONTIER_DENSE_THRESHOLD_PERCENT`.
+- Dense fallback threshold defaults to 5% candidate coverage and can be overridden with `GOL_FRONTIER_DENSE_THRESHOLD_PERCENT`. The dense scan is vectorizable while the frontier step pays per-candidate bookkeeping, so the scan wins early: around 2% for young soup and 5-6% for settled debris on small boards. `cargo bench --bench dense_crossover` measures both, and is worth re-running after changing either path. A frontier that is already over the threshold skips straight to the scan, and candidate collection stops as soon as it crosses it.
 - Rendering is incremental: the board is drawn as a single texture with one texel per cell, and only changed cells are rewritten. Cell count no longer costs one sprite entity each.
 - The grid overlay is drawn only for the lines that intersect the viewport, and is skipped entirely below a few pixels per cell, so its cost tracks screen area rather than board area.
+- A frame runs at most 8 generations to catch up after a stall and then drops the backlog, so a slow frame cannot snowball into a frozen app. Max speed instead spends a fixed time budget per frame, capped at 1024 generations.
 - Full redraw is still used as a safe fallback for operations like resize, randomize, and clear.
 
 ## Profiling and benchmarking
@@ -178,11 +181,20 @@ CPU profiling options:
 - macOS: use Instruments (`cargo run --release`, attach Time Profiler).
 - Linux: use `perf` or `cargo flamegraph` (if installed).
 
-Current benchmark target:
+Benchmark targets:
 
-- `benches/board_step.rs`: `board::step` + dirty-cell extraction for sparse glider and deterministic noise scenarios across 256/512/1024 boards.
+- `benches/board_step.rs`: `board::step` + dirty-cell extraction for sparse glider and deterministic noise scenarios across 256/512/1024 boards, plus a dense group that steps a freshly seeded 512/1024/2048 board each iteration so it always measures the dense scan.
+- `benches/dense_crossover.rs`: times the frontier step against the dense scan on soup covering a growing share of the board, to tune the dense fallback threshold.
 
 ## Development
+
+Dev builds optimize dependencies (`[profile.dev.package."*"] opt-level = 3`) so
+Bevy stays responsive under `cargo run`; the first build is slower as a result.
+For faster rebuilds while iterating, link Bevy dynamically:
+
+```bash
+cargo run --features bevy/dynamic_linking
+```
 
 Useful commands:
 

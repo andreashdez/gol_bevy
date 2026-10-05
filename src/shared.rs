@@ -364,6 +364,46 @@ pub struct Simulation {
     pub accumulator: Duration,
     pub avg_step_ms: f64,
     pub step_samples: u64,
+    pub rate: RateMeter,
+}
+
+impl Simulation {
+    pub fn new(app: GolApp) -> Self {
+        Self {
+            app,
+            accumulator: Duration::ZERO,
+            avg_step_ms: 0.0,
+            step_samples: 0,
+            rate: RateMeter::default(),
+        }
+    }
+}
+
+/// Generations actually achieved per second, averaged over a short window so a
+/// frame that runs no step and the next that runs two read as one steady rate.
+#[derive(Debug, Default)]
+pub struct RateMeter {
+    window: Duration,
+    window_steps: u64,
+    per_second: f64,
+}
+
+impl RateMeter {
+    const WINDOW: Duration = Duration::from_millis(500);
+
+    pub fn record(&mut self, steps: u64, elapsed: Duration) {
+        self.window += elapsed;
+        self.window_steps += steps;
+        if self.window >= Self::WINDOW {
+            self.per_second = self.window_steps as f64 / self.window.as_secs_f64();
+            self.window = Duration::ZERO;
+            self.window_steps = 0;
+        }
+    }
+
+    pub fn per_second(&self) -> f64 {
+        self.per_second
+    }
 }
 
 #[derive(Resource, Default)]
@@ -516,6 +556,27 @@ mod tests {
         let scale = camera_scale_to_fit_board(window.size(), BOARD_SIZE_MAX, BOARD_SIZE_MAX);
         assert!(scale < CAMERA_ZOOM_MAX, "zoom ceiling is too low: {scale}");
         assert!(scale * 800.0 >= BOARD_SIZE_MAX as f32 * CELL_SIZE);
+    }
+
+    #[test]
+    fn rate_meter_averages_steps_over_its_window() {
+        use super::RateMeter;
+        use std::time::Duration;
+
+        let mut meter = RateMeter::default();
+        // Alternating frames of zero and two steps read as one steady rate:
+        // 50 frames of 10 ms fill one window with 50 generations.
+        for frame in 0..50 {
+            meter.record(
+                if frame % 2 == 0 { 0 } else { 2 },
+                Duration::from_millis(10),
+            );
+        }
+        assert!((meter.per_second() - 100.0).abs() < 1e-9);
+
+        // A paused stretch decays the reading to zero once a window elapses.
+        meter.record(0, Duration::from_secs(1));
+        assert_eq!(meter.per_second(), 0.0);
     }
 
     #[test]

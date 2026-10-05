@@ -287,12 +287,17 @@ pub(super) fn update_dialogs(
             DialogReadout::Diagnostics => {
                 let (width, height) = state.sim.app.board.size();
                 format!(
-                    "Board                 {width} x {height}\nGeneration            {}\nLiving cells          {}\nRule                  {}\n\nAverage step          {:.3} ms\nTick interval         {} ms\nSamples               {}\nDense fallback        {}%\n\nPlayback continues while this view is open.",
+                    "Board                 {width} x {height}\nGeneration            {}\nLiving cells          {}\nRule                  {}\n\nAverage step          {:.3} ms\nTick interval         {}\nMeasured rate         {:.1} gen/s\nSamples               {}\nDense fallback        {}%\n\nPlayback continues while this view is open.",
                     state.sim.app.epoch,
                     state.sim.app.board.live_cells_count(),
                     state.sim.app.rule_label(),
                     state.sim.avg_step_ms,
-                    state.sim.app.tick_rate_ms(),
+                    if state.sim.app.is_max_speed() {
+                        "max speed".to_owned()
+                    } else {
+                        format!("{} ms", state.sim.app.tick_rate_ms())
+                    },
+                    state.sim.rate.per_second(),
                     state.sim.step_samples,
                     frontier_dense_threshold_percent_for_diagnostics()
                 )
@@ -425,12 +430,7 @@ mod tests {
         });
         world.insert_resource(Drafts::default());
         world.init_resource::<crate::ui_input::UiInputCapture>();
-        world.insert_resource(Simulation {
-            app: GolApp::new(32, 32),
-            accumulator: default(),
-            avg_step_ms: 0.0,
-            step_samples: 0,
-        });
+        world.insert_resource(Simulation::new(GolApp::new(32, 32)));
         world.insert_resource(BoardSettings { cols: 32, rows: 32 });
         world.insert_resource(UiLayout::default());
         world.insert_resource(DiagnosticsOverlay { enabled: false });

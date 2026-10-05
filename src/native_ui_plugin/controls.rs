@@ -65,8 +65,29 @@ pub(super) fn hint(action: Action) -> &'static str {
     }
 }
 
+/// The slider runs through fixed rates in generations per second, then one
+/// notch past the fastest of them for max speed.
+const SLIDER_FASTEST_RATE: f32 = 40.0;
+const SLIDER_MAX_SPEED: f32 = SLIDER_FASTEST_RATE + 1.0;
+
 fn rate_to_ms(rate: f32) -> u64 {
-    (1000.0 / rate.clamp(1.0, 40.0)).round() as u64
+    (1000.0 / rate.clamp(1.0, SLIDER_FASTEST_RATE)).round() as u64
+}
+
+fn apply_slider_value(app: &mut GolApp, value: f32) {
+    if value > SLIDER_FASTEST_RATE {
+        app.set_max_speed();
+    } else {
+        app.set_tick_rate_ms(rate_to_ms(value));
+    }
+}
+
+fn slider_value(app: &GolApp) -> f32 {
+    if app.is_max_speed() {
+        SLIDER_MAX_SPEED
+    } else {
+        1000.0 / app.tick_rate_ms() as f32
+    }
 }
 
 pub(super) fn speed_slider(p: &mut ChildSpawnerCommands) {
@@ -76,13 +97,13 @@ pub(super) fn speed_slider(p: &mut ChildSpawnerCommands) {
             track_click: TrackClick::Snap,
             ..default()
         },
-        SliderValue(40.0),
-        SliderRange::new(1.0, 40.0),
+        SliderValue(SLIDER_FASTEST_RATE),
+        SliderRange::new(1.0, SLIDER_MAX_SPEED),
         SliderStep(1.0),
         SliderPrecision(0),
         TabIndex(0),
         Hovered::default(),
-        Tooltip("Speed · Left/Right adjusts · Home/End sets limits · +/− on canvas".into()),
+        Tooltip("Speed · Left/Right adjusts · Home slowest · End max speed · +/− on canvas".into()),
         accessibility::named_node(
             accesskit::Role::Slider,
             "Simulation speed (generations per second)",
@@ -129,7 +150,7 @@ pub(super) fn speed_slider(p: &mut ChildSpawnerCommands) {
         ));
     });
     p.spawn(Node {
-        width: px(72),
+        width: px(84),
         height: px(34),
         align_items: AlignItems::Center,
         flex_shrink: 0.0,
@@ -147,7 +168,7 @@ pub(super) fn speed_changed(
     mode: Res<NativeUi>,
 ) {
     if mode.dialog.is_none() && sliders.contains(event.source) && event.value.is_finite() {
-        sim.app.set_tick_rate_ms(rate_to_ms(event.value));
+        apply_slider_value(&mut sim.app, event.value);
     }
 }
 
@@ -168,15 +189,30 @@ pub(super) fn sync_speed(
     mut thumbs: Query<&mut Node, With<SpeedThumb>>,
     mut labels: Query<&mut Text, With<SpeedLabel>>,
 ) {
-    let rate = 1000.0 / sim.app.tick_rate_ms() as f32;
+    let position = slider_value(&sim.app);
     let Ok((entity, computed, value, mut accessible, mut border)) = sliders.single_mut() else {
         return;
     };
-    if value.0 != rate {
-        commands.entity(entity).insert(SliderValue(rate));
+    if value.0 != position {
+        commands.entity(entity).insert(SliderValue(position));
     }
-    accessible.set_numeric_value(rate as f64);
-    accessible.set_value(format!("{rate:.1} generations per second"));
+    let measured = sim.rate.per_second();
+    let (spoken, shown) = if sim.app.is_max_speed() && sim.app.is_running() && measured > 0.0 {
+        (
+            format!("Maximum speed, {measured:.0} generations per second"),
+            format!("Max {measured:.0}/s"),
+        )
+    } else if sim.app.is_max_speed() {
+        // Paused, or running for less than one measuring window.
+        ("Maximum speed".to_owned(), "Max".to_owned())
+    } else {
+        (
+            format!("{position:.1} generations per second"),
+            format!("{position:.1} gen/s"),
+        )
+    };
+    accessible.set_numeric_value(position as f64);
+    accessible.set_value(spoken);
     accessible.add_action(accesskit::Action::SetValue);
     accessible.add_action(accesskit::Action::Increment);
     accessible.add_action(accesskit::Action::Decrement);
@@ -187,10 +223,12 @@ pub(super) fn sync_speed(
     });
     if let Ok(mut thumb) = thumbs.single_mut() {
         let travel = (computed.size().x * computed.inverse_scale_factor - 16.0).max(0.0);
-        thumb.left = px(travel * (rate - 1.0) / 39.0);
+        thumb.left = px(travel * (position - 1.0) / (SLIDER_MAX_SPEED - 1.0));
     }
-    if let Ok(mut label) = labels.single_mut() {
-        label.0 = format!("{rate:.1} gen/s");
+    if let Ok(mut label) = labels.single_mut()
+        && label.0 != shown
+    {
+        label.0 = shown;
     }
 }
 
@@ -330,5 +368,21 @@ mod tests {
         for rate in 1..40 {
             assert!(rate_to_ms(rate as f32) >= rate_to_ms(rate as f32 + 1.0));
         }
+    }
+
+    #[test]
+    fn the_notch_past_the_fastest_rate_is_max_speed() {
+        let mut app = GolApp::new(8, 8);
+        apply_slider_value(&mut app, SLIDER_MAX_SPEED);
+        assert!(app.is_max_speed());
+        assert_eq!(slider_value(&app), SLIDER_MAX_SPEED);
+
+        apply_slider_value(&mut app, SLIDER_FASTEST_RATE);
+        assert!(!app.is_max_speed());
+        assert_eq!(slider_value(&app), SLIDER_FASTEST_RATE);
+
+        // The + key past the fastest rate lands on the same notch.
+        app.speed_up();
+        assert_eq!(slider_value(&app), SLIDER_MAX_SPEED);
     }
 }

@@ -1,5 +1,10 @@
 const CELL_ALIVE: u8 = 1;
-const FRONTIER_DENSE_THRESHOLD_PERCENT_DEFAULT: usize = 60;
+/// Measured with `benches/dense_crossover.rs`. The dense scan overtakes the
+/// frontier step at about 2% candidate coverage for young soup, but only at 5-6%
+/// for settled debris on boards small enough to stay in cache. 5% keeps settled
+/// boards no slower than the frontier alone, at the cost of up to roughly twice
+/// the dense time for soup between 2% and 5%.
+const FRONTIER_DENSE_THRESHOLD_PERCENT_DEFAULT: usize = 5;
 
 fn frontier_dense_threshold_percent() -> usize {
     static THRESHOLD: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
@@ -95,6 +100,12 @@ impl Rule {
     fn allows_survival(self, neighbors: u8) -> bool {
         self.survive & (1 << neighbors) != 0
     }
+
+    /// Birth counts in bits 0..=8 and survival counts in bits 9..=17, so the next
+    /// state is bit `neighbors + 9 * alive` without branching on `alive`.
+    fn transition_mask(self) -> u32 {
+        u32::from(self.birth) | (u32::from(self.survive) << 9)
+    }
 }
 
 impl Default for Rule {
@@ -184,6 +195,8 @@ pub struct Board {
     boundary_mode: BoundaryMode,
     /// birth/survival rule applied by each step
     rule: Rule,
+    /// candidate share of the board, in percent, above which a step scans densely
+    dense_threshold_percent: usize,
 }
 
 impl Board {
@@ -218,6 +231,7 @@ impl Board {
             rows,
             boundary_mode: BoundaryMode::Wrap,
             rule: Rule::LIFE,
+            dense_threshold_percent: frontier_dense_threshold_percent(),
         }
     }
 
@@ -343,21 +357,19 @@ impl Board {
     fn step_dense(&mut self) -> bool {
         let mut next_frontier = std::mem::take(&mut self.frontier_scratch);
         next_frontier.clear();
-        let mut live_count = 0;
 
-        for row in 0..self.rows {
-            for col in 0..self.cols {
-                let idx = self.idx(col, row);
-                let next_state = self.next_state(col, row);
-                if next_state == CELL_ALIVE {
-                    live_count += 1;
-                }
-                if next_state != self.current[idx] {
-                    self.mark_dirty_cell(idx);
-                    next_frontier.push(idx);
-                }
-                self.future[idx] = next_state;
-            }
+        // Borrow the fields, not `self`, so `future` can be written while
+        // `current` is read.
+        let view = CellsView {
+            cells: &self.current,
+            cols: self.cols,
+            rows: self.rows,
+            boundary_mode: self.boundary_mode,
+            rule: self.rule,
+        };
+        let live_count = view.step_rows(0, &mut self.future, &mut next_frontier);
+        for &idx in &next_frontier {
+            self.mark_dirty_cell(idx);
         }
 
         let changed = !next_frontier.is_empty();
@@ -368,16 +380,23 @@ impl Board {
     }
 
     fn step_frontier(&mut self) -> bool {
-        let mut candidates = std::mem::take(&mut self.candidate_scratch);
-        candidates.clear();
-        self.collect_frontier_candidates(&mut candidates);
-
-        let dense_threshold = self
+        let dense_threshold = (self
             .current
             .len()
-            .saturating_mul(frontier_dense_threshold_percent())
-            / 100;
-        if candidates.len() > dense_threshold.max(1) {
+            .saturating_mul(self.dense_threshold_percent)
+            / 100)
+            .max(1);
+
+        // Every frontier cell is its own candidate, so a frontier this large is
+        // already past the threshold and expanding it would be thrown away.
+        if self.frontier_cells.len() > dense_threshold {
+            return self.step_dense();
+        }
+
+        let mut candidates = std::mem::take(&mut self.candidate_scratch);
+        candidates.clear();
+        let within_threshold = self.collect_frontier_candidates(&mut candidates, dense_threshold);
+        if !within_threshold {
             for &idx in &candidates {
                 self.candidate_flags[idx] = 0;
             }
@@ -390,14 +409,14 @@ impl Board {
         // need a full-board copy, making a sparse step cost O(board area).
         let mut next_frontier = std::mem::take(&mut self.frontier_scratch);
         next_frontier.clear();
+        let view = self.view();
         for &idx in &candidates {
-            self.candidate_flags[idx] = 0;
-
-            let col = idx % self.cols;
-            let row = idx / self.cols;
-            if self.next_state(col, row) != self.current[idx] {
+            if view.next_state(idx % self.cols, idx / self.cols) != self.current[idx] {
                 next_frontier.push(idx);
             }
+        }
+        for &idx in &candidates {
+            self.candidate_flags[idx] = 0;
         }
         self.candidate_scratch = candidates;
 
@@ -504,102 +523,21 @@ impl Board {
         row * self.cols + col
     }
 
-    fn next_state(&self, col: usize, row: usize) -> u8 {
-        let alive_neighbors = if self.is_interior(col, row) {
-            self.count_neighbors_interior(col, row)
-        } else {
-            match self.boundary_mode {
-                BoundaryMode::Wrap => self.count_neighbors_wrap(col, row),
-                BoundaryMode::Fixed => self.count_neighbors_fixed(col, row),
-            }
-        };
-        let currently_alive = self.current[self.idx(col, row)] == CELL_ALIVE;
-        let alive = if currently_alive {
-            self.rule.allows_survival(alive_neighbors)
-        } else {
-            self.rule.allows_birth(alive_neighbors)
-        };
-        u8::from(alive)
-    }
-
-    /// A cell away from every edge has all eight neighbours in bounds, so the
-    /// boundary mode cannot change its count.
-    fn is_interior(&self, col: usize, row: usize) -> bool {
-        col > 0 && row > 0 && col + 1 < self.cols && row + 1 < self.rows
-    }
-
-    /// Interior neighbours are plain index offsets. The wrapping and clamping
-    /// paths need a division or a branch per neighbour, which dominates the dense
-    /// scan when it runs over every cell.
-    fn count_neighbors_interior(&self, col: usize, row: usize) -> u8 {
-        let idx = row * self.cols + col;
-        let above = idx - self.cols;
-        let below = idx + self.cols;
-
-        u8::from(self.current[above - 1] == CELL_ALIVE)
-            + u8::from(self.current[above] == CELL_ALIVE)
-            + u8::from(self.current[above + 1] == CELL_ALIVE)
-            + u8::from(self.current[idx - 1] == CELL_ALIVE)
-            + u8::from(self.current[idx + 1] == CELL_ALIVE)
-            + u8::from(self.current[below - 1] == CELL_ALIVE)
-            + u8::from(self.current[below] == CELL_ALIVE)
-            + u8::from(self.current[below + 1] == CELL_ALIVE)
-    }
-
-    fn count_neighbors_wrap(&self, col: usize, row: usize) -> u8 {
-        let cols = self.cols as isize;
-        let rows = self.rows as isize;
-        let col = col as isize;
-        let row = row as isize;
-        let mut alive = 0;
-
-        for dy in -1..=1 {
-            for dx in -1..=1 {
-                if dx == 0 && dy == 0 {
-                    continue;
-                }
-
-                let ncol = (col + dx).rem_euclid(cols) as usize;
-                let nrow = (row + dy).rem_euclid(rows) as usize;
-                alive += u8::from(self.current[self.idx(ncol, nrow)] == CELL_ALIVE);
-            }
+    fn view(&self) -> CellsView<'_> {
+        CellsView {
+            cells: &self.current,
+            cols: self.cols,
+            rows: self.rows,
+            boundary_mode: self.boundary_mode,
+            rule: self.rule,
         }
-
-        alive
     }
 
-    fn count_neighbors_fixed(&self, col: usize, row: usize) -> u8 {
-        let cols = self.cols as isize;
-        let rows = self.rows as isize;
-        let col = col as isize;
-        let row = row as isize;
-        let mut alive = 0;
-
-        for dy in -1..=1 {
-            let nrow = row + dy;
-            if nrow < 0 || nrow >= rows {
-                continue;
-            }
-
-            for dx in -1..=1 {
-                if dx == 0 && dy == 0 {
-                    continue;
-                }
-
-                let ncol = col + dx;
-                if ncol < 0 || ncol >= cols {
-                    continue;
-                }
-
-                alive +=
-                    u8::from(self.current[self.idx(ncol as usize, nrow as usize)] == CELL_ALIVE);
-            }
-        }
-
-        alive
-    }
-
-    fn collect_frontier_candidates(&mut self, out: &mut Vec<usize>) {
+    /// Collects the frontier cells and their neighbours into `out`, deduplicated.
+    /// Returns false as soon as there are more than `limit`, leaving `out` partial:
+    /// the count only grows, so the dense scan is already the better choice and
+    /// finishing the expansion would be wasted work.
+    fn collect_frontier_candidates(&mut self, out: &mut Vec<usize>, limit: usize) -> bool {
         let frontier_cells = &self.frontier_cells;
         let candidate_flags = &mut self.candidate_flags;
         let cols_usize = self.cols;
@@ -622,6 +560,9 @@ impl Board {
                                 out.push(neighbor_idx);
                             }
                         }
+                    }
+                    if out.len() > limit {
+                        return false;
                     }
                 }
             }
@@ -649,9 +590,13 @@ impl Board {
                             }
                         }
                     }
+                    if out.len() > limit {
+                        return false;
+                    }
                 }
             }
         }
+        true
     }
 
     fn mark_dirty_cell(&mut self, idx: usize) {
@@ -703,6 +648,206 @@ impl Board {
 
         next_frontier.clear();
         self.frontier_scratch = next_frontier;
+    }
+}
+
+/// A read-only generation together with what decides its successor. It borrows
+/// only the cells, so the next generation can be written elsewhere meanwhile.
+#[derive(Clone, Copy)]
+struct CellsView<'a> {
+    cells: &'a [u8],
+    cols: usize,
+    rows: usize,
+    boundary_mode: BoundaryMode,
+    rule: Rule,
+}
+
+impl CellsView<'_> {
+    fn next_state(&self, col: usize, row: usize) -> u8 {
+        let alive_neighbors = if self.is_interior(col, row) {
+            self.count_neighbors_interior(col, row)
+        } else {
+            match self.boundary_mode {
+                BoundaryMode::Wrap => self.count_neighbors_wrap(col, row),
+                BoundaryMode::Fixed => self.count_neighbors_fixed(col, row),
+            }
+        };
+        let currently_alive = self.cells[row * self.cols + col] == CELL_ALIVE;
+        let alive = if currently_alive {
+            self.rule.allows_survival(alive_neighbors)
+        } else {
+            self.rule.allows_birth(alive_neighbors)
+        };
+        u8::from(alive)
+    }
+
+    /// A cell away from every edge has all eight neighbours in bounds, so the
+    /// boundary mode cannot change its count.
+    fn is_interior(&self, col: usize, row: usize) -> bool {
+        col > 0 && row > 0 && col + 1 < self.cols && row + 1 < self.rows
+    }
+
+    /// Interior neighbours are plain index offsets. The wrapping and clamping
+    /// paths need a division or a branch per neighbour, and most of the cells
+    /// the frontier step evaluates are interior.
+    fn count_neighbors_interior(&self, col: usize, row: usize) -> u8 {
+        let idx = row * self.cols + col;
+        let above = idx - self.cols;
+        let below = idx + self.cols;
+
+        u8::from(self.cells[above - 1] == CELL_ALIVE)
+            + u8::from(self.cells[above] == CELL_ALIVE)
+            + u8::from(self.cells[above + 1] == CELL_ALIVE)
+            + u8::from(self.cells[idx - 1] == CELL_ALIVE)
+            + u8::from(self.cells[idx + 1] == CELL_ALIVE)
+            + u8::from(self.cells[below - 1] == CELL_ALIVE)
+            + u8::from(self.cells[below] == CELL_ALIVE)
+            + u8::from(self.cells[below + 1] == CELL_ALIVE)
+    }
+
+    fn count_neighbors_wrap(&self, col: usize, row: usize) -> u8 {
+        let cols = self.cols as isize;
+        let rows = self.rows as isize;
+        let col = col as isize;
+        let row = row as isize;
+        let mut alive = 0;
+
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+
+                let ncol = (col + dx).rem_euclid(cols) as usize;
+                let nrow = (row + dy).rem_euclid(rows) as usize;
+                alive += u8::from(self.cells[nrow * self.cols + ncol] == CELL_ALIVE);
+            }
+        }
+
+        alive
+    }
+
+    fn count_neighbors_fixed(&self, col: usize, row: usize) -> u8 {
+        let cols = self.cols as isize;
+        let rows = self.rows as isize;
+        let col = col as isize;
+        let row = row as isize;
+        let mut alive = 0;
+
+        for dy in -1..=1 {
+            let nrow = row + dy;
+            if nrow < 0 || nrow >= rows {
+                continue;
+            }
+
+            for dx in -1..=1 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+
+                let ncol = col + dx;
+                if ncol < 0 || ncol >= cols {
+                    continue;
+                }
+
+                alive +=
+                    u8::from(self.cells[nrow as usize * self.cols + ncol as usize] == CELL_ALIVE);
+            }
+        }
+
+        alive
+    }
+
+    /// Writes the next generation of the whole rows starting at `first_row` into
+    /// `out`, appending the index of every cell that flips to `changed` in
+    /// row-major order. Returns how many cells in `out` are alive.
+    fn step_rows(&self, first_row: usize, out: &mut [u8], changed: &mut Vec<usize>) -> usize {
+        let cols = self.cols;
+        if cols == 0 {
+            return 0;
+        }
+        debug_assert_eq!(out.len() % cols, 0);
+        let mask = self.rule.transition_mask();
+        let mut column_sums = vec![0u8; cols];
+        let mut live = 0;
+
+        for (offset, out_row) in out.chunks_exact_mut(cols).enumerate() {
+            let row = first_row + offset;
+            let start = row * cols;
+            let current_row = &self.cells[start..start + cols];
+
+            if row == 0 || row + 1 >= self.rows || cols < 3 {
+                // Every cell of an edge row needs the boundary-aware count.
+                for (col, next) in out_row.iter_mut().enumerate() {
+                    *next = self.next_state(col, row);
+                }
+            } else {
+                let above = &self.cells[start - cols..start];
+                let below = &self.cells[start + cols..start + 2 * cols];
+                step_interior_row(above, current_row, below, mask, &mut column_sums, out_row);
+                out_row[0] = self.next_state(0, row);
+                out_row[cols - 1] = self.next_state(cols - 1, row);
+            }
+
+            live += out_row.iter().map(|&cell| usize::from(cell)).sum::<usize>();
+            collect_changed(current_row, out_row, start, changed);
+        }
+        live
+    }
+}
+
+/// Steps columns `1..len - 1` of a row whose neighbours above and below are in
+/// bounds. Each vertical three-cell sum serves three neighbourhoods, and the
+/// plain slice arithmetic vectorizes. Cells hold exactly 0 or 1, so they add up
+/// to neighbour counts directly.
+fn step_interior_row(
+    above: &[u8],
+    current: &[u8],
+    below: &[u8],
+    mask: u32,
+    sums: &mut [u8],
+    out: &mut [u8],
+) {
+    for (((sum, &a), &c), &b) in sums.iter_mut().zip(above).zip(current).zip(below) {
+        *sum = a + c + b;
+    }
+
+    let len = current.len();
+    let lefts = &sums[..len - 2];
+    let centres = &sums[1..len - 1];
+    let rights = &sums[2..];
+    for ((((next, &left), &centre), &right), &cell) in out[1..len - 1]
+        .iter_mut()
+        .zip(lefts)
+        .zip(centres)
+        .zip(rights)
+        .zip(&current[1..len - 1])
+    {
+        // The centre column's sum includes the cell itself.
+        let neighbors = left + centre + right - cell;
+        *next = ((mask >> (u32::from(neighbors) + 9 * u32::from(cell))) & 1) as u8;
+    }
+}
+
+/// Appends `start + i` for every `i` where the rows differ. Unchanged stretches
+/// are common, so eight cells are compared at once before looking closer.
+fn collect_changed(before: &[u8], after: &[u8], start: usize, changed: &mut Vec<usize>) {
+    let (before_words, before_tail) = before.as_chunks::<8>();
+    let (after_words, after_tail) = after.as_chunks::<8>();
+    for (word, (b, a)) in before_words.iter().zip(after_words).enumerate() {
+        if u64::from_ne_bytes(*b) != u64::from_ne_bytes(*a) {
+            push_differences(b, a, start + word * 8, changed);
+        }
+    }
+    let tail_start = start + before_words.len() * 8;
+    push_differences(before_tail, after_tail, tail_start, changed);
+}
+
+fn push_differences(before: &[u8], after: &[u8], start: usize, changed: &mut Vec<usize>) {
+    for (i, (b, a)) in before.iter().zip(after).enumerate() {
+        if b != a {
+            changed.push(start + i);
+        }
     }
 }
 
@@ -986,6 +1131,7 @@ mod tests {
         assert_eq!(board.live_cells_count(), 2);
         assert_live_count_in_sync(&board, "depopulate");
 
+        board.dense_threshold_percent = 100;
         for generation in 0..24 {
             board.step();
             assert_live_count_in_sync(&board, &format!("frontier step {generation}"));
@@ -1020,6 +1166,7 @@ mod tests {
             seed_deterministic(&mut board, 35);
 
             let (cols, rows) = board.size();
+            let board = board.view();
             let mut interior_cells = 0;
             for row in 0..rows {
                 for col in 0..cols {
@@ -1043,6 +1190,71 @@ mod tests {
     }
 
     #[test]
+    fn row_kernel_matches_per_cell_stepping() {
+        use super::Rule;
+
+        // B0 births on zero neighbours, so it flips empty space everywhere and
+        // catches a kernel that skips cells it assumes are quiet.
+        let rules = ["B3/S23", "B36/S23", "B0/S8", "B12345678/S012345678"];
+        let sizes = [
+            (1, 1),
+            (2, 5),
+            (3, 3),
+            (5, 2),
+            (8, 8),
+            (13, 7),
+            (17, 11),
+            (64, 3),
+        ];
+        for mode in [BoundaryMode::Wrap, BoundaryMode::Fixed] {
+            for rule in rules {
+                for (cols, rows) in sizes {
+                    let mut board = Board::new(cols, rows);
+                    board.set_boundary_mode(mode);
+                    board.set_rule(Rule::parse(rule).unwrap());
+                    seed_deterministic(&mut board, 40);
+                    let view = board.view();
+
+                    let mut expected = Vec::new();
+                    let mut changed_expected = Vec::new();
+                    for row in 0..rows {
+                        for col in 0..cols {
+                            let next = view.next_state(col, row);
+                            if next != board.current[row * cols + col] {
+                                changed_expected.push(row * cols + col);
+                            }
+                            expected.push(next);
+                        }
+                    }
+
+                    let mut out = vec![0; cols * rows];
+                    let mut changed = Vec::new();
+                    let live = view.step_rows(0, &mut out, &mut changed);
+                    let context = format!("{cols}x{rows} {rule} {mode:?}");
+                    assert_eq!(out, expected, "{context}");
+                    assert_eq!(changed, changed_expected, "{context}");
+                    assert_eq!(live, super::count_live(&expected), "{context}");
+
+                    // Starting part-way down must give the same rows, which is
+                    // what splitting the board into bands will rely on.
+                    if rows > 2 {
+                        let mut tail = vec![0; cols * (rows - 2)];
+                        let mut tail_changed = Vec::new();
+                        view.step_rows(2, &mut tail, &mut tail_changed);
+                        assert_eq!(tail, expected[cols * 2..], "{context} from row 2");
+                        let from_row_two: Vec<_> = changed_expected
+                            .iter()
+                            .copied()
+                            .filter(|&idx| idx >= cols * 2)
+                            .collect();
+                        assert_eq!(tail_changed, from_row_two, "{context} from row 2");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn populate_random_lands_near_the_intended_density() {
         let mut board = Board::new(200, 200);
         board.populate_random();
@@ -1059,6 +1271,8 @@ mod tests {
         for mode in [BoundaryMode::Wrap, BoundaryMode::Fixed] {
             for live_percent in [2, 15, 40] {
                 let mut frontier_board = Board::new(24, 18);
+                // Never fall back, so every step really takes the frontier path.
+                frontier_board.dense_threshold_percent = 100;
                 frontier_board.set_boundary_mode(mode);
                 seed_deterministic(&mut frontier_board, live_percent);
                 let mut dense_board = frontier_board.clone();
@@ -1103,6 +1317,51 @@ mod tests {
 
         assert!(!block.step());
         assert_eq!(block.take_dirty_cells(), DirtyCells::None);
+    }
+
+    #[test]
+    fn large_frontiers_skip_to_the_dense_scan_and_leave_no_candidate_flags() {
+        // At 10% of 24x18 the limit is 43 cells. 40% live overflows on the
+        // frontier alone; 2% live overflows only part-way through the expansion.
+        for (live_percent, overflows_on_frontier) in [(40, true), (2, false)] {
+            for mode in [BoundaryMode::Wrap, BoundaryMode::Fixed] {
+                let mut board = Board::new(24, 18);
+                board.dense_threshold_percent = 10;
+                board.set_boundary_mode(mode);
+                // Changing the mode forces a dense step, which would bypass the
+                // frontier entirely. The board is still empty, so seeding alone
+                // rebuilds a complete frontier.
+                board.frontier_full = false;
+                seed_deterministic(&mut board, live_percent);
+                let limit = board.current.len() * 10 / 100;
+                let context = format!("{live_percent}% live, {mode:?}");
+
+                let mut probe = board.clone();
+                let mut all_candidates = Vec::new();
+                probe.collect_frontier_candidates(&mut all_candidates, usize::MAX);
+                assert!(all_candidates.len() > limit, "{context}");
+                assert_eq!(
+                    board.frontier_cells.len() > limit,
+                    overflows_on_frontier,
+                    "{context}"
+                );
+
+                let mut dense = board.clone();
+                dense.mark_frontier_full();
+                board.step();
+                dense.step();
+
+                assert_eq!(board.current, dense.current, "{context}");
+                assert_eq!(board.frontier_cells, dense.frontier_cells, "{context}");
+                assert_eq!(board.live_cells_count(), dense.live_cells_count());
+                // A flag left behind by the abandoned expansion would silently
+                // drop that cell from every later candidate set.
+                assert!(
+                    board.candidate_flags.iter().all(|&flag| flag == 0),
+                    "{context}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -322,12 +322,7 @@ mod tests {
             let mut app = crate::app::App::new(8, 8);
             app.populate_board(3, 3);
             app.select_pattern(PatternKind::Glider);
-            world.insert_resource(Simulation {
-                app,
-                accumulator: std::time::Duration::ZERO,
-                avg_step_ms: 0.0,
-                step_samples: 0,
-            });
+            world.insert_resource(Simulation::new(app));
             let mut keys = ButtonInput::<KeyCode>::default();
             if let Some(modifier) = modifier {
                 keys.press(modifier);

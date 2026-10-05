@@ -1,4 +1,4 @@
-use std::{f32::consts::PI, time::Duration};
+use std::f32::consts::PI;
 
 use crate::app::{App as GolApp, EditTool};
 use crate::board::{BoundaryMode, DirtyCells};
@@ -180,12 +180,7 @@ fn setup_world(
         RenderLayers::none(),
         IsDefaultUiCamera,
     ));
-    commands.insert_resource(Simulation {
-        app: GolApp::new(cols, rows),
-        accumulator: Duration::ZERO,
-        avg_step_ms: 0.0,
-        step_samples: 0,
-    });
+    commands.insert_resource(Simulation::new(GolApp::new(cols, rows)));
 
     let handle = create_board_image(&mut images, cols, rows);
     commands.spawn((
