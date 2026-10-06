@@ -51,9 +51,17 @@ The rule is chosen in Settings as well: pick Life, HighLife, Day & Night, or See
 type any rulestring in B/S notation (`B36/S23`, or the older `23/36`). Changing the
 rule is an undoable edit.
 
-Layout, board size, rule, boundary mode, speed, and the grid are saved between runs,
-in `ui_layout.toml` under `$GOL_BEVY_CONFIG_DIR`, `$XDG_CONFIG_HOME/gol-bevy`, or
-`~/.config/gol-bevy`. Entries that are missing or unreadable keep their defaults.
+Layout, board size, rule, boundary mode, speed, and the grid are saved between runs
+in `ui_layout.toml`, in a `gol-bevy` folder in the platform's settings location:
+
+- Linux: `$XDG_CONFIG_HOME`, or `~/.config` if that is unset
+- macOS: `~/Library/Application Support`
+- Windows: `%APPDATA%`
+
+`GOL_BEVY_CONFIG_DIR` overrides the folder on every platform. Earlier versions used
+`~/.config/gol-bevy` everywhere; settings found there are read until the first save
+writes them to the new folder, and the old file is left alone. Entries that are
+missing or unreadable keep their defaults.
 
 **Import / Export** also copies the board to the clipboard as RLE: the live cells,
 cropped to their bounding box, with the board rule in the header. The result pastes

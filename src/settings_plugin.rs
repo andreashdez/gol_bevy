@@ -88,8 +88,16 @@ fn setup_layout_persistence(
     mut grid: ResMut<GridOverlay>,
 ) {
     let path = ui_layout_config_path();
+    let source = settings_source(&path, legacy_config_path(SETTINGS_FILE));
+    if source != path {
+        info!(
+            "Reading settings from {}; they will be saved to {}",
+            source.display(),
+            path.display()
+        );
+    }
 
-    let simulation = load_settings(&path, &mut ui_layout, &mut board_settings, &mut grid);
+    let simulation = load_settings(&source, &mut ui_layout, &mut board_settings, &mut grid);
 
     commands.insert_resource(simulation);
     commands.insert_resource(UiLayoutPersistence {
@@ -278,32 +286,57 @@ fn unquote(value: &str) -> &str {
         .trim()
 }
 
+const SETTINGS_FILE: &str = "ui_layout.toml";
+
 fn ui_layout_config_path() -> PathBuf {
-    ui_layout_config_path_with_file("ui_layout.toml")
+    ui_layout_config_path_with_file(SETTINGS_FILE)
 }
 
+/// The platform's settings folder: `$XDG_CONFIG_HOME` or `~/.config` on Linux,
+/// `~/Library/Application Support` on macOS, and `%APPDATA%` on Windows.
+/// `GOL_BEVY_CONFIG_DIR` overrides it everywhere.
 fn ui_layout_config_path_with_file(file_name: &str) -> PathBuf {
     if let Some(config_dir) = std::env::var_os("GOL_BEVY_CONFIG_DIR") {
         return PathBuf::from(config_dir).join(file_name);
     }
-
-    if let Some(config_dir) = std::env::var_os("XDG_CONFIG_HOME") {
-        return PathBuf::from(config_dir).join("gol-bevy").join(file_name);
+    if let Some(config_dir) = dirs::config_dir() {
+        return config_dir.join("gol-bevy").join(file_name);
     }
-
-    if let Some(home_dir) = std::env::var_os("HOME") {
-        return PathBuf::from(home_dir)
-            .join(".config")
-            .join("gol-bevy")
-            .join(file_name);
-    }
-
+    // No home directory at all, so keep the settings beside the working directory.
     PathBuf::from(".gol-bevy").join("config").join(file_name)
+}
+
+/// Where earlier versions saved settings on every platform: the XDG location,
+/// even on macOS, and on Windows usually a folder relative to the working
+/// directory, since `HOME` is rarely set there.
+fn legacy_config_path(file_name: &str) -> Option<PathBuf> {
+    if std::env::var_os("GOL_BEVY_CONFIG_DIR").is_some() {
+        // An explicit folder was used then too, so there is nothing to carry over.
+        return None;
+    }
+    let legacy = if let Some(config_dir) = std::env::var_os("XDG_CONFIG_HOME") {
+        PathBuf::from(config_dir).join("gol-bevy")
+    } else if let Some(home_dir) = std::env::var_os("HOME") {
+        PathBuf::from(home_dir).join(".config").join("gol-bevy")
+    } else {
+        PathBuf::from(".gol-bevy").join("config")
+    };
+    Some(legacy.join(file_name))
+}
+
+/// Reads from the legacy file until the first save creates `path`, so moving
+/// the settings folder does not lose what was saved before. The legacy file is
+/// left in place.
+fn settings_source(path: &std::path::Path, legacy: Option<PathBuf>) -> PathBuf {
+    match legacy {
+        Some(legacy) if !path.exists() && legacy.exists() => legacy,
+        _ => path.to_path_buf(),
+    }
 }
 
 #[cfg(test)]
 mod persistence_tests {
-    use super::{parse_settings_from_toml, unquote};
+    use super::{parse_settings_from_toml, settings_source, unquote};
     use crate::shared::UiLayoutPreset;
 
     #[test]
@@ -404,6 +437,36 @@ mod persistence_tests {
         assert_eq!(junk.grid, None);
 
         assert_eq!(parse_settings_from_toml("").board, None);
+    }
+
+    #[test]
+    fn settings_are_read_from_the_old_folder_until_the_new_one_has_a_file() {
+        let directory = std::env::temp_dir().join(format!(
+            "gol-settings-move-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path = directory.join("new").join("ui_layout.toml");
+        let legacy = directory.join("old").join("ui_layout.toml");
+
+        // Nothing saved anywhere: read, and later save, the new location.
+        assert_eq!(settings_source(&path, Some(legacy.clone())), path);
+
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "board_cols = 64\nboard_rows = 64\n").unwrap();
+        assert_eq!(settings_source(&path, Some(legacy.clone())), legacy);
+        assert_eq!(settings_source(&path, None), path);
+
+        // Once the new file exists it wins, even though the old one remains.
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "board_cols = 128\nboard_rows = 128\n").unwrap();
+        assert_eq!(settings_source(&path, Some(legacy.clone())), path);
+        assert!(legacy.exists());
+
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
