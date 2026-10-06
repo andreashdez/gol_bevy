@@ -6,11 +6,11 @@ edition = "2024"
 [dependencies]
 accesskit = "0.24"
 bevy = { version = "0.19", default-features = false, features = ["2d", "ui", "system_clipboard"] }
-dirs = "6"
-fastrand = "2.4"
+dirs = "7"
+fastrand = "2.5"
 
 [dev-dependencies]
-criterion = "0.8.2"
+criterion = "0.8"
 
 [[bench]]
 name = "board_step"
