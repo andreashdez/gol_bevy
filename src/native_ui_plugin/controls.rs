@@ -69,8 +69,11 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::Tool(EditTool::Draw) => "Draw cells with the left mouse button",
         Action::Tool(EditTool::Erase) => "Erase cells · right-click also erases",
         Action::Tool(EditTool::Stamp) => "Place the selected pattern on the board",
-        Action::Import => "Import a named RLE pattern into your library",
-        Action::Settings => "Board dimensions and workspace layout",
+        Action::Import => "Import RLE into your library, or copy the board as RLE",
+        Action::Settings => "Board dimensions, rule, and workspace layout",
+        Action::RulePreset(_) => "Switch the board to this rule · undo with U",
+        Action::ApplyRule => "Use the rulestring above, written in B/S notation",
+        Action::ExportRle => "Copy the live cells to the clipboard as RLE",
         Action::CloseDialog => "Close this dialog · Escape",
         _ => "",
     }

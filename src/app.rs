@@ -19,6 +19,15 @@ pub struct PatternImport {
     pub applied_rule: Option<Rule>,
 }
 
+/// The board written out as RLE, with what it covers for user feedback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoardExport {
+    pub rle: String,
+    pub cells: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
 #[derive(Debug)]
 struct EditSnapshot {
     cells: Vec<u8>,
@@ -334,16 +343,7 @@ impl App {
         let pattern = Pattern::from_rle(name, source)?;
 
         // Honour a declared rule instead of simulating the pattern as plain Life.
-        // Changing it is an undoable edit, so undo can return to the old rule.
-        let mut applied_rule = None;
-        if let Some(rule) = pattern.rule
-            && rule != self.board.rule()
-        {
-            self.end_stroke();
-            self.save_edit();
-            self.board.set_rule(rule);
-            applied_rule = Some(rule);
-        }
+        let applied_rule = pattern.rule.filter(|&rule| self.set_rule(rule));
 
         self.patterns.push(pattern);
         self.selected_pattern = Some(self.patterns.len() - 1);
@@ -354,6 +354,41 @@ impl App {
 
     pub fn rule_label(&self) -> String {
         self.board.rule().to_string()
+    }
+
+    /// Changes the board rule as an undoable edit, so undo can return to the old
+    /// rule. Returns whether the rule actually changed.
+    pub fn set_rule(&mut self, rule: Rule) -> bool {
+        if rule == self.board.rule() {
+            return false;
+        }
+        self.end_stroke();
+        self.save_edit();
+        self.board.set_rule(rule);
+        self.needs_redraw = true;
+        true
+    }
+
+    /// The live cells cropped to their bounding box, as RLE with the board rule
+    /// in the header. `None` for an empty board.
+    pub fn board_to_rle(&self) -> Option<BoardExport> {
+        let (cols, rows) = self.board.size();
+        let live: Vec<(usize, usize)> = (0..rows)
+            .flat_map(|y| (0..cols).map(move |x| (x, y)))
+            .filter(|&(x, y)| self.board.is_alive(x, y))
+            .collect();
+        let min_x = live.iter().map(|cell| cell.0).min()?;
+        let min_y = live.iter().map(|cell| cell.1).min()?;
+        let width = live.iter().map(|cell| cell.0).max()? - min_x + 1;
+        let height = live.iter().map(|cell| cell.1).max()? - min_y + 1;
+        let cells: Vec<_> = live.iter().map(|&(x, y)| (x - min_x, y - min_y)).collect();
+        let comment = format!("Generation {} of a {cols}x{rows} board", self.epoch);
+        Some(BoardExport {
+            rle: crate::patterns::to_rle(&cells, width, height, self.board.rule(), &comment),
+            cells: cells.len(),
+            width,
+            height,
+        })
     }
 
     pub fn clear_selected_pattern(&mut self) {
@@ -624,6 +659,44 @@ mod tests {
         app.select_pattern(pattern);
         let (cols, rows) = app.board.size();
         app.place_selected_pattern_at(cols / 2, rows / 2);
+    }
+
+    #[test]
+    fn setting_the_rule_is_an_undoable_edit() {
+        let mut app = App::new(8, 8);
+        app.populate_board(2, 2);
+        let seeds = Rule::parse("B2/S").unwrap();
+        assert!(app.set_rule(seeds));
+        assert!(!app.set_rule(seeds));
+        assert_eq!(app.board.rule(), seeds);
+        assert!(app.undo());
+        assert_eq!(app.board.rule(), Rule::LIFE);
+        // Undoing the rule leaves the earlier drawing in place.
+        assert!(app.board.is_alive(2, 2));
+        assert!(app.redo());
+        assert_eq!(app.board.rule(), seeds);
+    }
+
+    #[test]
+    fn board_export_crops_to_the_live_cells_and_reads_back() {
+        let mut app = App::new(32, 24);
+        assert_eq!(app.board_to_rle(), None);
+
+        let cells = [(10, 5), (11, 6), (9, 7), (10, 7), (11, 7), (20, 15)];
+        for (x, y) in cells {
+            app.populate_board(x, y);
+        }
+        app.set_rule(Rule::parse("B36/S23").unwrap());
+        let export = app.board_to_rle().unwrap();
+        assert_eq!((export.cells, export.width, export.height), (6, 12, 11));
+
+        let pattern = Pattern::from_rle("export", &export.rle).unwrap();
+        assert_eq!(pattern.rule, Some(app.board.rule()));
+        let mut read_back: Vec<_> = pattern.cells.iter().map(|&(x, y)| (x + 9, y + 5)).collect();
+        read_back.sort_unstable();
+        let mut expected = cells.to_vec();
+        expected.sort_unstable();
+        assert_eq!(read_back, expected);
     }
 
     #[test]

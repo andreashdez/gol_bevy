@@ -44,8 +44,20 @@ shortcuts (Cmd on macOS, Ctrl elsewhere) and Shift+Arrow selection.
 
 Open **Settings** or **Board size…** to choose a preset or enter dimensions, then
 apply the size. Invalid values are rejected with an inline message. Full uses a
-wider palette, Compact a narrower one, and Minimal hides it. Layout and board
-size are saved between runs. Import drafts remain available for the current session.
+wider palette, Compact a narrower one, and Minimal hides it. Import drafts remain
+available for the current session.
+
+The rule is chosen in Settings as well: pick Life, HighLife, Day & Night, or Seeds, or
+type any rulestring in B/S notation (`B36/S23`, or the older `23/36`). Changing the
+rule is an undoable edit.
+
+Layout, board size, rule, boundary mode, speed, and the grid are saved between runs,
+in `ui_layout.toml` under `$GOL_BEVY_CONFIG_DIR`, `$XDG_CONFIG_HOME/gol-bevy`, or
+`~/.config/gol-bevy`. Entries that are missing or unreadable keep their defaults.
+
+**Import / Export** also copies the board to the clipboard as RLE: the live cells,
+cropped to their bounding box, with the board rule in the header. The result pastes
+back into Import, or into other Life tools such as Golly.
 
 Local CI-equivalent checks:
 
@@ -89,7 +101,7 @@ Cmd/Ctrl+Shift+Z: redo last undone edit
 q / Esc: quit
 
 Pattern palette:
-- Use Import pattern to paste RLE and add a stamp
+- Use Import / Export to paste RLE as a stamp or copy the board as RLE
 - Select a pattern thumbnail, then click the board to place it
 
 Layout presets:
@@ -102,7 +114,7 @@ Board size is set in Settings: pick a preset (128², 256², 512², 1024²) or ty
 
 The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools share a visual pattern palette; rotate and flip controls appear for stamps. Use Palette to show or hide the editing tools and board actions. Grid is available in the toolbar and Settings; diagnostics open from Settings or F3 and start hidden.
 
-Undo restores the board, generation, and rule before drawing, erasing, placing a stamp, randomizing, clearing, or importing a pattern that changes the rule, and pauses playback. Redo reapplies an undone edit, and making a new edit discards the redo chain. Each drag is one edit. History retains up to 32 edits within an approximate 16 MiB budget (with at least one edit), and clears when the board is resized. Imported patterns remain available for the current session.
+Undo restores the board, generation, and rule before drawing, erasing, placing a stamp, randomizing, clearing, changing the rule, or importing a pattern that changes the rule, and pauses playback. Redo reapplies an undone edit, and making a new edit discards the redo chain. Each drag is one edit. History retains up to 32 edits within an approximate 16 MiB budget (with at least one edit), and clears when the board is resized. Imported patterns remain available for the current session.
 
 ## Architecture map
 
@@ -112,7 +124,7 @@ Runtime flow from `src/main.rs`:
 main
   -> DefaultPlugins + resources
   -> RenderPlugin (world setup, board texture/grid/wall/preview rendering)
-  -> SettingsPlugin (layout and board-size persistence)
+  -> SettingsPlugin (layout, board size, rule, boundary, speed, and grid persistence)
   -> UiInputPlugin (UI regions, modal capture, and keyboard focus)
   -> CanvasViewPlugin (canvas viewport and board framing)
   -> NativeUiPlugin (native toolbar + palette + import/settings/help/diagnostics dialogs)

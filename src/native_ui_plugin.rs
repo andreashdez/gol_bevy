@@ -101,6 +101,10 @@ enum Action {
     ImportSubmit,
     ResizeBoard,
     BoardPreset(usize),
+    /// Index into the rule presets of the settings dialog.
+    RulePreset(usize),
+    ApplyRule,
+    ExportRle,
     Layout(crate::shared::UiLayoutPreset),
     ResetEpoch,
     Tool(EditTool),
@@ -198,7 +202,7 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
                     flex_grow: 1.0,
                     ..default()
                 });
-                button(p, "Import RLE", Action::Import);
+                button(p, "Import / Export", Action::Import);
                 button(p, "Settings", Action::Settings);
                 button(p, "Help", Action::Help);
             });
@@ -373,6 +377,9 @@ fn activate(
         | Action::ImportSubmit
         | Action::ResizeBoard
         | Action::BoardPreset(_)
+        | Action::RulePreset(_)
+        | Action::ApplyRule
+        | Action::ExportRle
         | Action::Layout(_) => {}
         Action::Grid => grid.enabled = !grid.enabled,
         Action::Sidebar => {

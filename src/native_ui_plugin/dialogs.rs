@@ -1,13 +1,14 @@
 //! Native editors and modal input routing. Drafts survive closing and reopening.
 use super::*;
 use crate::{
-    board::frontier_dense_threshold_percent_for_diagnostics,
+    board::{Rule, frontier_dense_threshold_percent_for_diagnostics},
     shared::{
         BOARD_SIZE_MAX, BOARD_SIZE_MIN, BOARD_SIZE_PRESETS, BoardSettings, CONTROLS_TEXT,
         DiagnosticsOverlay, UiLayoutPreset,
     },
 };
 use bevy::{
+    clipboard::Clipboard,
     input_focus::AutoFocus,
     text::{EditableText, TextCursorStyle, TextEdit},
     ui_widgets::SelectAllOnFocus,
@@ -24,7 +25,7 @@ pub(crate) enum DialogKind {
 impl DialogKind {
     fn title(self) -> &'static str {
         match self {
-            Self::Import => "Import a pattern",
+            Self::Import => "Import and export RLE",
             Self::Settings => "Workspace settings",
             Self::Help => "Controls and tips",
             Self::Diagnostics => "Simulation diagnostics",
@@ -32,12 +33,21 @@ impl DialogKind {
     }
 }
 
+/// Well-known rules offered as one-click choices in the settings dialog.
+const RULE_PRESETS: [(&str, &str); 4] = [
+    ("Life", "B3/S23"),
+    ("HighLife", "B36/S23"),
+    ("Day & Night", "B3678/S34678"),
+    ("Seeds", "B2/S"),
+];
+
 #[derive(Resource)]
 struct Drafts {
     name: String,
     source: String,
     width: String,
     height: String,
+    rule: String,
     feedback: String,
     error: bool,
     return_focus: Option<Entity>,
@@ -50,6 +60,7 @@ impl Default for Drafts {
             source: "x = 3, y = 3\nbo$2bo$3o!".into(),
             width: String::new(),
             height: String::new(),
+            rule: String::new(),
             feedback: String::new(),
             error: false,
             return_focus: None,
@@ -65,6 +76,7 @@ pub(super) enum Field {
     Source,
     Width,
     Height,
+    Rule,
 }
 #[derive(Component)]
 pub(super) enum DialogReadout {
@@ -89,6 +101,8 @@ pub(super) struct DialogState<'w> {
     board: ResMut<'w, BoardSettings>,
     layout: ResMut<'w, UiLayout>,
     focus: ResMut<'w, InputFocus>,
+    /// Absent in tests, which must not touch the system clipboard.
+    clipboard: Option<ResMut<'w, Clipboard>>,
 }
 
 fn save_fields<F: bevy::ecs::query::QueryFilter>(
@@ -102,6 +116,7 @@ fn save_fields<F: bevy::ecs::query::QueryFilter>(
             Field::Source => &mut drafts.source,
             Field::Width => &mut drafts.width,
             Field::Height => &mut drafts.height,
+            Field::Rule => &mut drafts.rule,
         };
         if *target != value {
             *target = value;
@@ -154,6 +169,7 @@ fn dialog_action(
             let (width, height) = state.sim.app.board.size();
             state.drafts.width = width.to_string();
             state.drafts.height = height.to_string();
+            state.drafts.rule = state.sim.app.rule_label();
             state.drafts.feedback.clear();
             state.mode.dialog = Some(DialogKind::Settings);
         }
@@ -214,11 +230,82 @@ fn dialog_action(
                 state.drafts.feedback = error.into();
             }
         },
+        Action::RulePreset(index) => {
+            let Some(&(name, rulestring)) = RULE_PRESETS.get(*index) else {
+                return;
+            };
+            show_rule(&mut fields, rulestring);
+            state.drafts.rule = rulestring.to_owned();
+            let rule = Rule::parse(rulestring).expect("rule presets are valid");
+            apply_rule(&mut state, rule, Some(name));
+        }
+        Action::ApplyRule => match Rule::parse(&state.drafts.rule) {
+            Ok(rule) => {
+                // Show the canonical form, so `23/3` reads back as `B3/S23`.
+                show_rule(&mut fields, &rule.to_string());
+                apply_rule(&mut state, rule, None);
+            }
+            Err(error) => {
+                state.drafts.error = true;
+                state.drafts.feedback =
+                    format!("Could not read the rule: {error}. Try B/S notation such as B3/S23.");
+            }
+        },
+        Action::ExportRle => export_rle(&mut state),
         Action::Layout(preset) => {
             state.layout.preset = *preset;
             state.layout.control_deck_visible = true;
         }
         _ => {}
+    }
+}
+
+fn show_rule(fields: &mut Query<(&Field, &mut EditableText)>, rulestring: &str) {
+    for (field, mut input) in fields {
+        if matches!(field, Field::Rule) {
+            input.queue_edit(TextEdit::SelectAll);
+            input.queue_edit(TextEdit::Insert(rulestring.into()));
+        }
+    }
+}
+
+fn apply_rule(state: &mut DialogState, rule: Rule, name: Option<&str>) {
+    let described = match name {
+        Some(name) => format!("{name} ({rule})"),
+        None => rule.to_string(),
+    };
+    state.drafts.error = false;
+    state.drafts.feedback = if state.sim.app.set_rule(rule) {
+        format!("Rule set to {described}. U undoes the change.")
+    } else {
+        format!("The board already uses {described}.")
+    };
+}
+
+fn export_rle(state: &mut DialogState) {
+    let Some(export) = state.sim.app.board_to_rle() else {
+        state.drafts.error = true;
+        state.drafts.feedback = "The board is empty, so there is nothing to export.".into();
+        return;
+    };
+    let copied = match state.clipboard.as_mut() {
+        Some(clipboard) => clipboard
+            .set_text(export.rle)
+            .map_err(|err| err.to_string()),
+        None => Err("no clipboard is available".to_owned()),
+    };
+    match copied {
+        Ok(()) => {
+            state.drafts.error = false;
+            state.drafts.feedback = format!(
+                "Copied {} live cells ({} × {}) to the clipboard as RLE.",
+                export.cells, export.width, export.height
+            );
+        }
+        Err(error) => {
+            state.drafts.error = true;
+            state.drafts.feedback = format!("Could not copy to the clipboard: {error}.");
+        }
     }
 }
 
@@ -380,6 +467,9 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         field(p, "Pattern name", &drafts.name, Field::Name, false);
                         field(p, "RLE source", &drafts.source, Field::Source, true);
                         button(p, "Import and select", Action::ImportSubmit);
+                        p.spawn(label("Export", 19.0, INK));
+                        p.spawn(label("Copy the live cells, cropped to their bounding box, as RLE with the board rule.", 14.0, MUTED));
+                        button(p, "Copy board as RLE", Action::ExportRle);
                     }
                     DialogKind::Settings => {
                         p.spawn(label("Board dimensions", 19.0, INK));
@@ -390,6 +480,13 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         field(p, "Width (cells)", &drafts.width, Field::Width, false);
                         field(p, "Height (cells)", &drafts.height, Field::Height, false);
                         button(p, "Apply board size", Action::ResizeBoard);
+                        p.spawn(label("Rule", 19.0, INK));
+                        p.spawn(label("Neighbour counts that give birth (B) and let a cell survive (S). Changing the rule can be undone.", 14.0, MUTED));
+                        p.spawn(row()).with_children(|p| {
+                            for (index, (name, _)) in RULE_PRESETS.iter().enumerate() { button(p, name, Action::RulePreset(index)); }
+                        });
+                        field(p, "Rulestring", &drafts.rule, Field::Rule, false);
+                        button(p, "Apply rule", Action::ApplyRule);
                         p.spawn(label("Layout", 19.0, INK));
                         p.spawn(row()).with_children(|p| {
                             for preset in UiLayoutPreset::ALL { button(p, preset.label(), Action::Layout(preset)); }
@@ -496,6 +593,67 @@ mod tests {
                 .unwrap()
         );
         assert!(!world.resource::<Simulation>().app.should_quit);
+    }
+
+    #[test]
+    fn rule_presets_and_rulestrings_change_the_rule_undoably() {
+        let mut world = test_world(DialogKind::Settings);
+        let rule_field = world.spawn((Field::Rule, EditableText::new("B3/S23"))).id();
+        let highlife = RULE_PRESETS
+            .iter()
+            .position(|&(name, _)| name == "HighLife")
+            .unwrap();
+        let preset = world.spawn(Action::RulePreset(highlife)).id();
+        world.trigger(Activate { entity: preset });
+        assert_eq!(world.resource::<Simulation>().app.rule_label(), "B36/S23");
+        assert!(!world.resource::<Drafts>().error);
+
+        // Applying the same rule again is not a second edit.
+        world.trigger(Activate { entity: preset });
+        world.resource_mut::<Simulation>().app.undo();
+        assert_eq!(world.resource::<Simulation>().app.rule_label(), "B3/S23");
+
+        let apply = world.spawn(Action::ApplyRule).id();
+        world
+            .entity_mut(rule_field)
+            .insert(EditableText::new("B3/S2x"));
+        world.trigger(Activate { entity: apply });
+        assert!(world.resource::<Drafts>().error);
+        assert_eq!(world.resource::<Simulation>().app.rule_label(), "B3/S23");
+
+        // The legacy survival-first form is accepted too.
+        world
+            .entity_mut(rule_field)
+            .insert(EditableText::new("23/36"));
+        world.trigger(Activate { entity: apply });
+        assert!(!world.resource::<Drafts>().error);
+        assert_eq!(world.resource::<Simulation>().app.rule_label(), "B36/S23");
+    }
+
+    #[test]
+    fn every_rule_preset_parses() {
+        for (name, rulestring) in RULE_PRESETS {
+            let rule = Rule::parse(rulestring).unwrap_or_else(|err| panic!("{name}: {err}"));
+            assert_eq!(
+                rule.to_string(),
+                rulestring,
+                "{name} is not in canonical form"
+            );
+        }
+    }
+
+    #[test]
+    fn export_reports_an_empty_board_or_a_missing_clipboard() {
+        let mut world = test_world(DialogKind::Import);
+        let export = world.spawn(Action::ExportRle).id();
+        world.trigger(Activate { entity: export });
+        assert!(world.resource::<Drafts>().error);
+        assert!(world.resource::<Drafts>().feedback.contains("empty"));
+
+        world.resource_mut::<Simulation>().app.populate_board(3, 3);
+        world.trigger(Activate { entity: export });
+        assert!(world.resource::<Drafts>().error);
+        assert!(world.resource::<Drafts>().feedback.contains("clipboard"));
     }
 
     #[test]

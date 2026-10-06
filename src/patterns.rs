@@ -59,6 +59,73 @@ impl Pattern {
     }
 }
 
+/// RLE lines should stay within 70 characters.
+const RLE_LINE_WIDTH: usize = 70;
+
+/// Writes `cells`, which lie within `width` x `height`, as RLE that
+/// [`Pattern::from_rle`] reads back. Dead cells at the end of a row are left
+/// out and runs of empty rows are merged into one `$`, as other tools expect.
+pub fn to_rle(
+    cells: &[(usize, usize)],
+    width: usize,
+    height: usize,
+    rule: Rule,
+    comment: &str,
+) -> String {
+    let mut grid = vec![false; width * height];
+    for &(x, y) in cells {
+        grid[y * width + x] = true;
+    }
+    let run = |length: usize, tag: char| {
+        if length == 1 {
+            tag.to_string()
+        } else {
+            format!("{length}{tag}")
+        }
+    };
+
+    let mut tokens = Vec::new();
+    let mut last_row = None;
+    for (y, row) in grid.chunks_exact(width.max(1)).enumerate().take(height) {
+        let Some(end) = row.iter().rposition(|&alive| alive) else {
+            continue;
+        };
+        let gap = last_row.map_or(y, |previous| y - previous);
+        if gap > 0 {
+            tokens.push(run(gap, '$'));
+        }
+        last_row = Some(y);
+        let mut x = 0;
+        while x <= end {
+            let alive = row[x];
+            let length = row[x..=end]
+                .iter()
+                .take_while(|&&cell| cell == alive)
+                .count();
+            tokens.push(run(length, if alive { 'o' } else { 'b' }));
+            x += length;
+        }
+    }
+    tokens.push("!".to_owned());
+
+    let mut rle = String::new();
+    for line in comment.lines() {
+        rle.push_str(&format!("#C {line}\n"));
+    }
+    rle.push_str(&format!("x = {width}, y = {height}, rule = {rule}\n"));
+    let mut line_length = 0;
+    for token in tokens {
+        if line_length + token.len() > RLE_LINE_WIDTH {
+            rle.push('\n');
+            line_length = 0;
+        }
+        line_length += token.len();
+        rle.push_str(&token);
+    }
+    rle.push('\n');
+    rle
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PatternParseError {
     MissingHeader,
@@ -351,6 +418,35 @@ mod tests {
             );
             assert_eq!(moved, displacement, "{name} moved the wrong way");
         }
+    }
+
+    #[test]
+    fn writes_rle_that_reads_back_as_the_same_cells() {
+        use super::to_rle;
+        use crate::board::Rule;
+
+        let glider = [(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)];
+        assert_eq!(
+            to_rle(&glider, 3, 3, Rule::LIFE, "Glider"),
+            "#C Glider\nx = 3, y = 3, rule = B3/S23\nbo$2bo$3o!\n"
+        );
+
+        // Empty rows inside the pattern, long runs, and a body long enough to wrap.
+        let mut cells = vec![(0, 0), (39, 0), (5, 4), (6, 4), (7, 4)];
+        cells.extend((0..40).step_by(2).map(|x| (x, 6)));
+        let highlife = Rule::parse("B36/S23").unwrap();
+        let rle = to_rle(&cells, 40, 7, highlife, "two\nlines");
+        assert!(rle.contains("4$"), "empty rows merge into one run: {rle}");
+        assert!(rle.lines().all(|line| line.len() <= 70), "{rle}");
+
+        let parsed = Pattern::from_rle("round trip", &rle).unwrap();
+        let mut expected = cells.clone();
+        expected.sort_unstable();
+        let mut actual = parsed.cells.clone();
+        actual.sort_unstable();
+        assert_eq!(actual, expected);
+        assert_eq!((parsed.width, parsed.height), (40, 7));
+        assert_eq!(parsed.rule, Some(highlife));
     }
 
     #[test]

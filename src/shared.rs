@@ -255,7 +255,7 @@ fn build_controls_text() -> String {
     out.push_str(BINDING_QUIT.action);
     out.push_str("\n\n");
     out.push_str("Pattern palette:\n");
-    out.push_str("- Use Import pattern to paste RLE and add a stamp\n");
+    out.push_str("- Use Import / Export to paste RLE as a stamp or copy the board as RLE\n");
     out.push_str("- Select a pattern thumbnail, then click the board to place it\n\n");
     out.push_str("Layout presets:\n");
     out.push_str("- Choose Full, Compact, or Minimal from Settings\n");
