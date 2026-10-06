@@ -1,0 +1,5 @@
+#N Glider
+#O Richard K. Guy
+#C The smallest spaceship, moving one cell diagonally every 4 generations.
+x = 3, y = 3, rule = B3/S23
+bob$2bo$3o!

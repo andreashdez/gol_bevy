@@ -1,16 +1,15 @@
 use crate::{
-    app::{EditTool, PatternKind},
+    app::EditTool,
     canvas_view::{CanvasView, cursor_world},
     shared::{
         BINDING_CLEAR, BINDING_CLEAR_STAMP, BINDING_CYCLE_LAYOUT, BINDING_FLIP_STAMP,
         BINDING_PAN_DOWN, BINDING_PAN_LEFT, BINDING_PAN_RIGHT, BINDING_PAN_UP, BINDING_QUIT,
         BINDING_RANDOMIZE, BINDING_RESET_CAMERA, BINDING_RESET_EPOCH, BINDING_ROTATE_STAMP,
-        BINDING_RUN_PAUSE, BINDING_SELECT_BLINKER, BINDING_SELECT_GLIDER, BINDING_SELECT_LWSS,
-        BINDING_SELECT_RLE_DEMO, BINDING_SLOW_DOWN, BINDING_SPEED_UP, BINDING_STEP,
+        BINDING_RUN_PAUSE, BINDING_SLOW_DOWN, BINDING_SPEED_UP, BINDING_STEP,
         BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_CONTROL_DECK, BINDING_TOGGLE_DIAGNOSTICS,
         BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, CAMERA_PAN_SPEED, CAMERA_ZOOM_MAX,
-        CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay, GridOverlay, MainCamera, Simulation,
-        UiLayout, UpdateSet, world_to_cell,
+        CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay, GridOverlay, MainCamera,
+        PATTERN_SHORTCUTS, Simulation, UiLayout, UpdateSet, world_to_cell,
     },
     ui_input::{UiInputCapture, canvas_keyboard_available},
 };
@@ -124,17 +123,10 @@ fn handle_keyboard(
     if BINDING_TOGGLE_HELP.just_pressed(&keys) {
         sim.app.toggle_help();
     }
-    if BINDING_SELECT_GLIDER.just_pressed(&keys) {
-        sim.app.select_pattern(PatternKind::Glider);
-    }
-    if BINDING_SELECT_BLINKER.just_pressed(&keys) {
-        sim.app.select_pattern(PatternKind::Blinker);
-    }
-    if BINDING_SELECT_LWSS.just_pressed(&keys) {
-        sim.app.select_pattern(PatternKind::Lwss);
-    }
-    if BINDING_SELECT_RLE_DEMO.just_pressed(&keys) {
-        sim.app.select_pattern(PatternKind::RleDemo);
+    for (binding, pattern) in PATTERN_SHORTCUTS {
+        if binding.just_pressed(&keys) {
+            sim.app.select_pattern(pattern);
+        }
     }
     if BINDING_CLEAR_STAMP.just_pressed(&keys) {
         sim.app.clear_selected_pattern();
@@ -321,7 +313,7 @@ mod tests {
             let mut world = World::new();
             let mut app = crate::app::App::new(8, 8);
             app.populate_board(3, 3);
-            app.select_pattern(PatternKind::Glider);
+            app.select_pattern(crate::app::PatternKind::Glider);
             world.insert_resource(Simulation::new(app));
             let mut keys = ButtonInput::<KeyCode>::default();
             if let Some(modifier) = modifier {

@@ -1,0 +1,5 @@
+#N Blinker
+#O John Conway
+#C The smallest oscillator, with period 2.
+x = 3, y = 1, rule = B3/S23
+3o!

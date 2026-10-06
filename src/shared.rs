@@ -1,6 +1,6 @@
 use std::{sync::LazyLock, time::Duration};
 
-use crate::app::App as GolApp;
+use crate::app::{App as GolApp, PatternKind};
 use bevy::{ecs::schedule::SystemSet, prelude::*, window::Window};
 
 pub const CELL_SIZE: f32 = 12.0;
@@ -100,6 +100,15 @@ pub const BINDING_SELECT_RLE_DEMO: KeyBinding = KeyBinding {
     label: "p",
     action: "select RLE 8x4 stamp",
 };
+/// Pairs each pattern shortcut with the built-in it selects, for the keyboard
+/// handler and the palette tooltips alike.
+pub const PATTERN_SHORTCUTS: [(KeyBinding, PatternKind); 4] = [
+    (BINDING_SELECT_GLIDER, PatternKind::Glider),
+    (BINDING_SELECT_BLINKER, PatternKind::Blinker),
+    (BINDING_SELECT_LWSS, PatternKind::Lwss),
+    (BINDING_SELECT_RLE_DEMO, PatternKind::RleDemo),
+];
+
 pub const BINDING_ROTATE_STAMP: KeyBinding = KeyBinding {
     keys: &[KeyCode::KeyZ],
     label: "z",
@@ -583,5 +592,20 @@ mod tests {
     fn readme_contains_controls_text() {
         let readme = include_str!("../README.md");
         assert!(readme.contains(CONTROLS_TEXT.as_str()));
+    }
+
+    #[test]
+    fn every_pattern_shortcut_selects_its_own_builtin() {
+        use super::PATTERN_SHORTCUTS;
+        use crate::patterns::Pattern;
+
+        let builtins = Pattern::builtins();
+        let expected = ["Glider", "Blinker", "LWSS", "RLE 8x4"];
+        for ((binding, pattern), name) in PATTERN_SHORTCUTS.into_iter().zip(expected) {
+            let index = pattern
+                .builtin_index()
+                .unwrap_or_else(|| panic!("{pattern:?} has no file in assets/patterns"));
+            assert_eq!(builtins[index].name, name, "key {}", binding.label);
+        }
     }
 }

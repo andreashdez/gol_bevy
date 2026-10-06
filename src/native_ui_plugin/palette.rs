@@ -116,7 +116,7 @@ pub(super) fn filter(
     {
         return;
     }
-    let builtin_count = crate::patterns::Pattern::builtins().len();
+    let builtin_count = crate::patterns::Pattern::builtin_count();
     let visible: Vec<bool> = (0..count)
         .map(|i| matches(sim.app.pattern_name_at(i).unwrap_or(""), &query))
         .collect();
@@ -258,7 +258,11 @@ mod tests {
         world.insert_resource(Simulation::new(app));
         world.spawn((PatternSearch, EditableText::new("imported")));
         let builtin = world.spawn((Node::default(), Action::Pattern(0))).id();
-        let imported = world.spawn((Node::default(), Action::Pattern(4))).id();
+        // Imports follow the built-ins, however many files there are.
+        let first_import = crate::patterns::Pattern::builtin_count();
+        let imported = world
+            .spawn((Node::default(), Action::Pattern(first_import)))
+            .id();
         let heading = world.spawn((Node::default(), PatternGroup(false))).id();
         world.run_system_once(filter).unwrap();
         assert_eq!(world.get::<Node>(builtin).unwrap().display, Display::None);
@@ -266,7 +270,7 @@ mod tests {
         assert_eq!(world.get::<Node>(imported).unwrap().display, Display::Flex);
         assert_eq!(
             world.resource::<Simulation>().app.selected_pattern_index(),
-            Some(4)
+            Some(first_import)
         );
     }
 }

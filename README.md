@@ -130,17 +130,23 @@ Shared resources:
 Core domain:
   app::App      (state machine and user actions)
   board::Board  (cell storage, stepping rules, dirty-cell tracking)
-  patterns      (builtin patterns + RLE parsing)
+  patterns      (built-ins from assets/patterns/ + RLE parsing)
 ```
 
 ## Pattern system and RLE
 
-Patterns are data-driven (`src/patterns.rs`) and include builtins plus RLE-derived layouts.
+Built-in patterns are RLE files in `assets/patterns/`. To add one to the palette, drop a
+`.rle` file there and rebuild: `build.rs` embeds every file in the binary, so nothing is
+read from disk at runtime. The palette lists them in file-name order, named by each
+file's `#N` line, or by the file name if there is none. Keyboard shortcuts find their
+pattern by file name (`glider`, `blinker`, `lwss`, `rle-8x4`), so renaming or removing
+one of those files unbinds its key; the tests check that each still resolves.
 
 Supported RLE features:
 
 - Header dimensions: `x = <width>, y = <height>`
-- Comment lines starting with `#`
+- Comment lines starting with `#`; the first `#N` line names a built-in pattern
+- Optional `rule = B3/S23` in the header, which an import applies to the board
 - Run counts (`3o`, `10b`, `2$`)
 - Row breaks (`$`) and terminator (`!`)
 

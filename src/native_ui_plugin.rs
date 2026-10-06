@@ -603,7 +603,7 @@ fn sync_palette(
         .entity(entity)
         .despawn_children()
         .with_children(|p| {
-            let builtin_count = crate::patterns::Pattern::builtins().len();
+            let builtin_count = crate::patterns::Pattern::builtin_count();
             for index in 0..sim.app.pattern_count() {
                 if index == 0 || index == builtin_count {
                     p.spawn((
@@ -618,7 +618,7 @@ fn sync_palette(
                 p.spawn((
                     WidgetButton,
                     Action::Pattern(index),
-                    controls::Tooltip(controls::hint(Action::Pattern(index)).to_owned()),
+                    controls::Tooltip(controls::pattern_hint(&pattern.name, index)),
                     Hovered::default(),
                     TabIndex(0),
                     Name::new(pattern.name.clone()),
@@ -736,7 +736,8 @@ mod tests {
     #[test]
     fn native_actions_share_edit_history_and_playback() {
         let mut app = GolApp::new(30, 30);
-        apply_action(Action::Pattern(0), &mut app);
+        let glider = crate::app::PatternKind::Glider.builtin_index().unwrap();
+        apply_action(Action::Pattern(glider), &mut app);
         app.place_selected_pattern_at(10, 10);
         assert_eq!(app.board.live_cells_count(), 5);
         apply_action(Action::Undo, &mut app);

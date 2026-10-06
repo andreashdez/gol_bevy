@@ -1,5 +1,6 @@
 //! Everyday controls, shortcut hints, and first-use guidance.
 use super::*;
+use crate::shared::PATTERN_SHORTCUTS;
 use bevy::{
     a11y::AccessibilityNode,
     ui_widgets::{
@@ -29,6 +30,21 @@ pub(super) enum Overlay {
 #[derive(Component)]
 pub(super) struct OverlayText(bool);
 
+/// Names the shortcut of a built-in by looking up which one the palette entry
+/// shows, since entries are listed in file order rather than shortcut order.
+pub(super) fn pattern_hint(name: &str, index: usize) -> String {
+    let shortcut = PATTERN_SHORTCUTS
+        .iter()
+        .find(|(_, pattern)| pattern.builtin_index() == Some(index));
+    match shortcut {
+        Some((binding, _)) => format!(
+            "Select {name} · {} · click the board to place",
+            binding.label.to_uppercase()
+        ),
+        None => format!("Select {name} · click the board to place"),
+    }
+}
+
 pub(super) fn hint(action: Action) -> &'static str {
     match action {
         Action::Play => "Play / pause · Space",
@@ -50,11 +66,6 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::Randomize => "Fill the board with random cells · R",
         Action::Clear => "Clear the board · X · undo with U",
         Action::Boundary => "Wrap / fixed edges · M",
-        Action::Pattern(0) => "Select Glider · G · click the board to place",
-        Action::Pattern(1) => "Select Blinker · B · click the board to place",
-        Action::Pattern(2) => "Select LWSS · L · click the board to place",
-        Action::Pattern(3) => "Select RLE 8x4 · P · click the board to place",
-        Action::Pattern(_) => "Select pattern · click the board to place",
         Action::Tool(EditTool::Draw) => "Draw cells with the left mouse button",
         Action::Tool(EditTool::Erase) => "Erase cells · right-click also erases",
         Action::Tool(EditTool::Stamp) => "Place the selected pattern on the board",

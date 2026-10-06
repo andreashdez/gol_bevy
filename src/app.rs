@@ -39,6 +39,7 @@ fn push_bounded(history: &mut VecDeque<EditSnapshot>, snapshot: EditSnapshot) {
     history.push_back(snapshot);
 }
 
+/// Built-in patterns that have a keyboard shortcut.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PatternKind {
     Glider,
@@ -48,13 +49,20 @@ pub enum PatternKind {
 }
 
 impl PatternKind {
-    fn slot(self) -> usize {
+    /// Name of the file under `assets/patterns/`, without `.rle`.
+    fn file_stem(self) -> &'static str {
         match self {
-            Self::Glider => 0,
-            Self::Blinker => 1,
-            Self::Lwss => 2,
-            Self::RleDemo => 3,
+            Self::Glider => "glider",
+            Self::Blinker => "blinker",
+            Self::Lwss => "lwss",
+            Self::RleDemo => "rle-8x4",
         }
+    }
+
+    /// Looked up by file name, so the order of the built-in list is free to
+    /// change. `None` only if the file has been removed.
+    pub fn builtin_index(self) -> Option<usize> {
+        Pattern::builtin_index(self.file_stem())
     }
 }
 
@@ -306,10 +314,9 @@ impl App {
     }
 
     pub fn select_pattern(&mut self, pattern: PatternKind) {
-        let slot = pattern.slot();
-        if slot >= self.patterns.len() {
+        let Some(slot) = pattern.builtin_index() else {
             return;
-        }
+        };
         if self.selected_pattern == Some(slot) && self.tool == EditTool::Stamp {
             self.clear_selected_pattern();
         } else {
