@@ -20,3 +20,13 @@ ci-local:
 	just fmt-check
 	just clippy
 	just test
+
+# Universal (Apple silicon + Intel) macOS binary in dist/, to attach to a
+# release by hand; CI builds Linux and Windows on tags. Needs a Mac.
+release-macos version=`git describe --tags --always`:
+	rustup target add aarch64-apple-darwin x86_64-apple-darwin
+	CARGO_PROFILE_RELEASE_STRIP=symbols cargo build --release --locked --target aarch64-apple-darwin
+	CARGO_PROFILE_RELEASE_STRIP=symbols cargo build --release --locked --target x86_64-apple-darwin
+	mkdir -p target/universal-apple-darwin/release
+	lipo -create -output target/universal-apple-darwin/release/gol-bevy target/aarch64-apple-darwin/release/gol-bevy target/x86_64-apple-darwin/release/gol-bevy
+	scripts/package-release.sh "gol-bevy-{{version}}-universal-macos" target/universal-apple-darwin/release/gol-bevy

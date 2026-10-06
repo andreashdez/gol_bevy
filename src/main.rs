@@ -1,3 +1,6 @@
+// Release builds on Windows open no console window next to the game window.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use bevy::{prelude::*, window::WindowResolution};
 use gol_bevy::canvas_view::CanvasViewPlugin;
 use gol_bevy::input_plugin::InputPlugin;

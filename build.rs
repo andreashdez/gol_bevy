@@ -13,6 +13,14 @@ fn main() {
         .unwrap_or_else(|err| panic!("cannot read {PATTERN_DIR}: {err}"))
         .map(|entry| entry.expect("readable pattern directory entry").path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "rle"))
+        // Skip hidden files, such as the `._name.rle` metadata macOS leaves on
+        // some drives and in archives, which are not patterns.
+        .filter(|path| {
+            !path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with('.'))
+        })
         .map(|path| {
             path.file_stem()
                 .and_then(|stem| stem.to_str())

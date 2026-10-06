@@ -8,6 +8,18 @@ Conway's Game of Life with a native desktop GUI built on Bevy.
 
 ![Game of Life demo](docs/media/demo.gif)
 
+## Download
+
+Each tagged release on the GitLab Releases page has ready-to-run builds, so no Rust
+toolchain is needed: unpack the archive for your platform and run `gol-bevy`.
+
+- **Linux (x86_64):** needs glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40, or
+  later) and a Wayland or X11 desktop.
+- **Windows (x86_64):** unzip and run `gol-bevy.exe`.
+- **macOS (universal):** the binary is not signed, so macOS blocks it the first time.
+  Either allow it under System Settings → Privacy & Security, or run
+  `xattr -d com.apple.quarantine gol-bevy` in the unpacked folder.
+
 ## Quick start
 
 ```bash
@@ -216,6 +228,12 @@ Benchmark targets:
 
 ## Development
 
+The Rust version is pinned in `rust-toolchain.toml` (currently 1.99.0), and CI uses
+the matching `rust:1.99.0-trixie` image, so a new Rust release cannot change what
+CI accepts. Inside the project, rustup picks the pinned version; if it is not
+installed yet, run `rustup toolchain install` once. To move to a newer Rust, change
+the version in both files together.
+
 Dev builds optimize dependencies (`[profile.dev.package."*"] opt-level = 3`) so
 Bevy stays responsive under `cargo run`; the first build is slower as a result.
 For faster rebuilds while iterating, link Bevy dynamically:
@@ -232,3 +250,18 @@ just clippy
 just test
 just ci-local
 ```
+
+### Releasing
+
+Pushing a tag such as `v0.2.0` runs the usual checks, then builds Linux and Windows
+archives (Windows is cross-compiled with MinGW) and creates a GitLab release linking
+to them. The macOS build needs an Apple machine:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+just release-macos v0.2.0   # writes dist/gol-bevy-v0.2.0-universal-macos.tar.gz
+```
+
+Then edit the release on GitLab and drag the macOS archive into its description to
+attach it. `scripts/package-release.sh` gives every platform the same archive layout:
+the binary, this README, and the licence.

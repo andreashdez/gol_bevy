@@ -1,0 +1,6 @@
+# Pinned so local builds, CI, and release builds use the same compiler, and a new
+# Rust release cannot fail CI with fresh lints. Keep in step with the image in
+# .gitlab-ci.yml; bump both together.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
