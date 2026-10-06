@@ -1,4 +1,11 @@
+use bevy::tasks::{ComputeTaskPool, TaskPool};
+
 const CELL_ALIVE: u8 = 1;
+/// Smallest share of a dense scan worth handing to another thread. Dispatching
+/// bands costs roughly 15-20 us per scan, which settled boards, where few cells
+/// change, only win back from about 384x384 on. Fresh boards spend more per cell
+/// and would split earlier, but they settle within a few generations.
+const MIN_BAND_CELLS: usize = 1 << 16;
 /// Measured with `benches/dense_crossover.rs`. The dense scan overtakes the
 /// frontier step at about 2% candidate coverage for young soup, but only at 5-6%
 /// for settled debris on boards small enough to stay in cache. 5% keeps settled
@@ -185,6 +192,8 @@ pub struct Board {
     candidate_scratch: Vec<usize>,
     /// recycled buffer for the next generation's frontier
     frontier_scratch: Vec<usize>,
+    /// recycled lists for every band of a parallel dense scan but the first
+    band_scratch: Vec<BandScratch>,
     /// running count of live cells, kept in step with every mutation
     live_count: usize,
     /// board width in cells
@@ -226,6 +235,7 @@ impl Board {
             candidate_flags: vec![0; cells],
             candidate_scratch: Vec::new(),
             frontier_scratch: Vec::new(),
+            band_scratch: Vec::new(),
             live_count: 0,
             cols,
             rows,
@@ -355,8 +365,33 @@ impl Board {
     }
 
     fn step_dense(&mut self) -> bool {
+        let threads = ComputeTaskPool::get_or_init(TaskPool::default).thread_num();
+        self.step_dense_in_bands(threads.min(self.current.len() / MIN_BAND_CELLS))
+    }
+
+    /// Scans the whole board in up to `bands` bands of whole rows, stepped in
+    /// parallel on the compute task pool when there is more than one. A band reads
+    /// the shared `current` and writes only its own rows of `future` and of the
+    /// flag arrays, so the bands need no synchronisation. Their lists are joined in
+    /// band order and so stay row-major, as in a serial scan.
+    fn step_dense_in_bands(&mut self, bands: usize) -> bool {
+        let band_rows = self.rows.div_ceil(bands.max(1));
+        let band_len = band_rows * self.cols;
+        let band_count = self.current.len().div_ceil(band_len);
+
         let mut next_frontier = std::mem::take(&mut self.frontier_scratch);
         next_frontier.clear();
+        // The first band appends straight to the board's lists; the others need
+        // their own until every band has finished.
+        self.band_scratch
+            .resize_with(band_count - 1, BandScratch::default);
+        let record_dirty = !self.dirty_full;
+        // The old frontier is at most the threshold unless edits grew it, so
+        // clearing its flags by index costs less than filling the whole array.
+        for &idx in &self.frontier_cells {
+            self.frontier_flags[idx] = 0;
+        }
+        self.frontier_cells.clear();
 
         // Borrow the fields, not `self`, so `future` can be written while
         // `current` is read.
@@ -367,25 +402,89 @@ impl Board {
             boundary_mode: self.boundary_mode,
             rule: self.rule,
         };
-        let live_count = view.step_rows(0, &mut self.future, &mut next_frontier);
-        for &idx in &next_frontier {
-            self.mark_dirty_cell(idx);
+        let lists = std::iter::once((&mut next_frontier, &mut self.dirty_cells)).chain(
+            self.band_scratch
+                .iter_mut()
+                .map(|scratch| (&mut scratch.changed, &mut scratch.dirty)),
+        );
+        let mut work = self
+            .future
+            .chunks_mut(band_len)
+            .zip(self.dirty_flags.chunks_mut(band_len))
+            .zip(lists)
+            .enumerate()
+            .map(|(band, ((out, dirty_flags), (changed, dirty)))| {
+                let dirty = record_dirty.then_some(dirty);
+                BandWork {
+                    first_row: band * band_rows,
+                    out,
+                    dirty_flags,
+                    changed,
+                    dirty,
+                }
+            });
+        let live_count = if band_count == 1 {
+            let band = work.next().expect("a non-empty board has a band");
+            view.step_band(band)
+        } else {
+            ComputeTaskPool::get_or_init(TaskPool::default)
+                .scope(|scope| {
+                    for band in work {
+                        scope.spawn(async move { view.step_band(band) });
+                    }
+                })
+                .into_iter()
+                .sum()
+        };
+
+        let changed_count = next_frontier.len()
+            + self
+                .band_scratch
+                .iter()
+                .map(|scratch| scratch.changed.len())
+                .sum::<usize>();
+        for scratch in &mut self.band_scratch {
+            // `append` leaves each list empty with its capacity kept.
+            self.dirty_cells.append(&mut scratch.dirty);
         }
 
-        let changed = !next_frontier.is_empty();
+        if changed_count > self.dense_threshold() {
+            // The next step would take the dense scan for a frontier this large
+            // anyway, so building it would be wasted.
+            for scratch in &mut self.band_scratch {
+                scratch.changed.clear();
+            }
+            next_frontier.clear();
+            self.frontier_full = true;
+        } else {
+            for scratch in &mut self.band_scratch {
+                next_frontier.append(&mut scratch.changed);
+            }
+            for &idx in &next_frontier {
+                self.frontier_flags[idx] = 1;
+            }
+            std::mem::swap(&mut self.frontier_cells, &mut next_frontier);
+            self.frontier_full = false;
+        }
+        self.frontier_scratch = next_frontier;
+
         std::mem::swap(&mut self.current, &mut self.future);
         self.live_count = live_count;
-        self.replace_frontier(next_frontier);
-        changed
+        changed_count > 0
     }
 
-    fn step_frontier(&mut self) -> bool {
-        let dense_threshold = (self
+    /// Candidate count above which a step scans the whole board instead.
+    fn dense_threshold(&self) -> usize {
+        (self
             .current
             .len()
             .saturating_mul(self.dense_threshold_percent)
             / 100)
-            .max(1);
+            .max(1)
+    }
+
+    fn step_frontier(&mut self) -> bool {
+        let dense_threshold = self.dense_threshold();
 
         // Every frontier cell is its own candidate, so a frontier this large is
         // already past the threshold and expanding it would be thrown away.
@@ -633,6 +732,9 @@ impl Board {
         self.frontier_full = true;
     }
 
+    // Kept out of line: with `step_frontier` as its only caller it would be
+    // inlined there, which measured 4-5% slower on settled 512x512 boards.
+    #[inline(never)]
     fn replace_frontier(&mut self, mut next_frontier: Vec<usize>) {
         self.frontier_full = false;
         std::mem::swap(&mut self.frontier_cells, &mut next_frontier);
@@ -794,6 +896,50 @@ impl CellsView<'_> {
         }
         live
     }
+
+    /// Steps one band and marks the cells in it that flipped dirty. Returns how
+    /// many cells in the band are alive.
+    fn step_band(self, band: BandWork<'_>) -> usize {
+        let BandWork {
+            first_row,
+            out,
+            dirty_flags,
+            changed,
+            dirty,
+        } = band;
+        let start = first_row * self.cols;
+        let recorded = changed.len();
+        let live = self.step_rows(first_row, out, changed);
+
+        if let Some(dirty) = dirty {
+            for &idx in &changed[recorded..] {
+                let flag = &mut dirty_flags[idx - start];
+                if *flag == 0 {
+                    *flag = 1;
+                    dirty.push(idx);
+                }
+            }
+        }
+        live
+    }
+}
+
+/// One band's share of a dense scan: its rows of the next generation and of the
+/// dirty flags, and the lists its changes are appended to.
+struct BandWork<'a> {
+    first_row: usize,
+    out: &'a mut [u8],
+    dirty_flags: &'a mut [u8],
+    changed: &'a mut Vec<usize>,
+    /// `None` while a full redraw is pending, which covers every cell anyway.
+    dirty: Option<&'a mut Vec<usize>>,
+}
+
+/// Recycled lists for a band after the first, kept empty between scans.
+#[derive(Debug, Clone, Default)]
+struct BandScratch {
+    changed: Vec<usize>,
+    dirty: Vec<usize>,
 }
 
 /// Steps columns `1..len - 1` of a row whose neighbours above and below are in
@@ -1252,6 +1398,92 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Each list holds exactly the cells whose flag is set, once each.
+    fn assert_bookkeeping_in_sync(board: &Board, context: &str) {
+        let flagged = |flags: &[u8]| flags.iter().filter(|&&flag| flag == 1).count();
+        assert_eq!(
+            flagged(&board.frontier_flags),
+            board.frontier_cells.len(),
+            "{context}"
+        );
+        assert_eq!(
+            flagged(&board.dirty_flags),
+            board.dirty_cells.len(),
+            "{context}"
+        );
+        for (idx, &flag) in board.frontier_flags.iter().enumerate() {
+            assert_eq!(
+                flag == 1,
+                board.frontier_cells.contains(&idx),
+                "frontier flag {idx}, {context}"
+            );
+        }
+        for (idx, &flag) in board.dirty_flags.iter().enumerate() {
+            assert_eq!(
+                flag == 1,
+                board.dirty_cells.contains(&idx),
+                "dirty flag {idx}, {context}"
+            );
+        }
+    }
+
+    #[test]
+    fn banded_dense_scan_matches_a_single_band() {
+        // Band counts that divide the rows unevenly, exceed them, or leave a
+        // short last band all have to reassemble the same row-major lists. A 100%
+        // threshold keeps every frontier as a list and 0% drops each one.
+        let (mut kept_frontiers, mut dropped_frontiers) = (0, 0);
+        for mode in [BoundaryMode::Wrap, BoundaryMode::Fixed] {
+            for (cols, rows) in [(1, 1), (5, 2), (13, 7), (17, 11), (64, 3)] {
+                for threshold in [100, 0] {
+                    for take_full_redraw in [true, false] {
+                        let mut single = Board::new(cols, rows);
+                        single.set_boundary_mode(mode);
+                        single.dense_threshold_percent = threshold;
+                        seed_deterministic(&mut single, 40);
+                        if take_full_redraw {
+                            let _ = single.take_dirty_cells();
+                            // Already dirty before the step, so not queued twice.
+                            single.populate(cols / 2, rows / 2);
+                        }
+
+                        for bands in [2, 3, 4, 6, 16] {
+                            let mut single = single.clone();
+                            let mut banded = single.clone();
+                            for generation in 0..4 {
+                                single.step_dense_in_bands(1);
+                                banded.step_dense_in_bands(bands);
+                                let context = format!(
+                                    "{cols}x{rows} {mode:?} {threshold}% in {bands} bands, \
+                                     generation {generation}"
+                                );
+                                assert_eq!(banded.current, single.current, "{context}");
+                                assert_eq!(banded.live_count, single.live_count, "{context}");
+                                assert_eq!(
+                                    banded.frontier_cells, single.frontier_cells,
+                                    "{context}"
+                                );
+                                assert_eq!(banded.frontier_full, single.frontier_full);
+                                assert_eq!(banded.dirty_cells, single.dirty_cells, "{context}");
+                                assert_eq!(banded.dirty_full, single.dirty_full, "{context}");
+                                assert!(
+                                    banded.band_scratch.iter().all(|scratch| {
+                                        scratch.changed.is_empty() && scratch.dirty.is_empty()
+                                    }),
+                                    "{context}"
+                                );
+                                assert_bookkeeping_in_sync(&banded, &context);
+                                kept_frontiers += usize::from(!banded.frontier_cells.is_empty());
+                                dropped_frontiers += usize::from(banded.frontier_full);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(kept_frontiers > 0 && dropped_frontiers > 0);
     }
 
     #[test]
