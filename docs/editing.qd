@@ -1,0 +1,71 @@
+.docname {Drawing and stamps}
+.include {docs}
+
+You edit the board with three tools, chosen at the top of the pattern palette: **Draw**, **Erase**, and **Stamp**.
+
+## Draw and erase
+
+With **Draw** selected, drag with the left mouse button to bring cells to life. With **Erase** selected, the same drag kills cells. The right mouse button always erases, whichever tool is selected.
+
+Cells you drag across are changed one at a time, but the whole drag counts as a single edit for [undo](#undo-and-redo).
+
+## Stamps
+
+A stamp places a whole pattern with one click.
+
+1. Select a pattern: click its thumbnail in the palette, or press its shortcut.
+2. Move the mouse over the board. A translucent *ghost* shows exactly which cells will be placed.
+3. Click to place the pattern. The stamp stays selected, so you can keep clicking to place copies.
+
+| Key               | Pattern                                        |
+|-------------------|------------------------------------------------|
+| .keybinding {G}   | Glider                                         |
+| .keybinding {B}   | Blinker                                        |
+| .keybinding {L}   | Lightweight spaceship (LWSS)                   |
+| .keybinding {P}   | RLE 8x4, a solid 8 × 4 block                   |
+
+Pressing the shortcut of the active stamp again, or .keybinding {C}, drops the stamp and goes back to the Draw tool. Clicking **Stamp** with no pattern selected picks the first one in the library. Switching to Draw or Erase hides the ghost but keeps the stamp selected, so clicking **Stamp** again brings it back.
+
+You can add your own patterns, either for the current session through [RLE import](patterns.qd#importing-a-pattern) or permanently as [built-in patterns](patterns.qd#built-in-patterns).
+
+### Rotating and flipping
+
+| Key               | Button     | Effect                                   |
+|-------------------|------------|------------------------------------------|
+| .keybinding {Z}   | **Rotate** | Rotate the stamp a quarter turn clockwise |
+| .keybinding {F}   | **Flip**   | Mirror the stamp horizontally            |
+
+The stamp preview in the palette and the ghost on the board both show the orientation that will be placed. The Rotate and Flip buttons are disabled unless the Stamp tool is active.
+
+## Board actions
+
+| Action        | Key               | Effect                                                     |
+|---------------|-------------------|------------------------------------------------------------|
+| **Randomize** | .keybinding {R}   | Clear the board, then make each cell alive with a 1 in 4 chance |
+| **Clear**     | .keybinding {X}   | Kill every cell                                            |
+
+Both are edits, so you can undo them.
+
+## Undo and redo
+
+| Key                                              | Effect                         |
+|--------------------------------------------------|--------------------------------|
+| .keybinding {U} or .keybinding {Mod+Z}           | Undo the last edit and pause   |
+| .keybinding {Mod+Shift+Z}                        | Redo the last undone edit      |
+
+The toolbar has **Undo** and **Redo** buttons as well.
+
+These are edits, and can be undone:
+
+- drawing and erasing (one edit per drag)
+- placing a stamp
+- randomizing and clearing the board
+- changing the rule, including an import that changes the rule
+
+Undo restores the board, the generation counter, and the rule as they were before the edit, and pauses playback so you can see the result. Redo reapplies an undone edit and also leaves playback paused. Making a new edit discards anything left to redo.
+
+### History limits
+
+History keeps up to 32 edits, within a budget of about 16 MiB of board snapshots. On very large boards fewer edits fit, but at least one is always kept.
+
+Resizing the board clears the undo and redo history, because old snapshots no longer fit the new size. Resizing the *window* does not affect history.

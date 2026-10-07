@@ -1,0 +1,98 @@
+.docname {The interface}
+.include {docs}
+
+The window has four parts: the toolbar at the top, the pattern palette on the left, the board canvas in the middle, and the status bar at the bottom. All of them are built with native Bevy UI.
+
+## Toolbar
+
+The toolbar has two rows.
+
+The top row opens the dialogs: **Import / Export**, **Settings**, and **Help**.
+
+The bottom row holds playback and view controls:
+
+- **Play / Pause** and **Step**
+- **Undo** and **Redo**, disabled when there is nothing to undo or redo
+- the **speed slider**, labelled in generations per second (see [Playback and rules](simulation.qd#speed))
+- **Grid**, to show or hide cell lines
+- **Palette**, to show or hide the pattern palette
+
+Hover over or focus a button to see its shortcut.
+
+## Pattern palette
+
+The palette holds the editing tools, the pattern library, and board actions, from top to bottom:
+
+- the **Draw**, **Erase**, and **Stamp** tools
+- a **search field** that filters patterns by name, ignoring case
+- a **stamp preview** of the selected pattern in its current orientation, with **Rotate** and **Flip** buttons, shown while a stamp is active
+- pattern **thumbnails**, with built-in and imported patterns in separate groups
+- board actions: **Randomize**, **Clear**, **Edges** (wrapping or fixed), and **Board size…**, which opens Settings
+
+Filtering the library keeps the current stamp selected, even if the filter hides it. The palette scrolls with the mouse wheel.
+
+Press .keybinding {H} to hide or show the palette. See [Drawing and stamps](editing.qd) for how the tools work.
+
+## Board canvas
+
+The board has its own canvas beside the palette and between the toolbar and status bar. Drawing and stamp previews stay inside it, including on Retina displays.
+
+| Action                         | How                                                       |
+|--------------------------------|-----------------------------------------------------------|
+| Zoom                           | Scroll over the canvas                                    |
+| Pan                            | .keybinding {W} .keybinding {A} .keybinding {S} .keybinding {D} or the arrow keys |
+| Fit the whole board            | .keybinding {V}                                           |
+
+The board is fitted into the canvas on startup, after a board size change, and when you press .keybinding {V}. When the window or layout changes, the view keeps its pan position and its zoom relative to the fitted view.
+
+An empty board shows a short hint, which disappears once you place the first cells.
+
+With **fixed** edges, a pale wall outlines the board and pulses briefly when you switch to that mode. With **wrapping** edges, the wall is hidden.
+
+### Grid
+
+Press .keybinding {T} or click **Grid** to draw lines between cells. The grid is drawn only where it is visible, and is skipped when cells are only a few pixels wide, so it costs nothing when zoomed out.
+
+## Status bar
+
+The status bar reads, for example:
+
+```text
+RUNNING    /    GENERATION 1520    /    842 LIVING    /    B3/S23
+```
+
+That is: whether playback is running or paused, the generation counter, the number of living cells, and the rule.
+
+## Layout presets
+
+Three layouts trade palette space for board space:
+
+| Preset      | Palette                     |
+|-------------|-----------------------------|
+| **Full**    | Wide palette                |
+| **Compact** | Narrower palette            |
+| **Minimal** | No palette                  |
+
+Choose one in **Settings**, or press .keybinding {F2} to cycle Full → Compact → Minimal. The preset is saved between runs.
+
+## Dialogs
+
+| Dialog              | Opens with                               | Contains                                                       |
+|---------------------|------------------------------------------|----------------------------------------------------------------|
+| **Import / Export** | the **Import / Export** button           | RLE import, and copying the board as RLE                       |
+| **Settings**        | the **Settings** button                  | board size, rule, layout, grid, diagnostics, generation reset  |
+| **Help**            | .keybinding {/} or the **Help** button   | a summary and the full list of shortcuts                       |
+| **Diagnostics**     | .keybinding {F3} or **Settings**         | live simulation statistics                                     |
+
+Dialogs are modal. While one is open, typing and scrolling inside it do not reach the board, and board shortcuts are disabled. Press .keybinding {Esc} or click **Close** to close a dialog without quitting; focus returns to the control that opened it.
+
+### Diagnostics
+
+The diagnostics dialog shows live statistics while playback continues:
+
+- board size, generation, living cells, and rule
+- average step time, as a moving average
+- tick interval, or *max speed*
+- measured rate, in generations per second
+- the number of timed steps
+- the dense fallback threshold (see [Simulation engine](engine.qd#frontier-and-dense-stepping))

@@ -1,0 +1,19 @@
+###! Getting started
+- [Installation](install.qd)
+- [First steps](first-steps.qd)
+
+###! User guide
+- [The interface](interface.qd)
+- [Drawing and stamps](editing.qd)
+- [Playback and rules](simulation.qd)
+- [Patterns and RLE](patterns.qd)
+- [Settings](settings.qd)
+- [Accessibility](accessibility.qd)
+- [Controls reference](controls.qd)
+
+###! Development
+- [Building from source](development.qd)
+- [Architecture](architecture.qd)
+- [Simulation engine](engine.qd)
+- [Profiling and benchmarks](benchmarks.qd)
+- [Releasing](releasing.qd)

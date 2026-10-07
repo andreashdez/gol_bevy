@@ -1,0 +1,79 @@
+.docname {Settings}
+.include {docs}
+
+Open the **Settings** dialog from the toolbar, or click **Board size…** in the palette.
+
+## Board size
+
+Pick a preset (128², 256², 512², or 1024²), or type a **Width** and **Height** in cells, then click **Apply board size**. Each side can be from 8 to 2048 cells. Anything else is rejected with a message, and the board keeps its size.
+
+Resizing keeps the cells that fit in the new size, fits the board into view, and clears the [undo history](editing.qd#history-limits).
+
+The board size is independent of the window. Resizing the window only changes how much of the board you can see.
+
+## Rule
+
+Pick **Life**, **HighLife**, **Day & Night**, or **Seeds**, or type a rulestring and click **Apply rule**. See [Rules](simulation.qd#rules) for the notation.
+
+## Layout and view
+
+- **Full**, **Compact**, and **Minimal** choose the [layout preset](interface.qd#layout-presets).
+- **Grid** shows or hides cell lines.
+- **Diagnostics** opens the [diagnostics view](interface.qd#diagnostics).
+- **Reset generation counter** sets the generation back to 0 without touching the cells.
+
+## What is saved
+
+These settings are saved whenever they change, and restored on the next launch:
+
+| Setting        | Saved as                             |
+|----------------|--------------------------------------|
+| Layout preset  | `layout_preset`                      |
+| Board size     | `board_cols`, `board_rows`           |
+| Grid           | `grid`                               |
+| Rule           | `rule`                               |
+| Edge mode      | `boundary_mode`                      |
+| Speed          | `tick_rate_ms`, `max_speed`          |
+
+The board's cells, undo history, and imported patterns are *not* saved.
+
+## The settings file
+
+Settings are stored in `ui_layout.toml`, in a `gol-bevy` folder in your platform's settings location:
+
+| Platform | Folder                                                          |
+|----------|-----------------------------------------------------------------|
+| Linux    | `$XDG_CONFIG_HOME/gol-bevy`, or `~/.config/gol-bevy` if that is unset |
+| macOS    | `~/Library/Application Support/gol-bevy`                        |
+| Windows  | `%APPDATA%\gol-bevy`                                            |
+
+Set the `GOL_BEVY_CONFIG_DIR` environment variable to use another folder on any platform. The file is then `$GOL_BEVY_CONFIG_DIR/ui_layout.toml`, with no `gol-bevy` subfolder.
+
+A typical file:
+
+```toml "ui_layout.toml"
+layout_preset = "full"
+board_cols = 256
+board_rows = 256
+grid = false
+rule = "B3/S23"
+boundary_mode = "wrap"
+tick_rate_ms = 25
+max_speed = false
+```
+
+| Key             | Values                                                    |
+|-----------------|-----------------------------------------------------------|
+| `layout_preset` | `"full"`, `"compact"`, or `"minimal"`                     |
+| `board_cols`, `board_rows` | Whole numbers, clamped to 8–2048. Both must be present |
+| `grid`          | `true` or `false`                                         |
+| `rule`          | A [rulestring](simulation.qd#rulestring-formats)          |
+| `boundary_mode` | `"wrap"` or `"fixed"`                                     |
+| `tick_rate_ms`  | Milliseconds between generations, clamped to 25–1000      |
+| `max_speed`     | `true` or `false`                                         |
+
+You can edit the file while the app is closed. Entries that are missing or can't be read keep their defaults, so a damaged file never stops the app from starting. Without a saved board size, the board is sized to fill the window.
+
+### Moving from earlier versions
+
+Earlier versions saved settings in `~/.config/gol-bevy` on every platform. If the new file doesn't exist yet, gol-bevy reads the old one, and the first save writes to the new location. The old file is left alone, so you can delete it afterwards.

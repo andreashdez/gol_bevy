@@ -1,0 +1,75 @@
+.docname {Simulation engine}
+.include {docs}
+
+The simulation lives in `src/board.rs`. It is plain Rust, apart from borrowing Bevy's compute task pool for parallel scans, and is built to keep large boards fast whether they are nearly empty or full of activity.
+
+## Cell storage
+
+The board is a flat, contiguous buffer of bytes, one per cell, in row-major order. A second buffer holds the next generation. The board's size is independent of the window.
+
+The number of live cells is tracked as cells change rather than counted, so the status bar never walks the board.
+
+## Rules as bitmasks
+
+A `Rule` stores birth and survival counts as two 9-bit masks, one bit per possible neighbour count (0 to 8). For stepping, both are packed into one 18-bit *transition mask*: birth counts in bits 0–8 and survival counts in bits 9–17. A cell's next state is then
+
+```text
+next = (mask >> (neighbours + 9 * alive)) & 1
+```
+
+with no branch on whether the cell is alive.
+
+## Frontier and dense stepping
+
+Each generation takes one of two paths.
+
+**Frontier stepping** looks only at cells that changed in the last generation and their neighbours, the *candidates*, since no other cell can change. Flipped cells are written in place, without a second full buffer, so a sparse generation costs time in proportion to the activity, not the board area.
+
+**Dense stepping** scans every cell. It does more work per generation but no bookkeeping per cell, and its inner loop vectorizes well.
+
+The board picks the frontier path while candidates cover less than a threshold share of the board, **5%** by default, and the dense scan above it. Candidate collection stops as soon as it crosses the threshold, and a frontier already over it skips straight to the scan. A dense step whose changes would exceed the threshold does not record them as a frontier, since the next step would scan anyway.
+
+The default comes from `benches/dense_crossover.rs`. The dense scan overtakes the frontier at about 2% coverage for young random soup, but only at 5–6% for settled debris on boards small enough to stay in cache. 5% keeps settled boards no slower than the frontier alone, at the cost of up to about twice the dense time for soup between 2% and 5%.
+
+Override the threshold with an environment variable, from 0 to 100 percent:
+
+```shell
+GOL_FRONTIER_DENSE_THRESHOLD_PERCENT=3 cargo run --release
+```
+
+The [diagnostics view](interface.qd#diagnostics) shows the threshold in use.
+
+## Neighbour counting
+
+Cells away from every edge take a fast path that counts neighbours with plain index offsets. Only cells on the edge pay for wrapping or clamping, depending on the [edge mode](simulation.qd#edges).
+
+## Parallel dense scans
+
+The dense scan is split into bands of whole rows, one per thread of Bevy's compute task pool. Each band reads only the current generation and writes only its own rows, and marks its own changed cells dirty, so no locking is needed.
+
+A board is split only into bands of at least 65,536 cells. Dispatching bands costs about 15–20 µs per scan, which a settled board only wins back from roughly 384 × 384 cells upward.
+
+## Recycled buffers
+
+Step buffers, candidate lists, and per-band change lists are kept between generations instead of being reallocated. Dirty and frontier flags are cleared one index at a time, for just the cells that were set, rather than by filling the whole array.
+
+## Rendering
+
+The board is drawn as a single texture with one texel per cell, so the cell count costs no entities. After each frame's steps, the renderer takes the board's list of dirty cells and rewrites only those texels. Resizing, randomizing, and clearing request a full redraw instead.
+
+The grid overlay draws only lines that cross the viewport, and none at all below a few pixels per cell, so its cost follows the screen size, not the board size.
+
+## Frame budget
+
+At a fixed speed, a frame runs at most 8 generations to catch up, then drops any remaining backlog, so one slow frame cannot snowball into a frozen app. At [Max speed](simulation.qd#max-speed), a frame steps for up to 8 ms, capped at 1024 generations so a near-empty board does not spin through the whole budget. It always runs at least one generation, however long that takes.
+
+## Tests
+
+`board.rs` checks the optimized paths against simple references:
+
+- frontier stepping against dense stepping, for both edge modes and several densities
+- the interior fast path against boundary-aware counting
+- banded scans against a single band
+- the live count and the dirty and frontier bookkeeping after every kind of change
+
+`patterns.rs` evolves the built-in oscillators and spaceships and checks that they behave as named.

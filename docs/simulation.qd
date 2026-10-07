@@ -1,0 +1,73 @@
+.docname {Playback and rules}
+.include {docs}
+
+## Playback
+
+| Action               | Key               | Button   |
+|----------------------|-------------------|----------|
+| Run or pause         | .keybinding {Space} | **Play** / **Pause** |
+| Advance one generation | .keybinding {J} | **Step** |
+| Reset the generation counter to 0 | .keybinding {0} | **Reset generation counter** in Settings |
+
+Resetting the generation counter leaves the cells as they are.
+
+> Tip: After you click a toolbar button, .keybinding {Space} activates that button. Click the board to give .keybinding {Space} back to playback.
+
+## Speed
+
+Speed is shown in generations per second (gen/s) on the toolbar slider. It ranges from 1 to 40 gen/s.
+
+- Drag the slider, or focus it and use .keybinding {Left} and .keybinding {Right}. .keybinding {Home} and .keybinding {End} jump to the limits.
+- Press .keybinding {plus} to speed up and .keybinding {minus} to slow down while the board has keyboard focus. Each press changes the time between generations by 25 ms.
+
+### Max speed
+
+The notch past 40 gen/s is **Max**. At Max, each frame runs as many generations as fit in about 8 ms, up to 1024, and leaves the rest of the frame for drawing and input. The slider label shows the rate actually achieved, which depends on the board size and how busy it is.
+
+Pressing .keybinding {plus} at 40 gen/s also selects Max, and .keybinding {minus} from Max returns to 40 gen/s.
+
+### Catching up after a stall
+
+At a fixed speed, a frame that arrives late runs the generations it missed, up to 8 at once. If it falls further behind, for example while you drag the window, the backlog is dropped rather than carried over, so the app never freezes trying to catch up.
+
+## Rules
+
+A rule says how many live neighbours make a dead cell come alive (*birth*, **B**) and let a live cell stay alive (*survival*, **S**). Conway's Game of Life is `B3/S23`.
+
+Choose a rule in **Settings**, either from a preset or by typing a rulestring and clicking **Apply rule**.
+
+| Preset          | Rulestring       | Character                                                           |
+|-----------------|------------------|---------------------------------------------------------------------|
+| **Life**        | `B3/S23`         | Conway's original                                                   |
+| **HighLife**    | `B36/S23`        | Like Life, plus a small *replicator* pattern                        |
+| **Day & Night** | `B3678/S34678`   | Live and dead cells behave symmetrically                            |
+| **Seeds**       | `B2/S`           | No cell survives; patterns explode                                  |
+
+### Rulestring formats
+
+Any Life-like rule works. These are all accepted, ignoring case and spaces around the slash:
+
+| Form               | Example     | Meaning                           |
+|--------------------|-------------|-----------------------------------|
+| `B…/S…`            | `B36/S23`   | Birth on 3 or 6, survive on 2 or 3 |
+| `S…/B…`            | `S23/B36`   | The same rule, survival first     |
+| `…/…` (legacy)     | `23/36`     | Survival counts first, then birth |
+
+Each count is a digit from 0 to 8. Either side may be empty, as in `B2/S`. The rule is always displayed in `B/S` form.
+
+Invalid rulestrings are rejected with a message below the field, and the current rule stays in place.
+
+### Rules and undo
+
+Changing the rule is an undoable edit. Undo brings back the previous rule together with the board as it was. Importing an RLE pattern that declares a different rule also changes the board rule, and is undone the same way (see [Patterns and RLE](patterns.qd#importing-a-pattern)).
+
+## Edges
+
+The board is finite, so its edges need a rule of their own. Press .keybinding {M} or click **Edges** in the palette to switch between the two modes. The button shows the current one.
+
+| Mode      | Behaviour                                                                                  |
+|-----------|--------------------------------------------------------------------------------------------|
+| **Wrap**  | Opposite edges are joined, like a torus. A glider leaving on the right comes back on the left. This is the default. |
+| **Fixed** | Everything outside the board counts as dead. A pale wall marks the edge.                   |
+
+The edge mode is saved between runs. Unlike the rule, switching edges is not an edit, so undo does not change it.

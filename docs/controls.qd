@@ -1,0 +1,67 @@
+.docname {Controls reference}
+.include {docs}
+
+Every keyboard and mouse control in one place. Shortcuts with a command modifier use Cmd on macOS and Ctrl elsewhere; this page shows the key for the platform you are reading on.
+
+Board shortcuts work while the board has keyboard focus. They are disabled while a dialog is open, or while a text field or the speed slider is focused; press .keybinding {Esc} or click the board to get them back. In-app, press .keybinding {/} for the same list.
+
+## Simulation
+
+| Key                     | Action                       |
+|-------------------------|------------------------------|
+| .keybinding {Space}     | Run or pause                 |
+| .keybinding {J}         | Step one generation          |
+| .keybinding {R}         | Randomize the board          |
+| .keybinding {X}         | Clear the board              |
+| .keybinding {0}         | Reset the generation counter |
+| .keybinding {plus}      | Speed up (past 40 gen/s: Max) |
+| .keybinding {minus}     | Slow down                    |
+| .keybinding {M}         | Toggle wrapping or fixed edges |
+
+## Editing
+
+| Key or mouse                                 | Action                                      |
+|----------------------------------------------|---------------------------------------------|
+| Left drag                                    | Draw or erase with the selected tool        |
+| Left click, with a stamp selected            | Place the pattern                           |
+| Right drag                                   | Erase                                       |
+| .keybinding {U} or .keybinding {Mod+Z}       | Undo the last edit and pause                |
+| .keybinding {Mod+Shift+Z}                    | Redo the last undone edit                   |
+
+## Stamps
+
+| Key                | Action                                |
+|--------------------|---------------------------------------|
+| .keybinding {G}    | Select the glider stamp               |
+| .keybinding {B}    | Select the blinker stamp              |
+| .keybinding {L}    | Select the LWSS stamp                 |
+| .keybinding {P}    | Select the RLE 8x4 stamp              |
+| .keybinding {Z}    | Rotate the stamp clockwise            |
+| .keybinding {F}    | Flip the stamp horizontally           |
+| .keybinding {C}    | Clear the active stamp                |
+
+## View
+
+| Key or mouse                                   | Action                          |
+|------------------------------------------------|---------------------------------|
+| Mouse wheel over the board                     | Zoom                            |
+| .keybinding {W} .keybinding {A} .keybinding {S} .keybinding {D} or arrow keys | Pan          |
+| .keybinding {V}                                | Fit the whole board in view     |
+| .keybinding {T}                                | Toggle the grid                 |
+| .keybinding {H}                                | Hide or show the pattern palette |
+| .keybinding {F2}                               | Cycle layout: Full → Compact → Minimal |
+| .keybinding {F3}                               | Toggle diagnostics              |
+| .keybinding {/}                                | Toggle help                     |
+| .keybinding {Q} or .keybinding {Esc}           | Quit                            |
+
+## Controls and dialogs
+
+| Key                                         | Action                                                    |
+|---------------------------------------------|-----------------------------------------------------------|
+| .keybinding {Tab}, .keybinding {Shift+Tab}  | Move between controls                                     |
+| .keybinding {Enter} or .keybinding {Space}  | Activate the focused button                               |
+| .keybinding {Left}, .keybinding {Right}     | Change speed, with the slider focused                     |
+| .keybinding {Home}, .keybinding {End}       | Slowest or Max speed, with the slider focused             |
+| .keybinding {Esc}                           | Close a dialog, or leave a text field or the slider       |
+| .keybinding {Mod+C}, .keybinding {Mod+X}, .keybinding {Mod+V}, .keybinding {Mod+A} | Copy, cut, paste, and select all in text fields |
+| .keybinding {Shift} + arrow keys            | Select text in text fields                                |

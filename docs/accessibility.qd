@@ -1,0 +1,32 @@
+.docname {Accessibility}
+.include {docs}
+
+gol-bevy can be used from the keyboard alone, and exposes its interface to screen readers and other assistive tools through [AccessKit](https://accesskit.dev).
+
+## Keyboard navigation
+
+- .keybinding {Tab} moves between the visible, enabled controls; .keybinding {Shift+Tab} moves back.
+- .keybinding {Enter} or .keybinding {Space} activates the focused button.
+- Click the board, or press .keybinding {Esc} in a text field or the slider, to give the keyboard back to the board shortcuts.
+
+Focused controls have a bright outline, and are scrolled into view if the palette or a dialog has to scroll. Hidden controls, such as those in a hidden palette, are left out of the tab order.
+
+While a text field or the speed slider has focus, board shortcuts are disabled, so typing a pattern name does not run or clear the board.
+
+## Dialogs
+
+Dialogs are modal: .keybinding {Tab} stays inside the open dialog. The Help and Diagnostics dialogs focus their **Close** button when they open.
+
+.keybinding {Esc} closes a dialog without quitting the app, and focus returns to the control that opened it. The key that opened Help (.keybinding {/}) or Diagnostics (.keybinding {F3}) closes it again.
+
+## Screen readers
+
+- Buttons expose their action and, for toggles such as tools, patterns, **Grid**, and **Palette**, whether they are selected.
+- **Play** is announced as *Play* or *Pause*, and **Edges** with the current mode.
+- Text fields expose their name and value.
+- The speed slider exposes its value and supports increment and decrement actions.
+- Validation messages, such as a rejected board size or an import error, are announced politely when they appear.
+
+## Text editing
+
+Text fields support the platform clipboard shortcuts (.keybinding {Mod+C}, .keybinding {Mod+X}, .keybinding {Mod+V}, and .keybinding {Mod+A}) and selection with .keybinding {Shift} and the arrow keys.

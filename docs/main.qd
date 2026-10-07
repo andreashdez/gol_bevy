@@ -1,0 +1,35 @@
+.docname {gol-bevy}
+.include {docs}
+
+**gol-bevy** is Conway's Game of Life as a native desktop app, built on the [Bevy](https://bevyengine.org) game engine. It runs on Linux, Windows, and macOS.
+
+!(100%)[gol-bevy screenshot](media/screenshot.png)
+
+## Features
+
+- **Play, pause, and step** through generations, from 1 to 40 per second, or at *Max* speed: as many generations as fit in each frame.
+- **Draw, erase, and stamp** cells with the mouse. Stamps can be rotated and flipped before you place them.
+- **Undo and redo** every edit, including rule changes and imports.
+- **Any Life-like rule**: Life, HighLife, Day & Night, Seeds, or any rulestring in `B/S` notation.
+- **Wrapping or fixed edges.** A wrapping board joins its opposite edges; a fixed board treats everything outside it as dead.
+- **Boards up to 2048 × 2048**, independent of the window size, with zoom and pan.
+- **RLE import and export**, compatible with other Life tools such as [Golly](https://golly.sourceforge.io).
+- **Keyboard and screen reader friendly**: Tab navigation, focus handling, and accessible names on every control.
+- **Settings that persist**: layout, board size, rule, edges, speed, and grid are restored on the next launch.
+
+!(100%)[gol-bevy demo](media/demo.gif)
+
+## Where to start
+
+| If you want to…                   | Read                                         |
+|-----------------------------------|----------------------------------------------|
+| Download and run the app          | [Installation](install.qd)                   |
+| Learn the basics in five minutes  | [First steps](first-steps.qd)                |
+| Look up a shortcut                | [Controls reference](controls.qd)            |
+| Bring in a pattern from elsewhere | [Patterns and RLE](patterns.qd)              |
+| Build or change the code          | [Building from source](development.qd)       |
+| Understand how the code fits      | [Architecture](architecture.qd)              |
+
+## License
+
+gol-bevy is distributed under the MIT License. The bundled Ubuntu Light font is distributed under the Ubuntu Font Licence; see `assets/fonts/` in the repository.

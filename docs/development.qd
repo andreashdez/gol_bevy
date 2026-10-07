@@ -1,0 +1,84 @@
+.docname {Building from source}
+.include {docs}
+
+## Toolchain
+
+The Rust version is pinned in `rust-toolchain.toml` (currently **1.99.0**, with `rustfmt` and `clippy`). Inside the project, rustup picks it automatically. If it is not installed yet, run once:
+
+```shell
+rustup toolchain install
+```
+
+CI uses the matching `rust:1.99.0-trixie` image, so a new Rust release cannot change what CI accepts. To move to a newer Rust, change the version in `rust-toolchain.toml` and `.gitlab-ci.yml` together.
+
+The crate uses the Rust 2024 edition.
+
+## System libraries on Linux
+
+Bevy builds and links against a few system libraries. On Debian and Ubuntu:
+
+```shell
+sudo apt-get install pkg-config libwayland-dev libxkbcommon-dev libudev-dev \
+  libasound2-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
+```
+
+macOS and Windows need nothing beyond the Rust toolchain.
+
+## Building and running
+
+```shell
+cargo run             # dev build
+cargo run --release   # optimized build, for profiling
+```
+
+Dev builds optimize dependencies fully (`opt-level = 3`) and this crate lightly (`opt-level = 1`), because Bevy runs far too slowly unoptimized. The first build is slower as a result, but incremental rebuilds stay fast.
+
+For even faster rebuilds while iterating, link Bevy dynamically:
+
+```shell
+cargo run --features bevy/dynamic_linking
+```
+
+Release builds use thin LTO and a single codegen unit.
+
+## Checks
+
+The `justfile` wraps the commands CI runs:
+
+| Command            | Runs                                                           |
+|--------------------|----------------------------------------------------------------|
+| `just fmt-check`   | `cargo fmt --all -- --check`                                   |
+| `just clippy`      | `cargo clippy --all-targets --all-features --locked -- -D warnings` |
+| `just check`       | `cargo check --all-targets --locked`                           |
+| `just test`        | `cargo test --all-targets --all-features --locked`             |
+| `just bench`       | `cargo bench --bench board_step --locked`                      |
+| `just readme-check`| The test that keeps the README's controls list in sync         |
+| `just ci-local`    | `fmt-check`, `clippy`, and `test`, like CI                     |
+
+Run `just ci-local` before pushing.
+
+> Note: The controls list in `README.md` must match the in-app help text exactly; the `readme_contains_controls_text` test enforces it. If you change a key binding in `src/shared.rs`, update the README too.
+
+## Continuous integration
+
+`.gitlab-ci.yml` runs three stages on every push:
+
+| Stage   | Job      | Command                                                    |
+|---------|----------|------------------------------------------------------------|
+| lint    | `fmt`    | `cargo fmt --all -- --check`                               |
+| lint    | `clippy` | `cargo clippy --all-targets --all-features --locked -- -D warnings` |
+| test    | `test`   | `cargo test --all-targets --all-features --locked`         |
+
+Tags add the build and release stages; see [Releasing](releasing.qd).
+
+## This documentation
+
+These pages are written in [Quarkdown](https://quarkdown.com) and live in `docs/`. With Quarkdown installed, build the site from that folder:
+
+```shell
+cd docs
+quarkdown c main.qd              # writes the site to docs/quarkdown-output/gol-bevy/
+quarkdown c main.qd -p -w        # live preview while you edit
+```
+
+`_setup.qd` holds the shared theme and header, and `_nav.qd` the sidebar. A new page needs a `.docname` and `.include {docs}` at the top, and a link from `_nav.qd` or another page, since Quarkdown only compiles pages that are linked.

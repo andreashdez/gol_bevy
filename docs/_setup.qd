@@ -1,0 +1,27 @@
+.docdescription {Documentation for gol-bevy, Conway's Game of Life with a native desktop GUI built on Bevy.}
+.doclang {English}
+.theme {darko} layout:{minimal}
+
+.dockeywords
+  - game of life
+  - cellular automaton
+  - bevy
+  - rust
+
+.docauthors
+  - Andreas Hernández Hauser
+
+.ifnot {.docname::equals {gol-bevy}}
+    .htmloptions title:{.docname | gol-bevy}
+
+.var {repourl} {https://gitlab.com/andreashdez/gol-bevy}
+
+.function {repolink}
+    label path:
+    .text {.label} url:{.repourl/.path}
+
+.pagemargin {topleft}
+    [gol-bevy](@)
+
+.pagemargin {topright}
+    .text {.icon {gitlab} GitLab} url:{.repourl}

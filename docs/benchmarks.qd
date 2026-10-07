@@ -1,0 +1,47 @@
+.docname {Profiling and benchmarks}
+.include {docs}
+
+## Baseline
+
+```shell
+cargo run --release
+cargo test --all-targets --all-features --locked
+cargo bench --bench board_step --locked
+```
+
+Profile release builds only. Dev builds optimize this crate lightly, so their timings mislead.
+
+## Benchmarks
+
+Benchmarks use [Criterion](https://bheisler.github.io/criterion.rs/book/) and live in `benches/`.
+
+### board_step
+
+```shell
+cargo bench --bench board_step     # or: just bench
+```
+
+Times `Board::step` together with dirty-cell extraction, which is what each frame does:
+
+- **sparse:** a glider on 256, 512, and 1024 boards, which stays on the frontier path
+- **noise:** deterministic random fills at 30% and 45% density on the same sizes
+- **dense:** a freshly seeded 512, 1024, and 2048 board on every iteration, so it always measures the dense scan
+
+### dense_crossover
+
+```shell
+cargo bench --bench dense_crossover
+```
+
+Times the frontier step against the dense scan on soup covering a growing share of the board. Use it to choose the [dense fallback threshold](engine.qd#frontier-and-dense-stepping), and re-run it after changing either path.
+
+To try a different threshold without rebuilding, set `GOL_FRONTIER_DENSE_THRESHOLD_PERCENT` when running the app.
+
+## CPU profiling
+
+- **macOS:** run `cargo run --release` and attach the Time Profiler in Instruments.
+- **Linux:** use `perf`, or `cargo flamegraph` if installed.
+
+## In-app numbers
+
+Press .keybinding {F3} for the [diagnostics view](interface.qd#diagnostics). It shows the average step time, the tick interval, and the measured rate in generations per second, which is the quickest check that a change helped on a real board.

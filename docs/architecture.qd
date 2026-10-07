@@ -1,0 +1,115 @@
+.docname {Architecture}
+.include {docs}
+
+gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`app`, `board`, `patterns`) knows nothing about Bevy's UI or rendering, so it is tested directly.
+
+## Source layout
+
+.filetree
+    - src
+      - main.rs
+      - lib.rs
+      - app.rs
+      - board.rs
+      - patterns.rs
+      - shared.rs
+      - settings_plugin.rs
+      - ui_input.rs
+      - canvas_view.rs
+      - render_plugin.rs
+      - input_plugin.rs
+      - simulation_plugin.rs
+      - native_ui_plugin.rs
+      - native_ui_plugin
+        - accessibility.rs
+        - controls.rs
+        - dialogs.rs
+        - palette.rs
+    - assets
+      - patterns
+      - fonts
+    - benches
+    - build.rs
+
+| Module                  | Responsibility                                                                |
+|-------------------------|-------------------------------------------------------------------------------|
+| `app`                   | Application state and user actions: tools, stamps, speed, undo and redo, import and export |
+| `board`                 | Cell storage, rules, edge modes, stepping, and dirty-cell tracking            |
+| `patterns`              | Built-in patterns and RLE reading and writing                                 |
+| `shared`                | Bevy resources, system sets, key bindings, colours, and constants used across plugins |
+| `settings_plugin`       | Loading and saving `ui_layout.toml`                                           |
+| `ui_input`              | Deciding whether the pointer and keyboard belong to the UI or the board       |
+| `canvas_view`           | The board camera's viewport, and fitting the board into it                    |
+| `render_plugin`         | The world: board texture, grid, edge walls, and stamp preview                 |
+| `input_plugin`          | Keyboard shortcuts, mouse editing, and camera zoom and pan                    |
+| `simulation_plugin`     | Advancing generations on time, requesting redraws, and quitting               |
+| `native_ui_plugin`      | Toolbar, palette, status bar, and dialogs, in Bevy UI                         |
+
+`lib.rs` exposes every module, so `main.rs`, the benchmarks, and the tests use the same code.
+
+## Plugins
+
+`main.rs` builds the app from Bevy's `DefaultPlugins` (with a 1200 × 800 window and a 680 × 420 minimum) and the project's plugins:
+
+.mermaid
+    flowchart TD
+        main[main.rs] --> DP[DefaultPlugins]
+        main --> PL["Project plugins<br/>RenderPlugin, CanvasViewPlugin, SettingsPlugin, UiInputPlugin,<br/>NativeUiPlugin, InputPlugin, SimulationPlugin"]
+        PL --> S[(Simulation resource)]
+        S --> APP[app::App]
+        APP --> B[board::Board]
+        APP --> P[patterns]
+
+All plugins share one `Simulation` resource, which owns the `app::App` and with it the board. The UI and the keyboard call the same `App` methods, so a button and its shortcut always behave alike, and both go through the same undo history.
+
+## Frame order
+
+Systems run in ordered sets, so each frame sees a consistent state.
+
+At **startup**:
+
+1. `StartupSet::LoadSettings`: read `ui_layout.toml` into the layout, board size, and grid resources.
+2. `StartupSet::BuildWorld`: create the board, sized from settings or else from the window, and the scene.
+
+Then the simulation settings (rule, edges, speed) are applied. They are startup state, not edits, so they don't enter undo history.
+
+Every **frame**, `Update` runs these sets in order:
+
+| Set          | Work                                                                 |
+|--------------|----------------------------------------------------------------------|
+| `Simulation` | Run the generations that are due                                     |
+| `Camera`     | Zoom, pan, and fit                                                   |
+| `Resize`     | Apply board size changes                                             |
+| `Redraw`     | Collect whether anything needs redrawing                             |
+| `Render`     | Update the board texture, grid, walls, and preview                   |
+| `Quit`       | Exit if asked                                                        |
+
+Keyboard shortcuts and mouse editing run later, in the `Input` set of `PostUpdate`, after Bevy has updated cameras and transforms. That way a click maps to the cell that was under the cursor in the frame it happened.
+
+## Shared resources
+
+| Resource                            | Holds                                                         |
+|-------------------------------------|---------------------------------------------------------------|
+| `Simulation`                        | The `App`, the step timer, average step time, and measured rate |
+| `BoardSettings`                     | The chosen board size, independent of the window              |
+| `UiLayout`                          | The layout preset and whether the palette is shown            |
+| `RedrawRequested`                   | Whether this frame needs a redraw                             |
+| `DiagnosticsOverlay`, `GridOverlay` | Whether diagnostics and the grid are on                       |
+| `UiInputRegions`, `UiInputCapture`  | Where the UI is, and whether it has the pointer or keyboard   |
+
+## Input routing
+
+The UI publishes the rectangles it occupies and whether a dialog is open into `UiInputRegions`. `ui_input` turns that, together with the focused widget, into `UiInputCapture`:
+
+- **Pointer** input over a panel or under a dialog goes to the UI, so clicks on the palette never draw on the board.
+- **Keyboard** input goes to the UI while a dialog is open or a text field or slider has focus.
+
+Board shortcuts run only when `canvas_keyboard_available` allows it. This keeps the routing independent of how the UI is drawn.
+
+## Key bindings
+
+Key bindings are `KeyBinding` constants in `shared.rs`, each with its keys, label, and action. The same constants drive the keyboard handler, the in-app help text, and the README test, so the documentation of a key cannot drift from what it does.
+
+## Rendering
+
+The board is a single texture with one texel per cell, scaled up by the camera. Only cells that changed are rewritten, using the dirty list the board keeps. Operations that touch everything, such as resizing, randomizing, and clearing, fall back to a full redraw. See [Simulation engine](engine.qd#rendering) for details.

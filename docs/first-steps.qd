@@ -1,0 +1,50 @@
+.docname {First steps}
+.include {docs}
+
+This page walks you through a first session: placing a pattern, running it, and undoing a mistake.
+
+## The Game of Life in one paragraph
+
+The board is a grid of cells, each either alive or dead. Every generation, each cell counts its eight neighbours. A dead cell with exactly three live neighbours is born; a live cell with two or three live neighbours survives; every other cell dies or stays dead. This rule is written `B3/S23` (*birth on 3, survival on 2 or 3*), and gol-bevy can run [other rules](simulation.qd#rules) too.
+
+## 1. Place a glider
+
+1. Press .keybinding {G} to select the glider stamp. You can also click **Glider** in the pattern palette on the left.
+2. Move the mouse over the board. A translucent preview shows where the glider will land.
+3. Click to place it. Click again elsewhere to place more.
+
+Press .keybinding {Z} to rotate the stamp and .keybinding {F} to flip it. The preview always shows the orientation that will be placed.
+
+## 2. Run it
+
+Press .keybinding {Space} or click **Play**. The glider travels diagonally, one cell every four generations. Press .keybinding {Space} again to pause, and .keybinding {J} to advance a single generation.
+
+The status bar at the bottom shows whether the board is running, the generation, the number of living cells, and the rule.
+
+## 3. Draw your own cells
+
+Press .keybinding {C} to drop the stamp and return to the **Draw** tool. Now drag with the left mouse button to bring cells to life. Drag with the right button to erase.
+
+## 4. Undo a mistake
+
+Press .keybinding {U} or .keybinding {Mod+Z}. Undo restores the board and pauses playback, so you can look at what you got back. A whole drag counts as one edit. Redo with .keybinding {Mod+Shift+Z}.
+
+## 5. Try a random board
+
+Press .keybinding {R} to fill about a quarter of the board at random, then .keybinding {Space} to watch it settle. Press .keybinding {X} to clear the board.
+
+## Moving around
+
+- Scroll over the board to zoom.
+- Pan with .keybinding {W} .keybinding {A} .keybinding {S} .keybinding {D} or the arrow keys.
+- Press .keybinding {V} to fit the whole board back into view.
+
+## Getting help in the app
+
+Press .keybinding {/} or click **Help** to see every shortcut. Hover over or focus a button to see its shortcut hint.
+
+## Where next
+
+- [The interface](interface.qd) explains each part of the window.
+- [Patterns and RLE](patterns.qd) shows how to bring in patterns from other Life tools.
+- [Controls reference](controls.qd) lists every key.

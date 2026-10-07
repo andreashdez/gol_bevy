@@ -1,0 +1,54 @@
+.docname {Installation}
+.include {docs}
+
+## Download a release
+
+Every tagged release on the .repolink {GitLab Releases page} {-/releases} has ready-to-run builds, so you don't need a Rust toolchain. Download the archive for your platform, unpack it, and run `gol-bevy`.
+
+Each archive contains the same three files: the binary, the README, and the licence. The app needs nothing else on disk: built-in patterns and the UI font are embedded in the binary.
+
+### Linux (x86_64)
+
+Download the `x86_64-linux.tar.gz` archive. It needs:
+
+- glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40, or later)
+- a Wayland or X11 desktop
+
+```shell
+tar -xzf gol-bevy-<version>-x86_64-linux.tar.gz
+./gol-bevy-<version>-x86_64-linux/gol-bevy
+```
+
+### Windows (x86_64)
+
+Download the `x86_64-windows.zip` archive, unzip it, and run `gol-bevy.exe`. Release builds open no console window.
+
+### macOS (universal)
+
+The macOS archive runs natively on both Apple silicon and Intel Macs. It is attached to each release by hand, so it can appear a little after the Linux and Windows builds.
+
+> Warning: The binary is not signed, so macOS blocks it the first time you open it.
+
+Either allow it under **System Settings → Privacy & Security**, or clear the quarantine flag in the unpacked folder:
+
+```shell
+xattr -d com.apple.quarantine gol-bevy
+```
+
+## Run from source
+
+If you have the repository checked out, run the app with Cargo:
+
+```shell
+cargo run
+```
+
+The first build takes a while, because dependencies are compiled with full optimization even in dev builds. See [Building from source](development.qd) for the pinned toolchain, the Linux system libraries, and faster rebuilds.
+
+## Window and board size
+
+The window opens at 1200 × 800 and can be resized down to 680 × 420. On first launch the board is sized to fill the window. After that, the board keeps the size you choose in [Settings](settings.qd), whatever the window size.
+
+## Next steps
+
+Continue with [First steps](first-steps.qd) to place your first pattern and run it.

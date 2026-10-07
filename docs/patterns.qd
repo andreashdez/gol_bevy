@@ -1,0 +1,119 @@
+.docname {Patterns and RLE}
+.include {docs}
+
+gol-bevy reads and writes patterns in **RLE** (run length encoded) format, the common format of Life software such as [Golly](https://golly.sourceforge.io) and the [LifeWiki](https://conwaylife.com/wiki/Run_Length_Encoded).
+
+## Importing a pattern
+
+1. Copy a pattern in RLE format, for example from the LifeWiki or Golly.
+2. Click **Import / Export** in the toolbar.
+3. Optionally enter a **Pattern name**. Without one, the pattern is named *Imported* followed by a number.
+4. Paste the RLE into **RLE source**.
+5. Click **Import and select**.
+
+The pattern is added to the *imported* group of the palette and selected as the active stamp. Close the dialog and click the board to place it.
+
+If the RLE header declares a rule that differs from the board's, the board switches to that rule and the dialog says so. That rule change is an undoable edit.
+
+If the RLE cannot be read, the dialog shows why, for example `Could not import: RLE body missing '!' terminator`.
+
+> Note: Imported patterns last for the current session. Drafts in the import dialog are kept while the app is open, too. To keep a pattern permanently, add it as a [built-in pattern](#built-in-patterns).
+
+## Exporting the board
+
+In the **Import / Export** dialog, click **Copy board as RLE**. The clipboard receives:
+
+- only the live cells, cropped to their bounding box
+- the board's rule in the header
+- a comment with the generation and board size
+
+The result pastes back into Import, or into other Life tools. For example, a glider on a 128 × 128 board at generation 12 exports as:
+
+```text
+#C Generation 12 of a 128x128 board
+x = 3, y = 3, rule = B3/S23
+bo$2bo$3o!
+```
+
+Lines are wrapped at 70 characters, and empty trailing cells and runs of empty rows are compressed, as other tools expect.
+
+## The RLE format
+
+An RLE file has optional comment lines, a header line, and a body.
+
+```text "A glider in RLE"
+#N Glider
+#O Richard K. Guy
+#C The smallest spaceship, moving one cell diagonally every 4 generations.
+x = 3, y = 3, rule = B3/S23
+bob$2bo$3o!
+```
+
+### Comments
+
+Lines starting with `#` are comments. The first `#N` line gives the pattern its name; other lines such as `#O` (author) and `#C` (comment) are ignored.
+
+### Header
+
+The first non-comment line is the header:
+
+- `x = <width>, y = <height>` are required.
+- `rule = <rulestring>` is optional. It accepts the same [rulestring formats](simulation.qd#rulestring-formats) as Settings. An unsupported rule is an error, rather than being silently replaced by Life.
+
+### Body
+
+The body is everything after the header, and may span several lines.
+
+| Token | Meaning                    |
+|-------|----------------------------|
+| `o`   | A live cell                |
+| `b`   | A dead cell                |
+| `$`   | End of a row               |
+| `!`   | End of the pattern         |
+
+Any token can be preceded by a run count: `3o` is three live cells, `10b` ten dead ones, and `2$` ends the row and leaves one empty row. Whitespace in the body is ignored.
+
+A solid 8 × 4 block, for example:
+
+```text
+x = 8, y = 4
+8o$8o$8o$8o!
+```
+
+### Errors
+
+| Message                                         | Cause                                        |
+|-------------------------------------------------|----------------------------------------------|
+| `missing RLE header line`                       | No non-comment line                          |
+| `missing x/y dimension in RLE header`           | The header lacks `x` or `y`                  |
+| `invalid x/y dimension in RLE header`           | `x` or `y` is not a whole number             |
+| `invalid RLE token '…'`                         | A character other than digits, `b`, `o`, `$`, `!`, or whitespace |
+| `RLE body missing '!' terminator`               | The body never ends with `!`                 |
+| `RLE run length overflows pattern bounds`       | A run count is too large                     |
+| `unsupported rule in RLE header: …`             | The `rule` value is not a valid rulestring   |
+
+## Built-in patterns
+
+Built-in patterns are the RLE files in `assets/patterns/` of the repository:
+
+.filetree
+    - assets
+      - patterns
+        - blinker.rle
+        - glider.rle
+        - lwss.rle
+        - rle-8x4.rle
+
+`build.rs` embeds every `.rle` file in that folder into the binary at build time, so nothing is read from disk when the app runs.
+
+### Adding a built-in pattern
+
+1. Save the pattern as an `.rle` file in `assets/patterns/`, for example `pulsar.rle`.
+2. Give it a `#N` line with the name to show in the palette.
+3. Rebuild with `cargo build` or `cargo run`.
+
+The palette lists built-in patterns in file-name order. A pattern without a `#N` line is named after its file. Hidden files, such as the `._name.rle` files macOS leaves on some drives, are skipped.
+
+A built-in pattern that fails to parse stops the app at startup with the file name and the error, and the `every_builtin_file_parses_with_a_unique_name` test catches it first.
+
+> Warning: Keyboard shortcuts find their pattern by file name: `glider`, `blinker`, `lwss`, and `rle-8x4`. Renaming or removing one of these files unbinds its key. The tests check that each one still resolves.
