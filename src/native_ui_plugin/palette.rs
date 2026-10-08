@@ -1,9 +1,12 @@
 //! Search, library grouping, and a preview of the actual stamp orientation.
 use super::*;
 use bevy::text::{EditableText, TextCursorStyle};
+use bevy::ui_widgets::{ControlOrientation, Scrollbar, ScrollbarThumb};
 
 #[derive(Component)]
 pub(super) struct PatternSearch;
+#[derive(Component)]
+pub(super) struct SearchPlaceholder;
 #[derive(Component)]
 pub(super) struct PatternGroup(pub bool);
 #[derive(Component)]
@@ -14,40 +17,139 @@ pub(super) struct StampPreview;
 pub(super) struct StampImage;
 #[derive(Component)]
 pub(super) struct StampCaption;
+#[derive(Component)]
+pub(super) struct LibraryScroll;
+#[derive(Component)]
+pub(super) struct LibraryScrollbar;
+
+/// Only the library scrolls; tools, the stamp preview, and search stay within reach.
+pub(super) fn library(parent: &mut ChildSpawnerCommands) {
+    parent
+        .spawn(Node {
+            flex_grow: 1.0,
+            flex_basis: px(0),
+            min_height: px(0),
+            column_gap: px(6),
+            ..default()
+        })
+        .with_children(|p| {
+            let target = p
+                .spawn((
+                    LibraryScroll,
+                    ScrollArea,
+                    accessibility::named_node(accesskit::Role::GenericContainer, "Pattern library"),
+                    Node {
+                        flex_grow: 1.0,
+                        flex_basis: px(0),
+                        min_width: px(0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(10),
+                        overflow: Overflow::scroll_y(),
+                        ..default()
+                    },
+                ))
+                .with_children(|p| {
+                    p.spawn((
+                        Palette,
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(6),
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                    ));
+                })
+                .id();
+            p.spawn((
+                LibraryScrollbar,
+                Scrollbar::new(target, ControlOrientation::Vertical, 28.0),
+                Node {
+                    width: px(8),
+                    flex_shrink: 0.0,
+                    border_radius: BorderRadius::all(px(4)),
+                    ..default()
+                },
+                BackgroundColor(SURFACE),
+            ))
+            .with_children(|p| {
+                p.spawn((
+                    ScrollbarThumb {
+                        border_radius: BorderRadius::all(px(4)),
+                        ..default()
+                    },
+                    BackgroundColor(MUTED),
+                ));
+            });
+        });
+}
+
+pub(super) fn sync_scrollbar(
+    library: Query<&ComputedNode, With<LibraryScroll>>,
+    mut bars: Query<&mut Visibility, With<LibraryScrollbar>>,
+) {
+    let Ok(node) = library.single() else {
+        return;
+    };
+    for mut visibility in &mut bars {
+        *visibility = if node.content_size().y > node.size().y + 1.0 {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
 
 pub(super) fn search(parent: &mut ChildSpawnerCommands) {
-    parent.spawn(label("Search patterns", 12.0, MUTED));
+    parent.spawn((
+        controls::TallLabel::default(),
+        label("Search patterns", 12.0, MUTED),
+    ));
     let mut input = EditableText::new("");
     input.visible_lines = Some(1.0);
-    parent.spawn((
-        PatternSearch,
-        input,
-        TabIndex(0),
-        accessibility::named_node(accesskit::Role::TextInput, "Search patterns"),
-        Node {
-            width: percent(100),
-            min_height: px(38),
-            padding: UiRect::all(px(9)),
-            border: UiRect::all(px(1)),
-            border_radius: BorderRadius::all(px(6)),
-            flex_shrink: 0.0,
-            ..default()
-        },
-        TextFont {
-            font: UI_FONT.into(),
-            font_size: FontSize::Px(15.0),
-            ..default()
-        },
-        TextColor(INK),
-        TextCursorStyle {
-            color: ACCENT,
-            ..default()
-        },
-        BorderColor::all(LINE),
-        BackgroundColor(Color::srgb(0.025, 0.04, 0.055)),
-    ));
+    parent
+        .spawn((
+            PatternSearch,
+            input,
+            TabIndex(0),
+            accessibility::named_node(accesskit::Role::TextInput, "Search patterns"),
+            Node {
+                width: percent(100),
+                height: px(40),
+                overflow: Overflow::clip(),
+                padding: UiRect::all(px(9)),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(6)),
+                flex_shrink: 0.0,
+                ..default()
+            },
+            TextFont {
+                font: UI_FONT.into(),
+                font_size: FontSize::Px(15.0),
+                ..default()
+            },
+            TextColor(INK),
+            TextCursorStyle {
+                color: ACCENT,
+                ..default()
+            },
+            BorderColor::all(LINE),
+            BackgroundColor(Color::srgb(0.025, 0.04, 0.055)),
+        ))
+        .with_children(|p| {
+            p.spawn((
+                SearchPlaceholder,
+                label("Find a pattern…", 15.0, MUTED),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(9),
+                    top: px(9),
+                    ..default()
+                },
+            ));
+        });
     parent.spawn((
         SearchSummary,
+        controls::TallLabel::default(),
         label("", 12.0, MUTED),
         accessibility::feedback_node(),
     ));
@@ -61,7 +163,7 @@ pub(super) fn preview(parent: &mut ChildSpawnerCommands) {
                 display: Display::None,
                 flex_direction: FlexDirection::Column,
                 row_gap: px(8),
-                padding: UiRect::all(px(10)),
+                padding: UiRect::all(px(8)),
                 border: UiRect::all(px(1)),
                 border_radius: BorderRadius::all(px(8)),
                 flex_shrink: 0.0,
@@ -71,22 +173,35 @@ pub(super) fn preview(parent: &mut ChildSpawnerCommands) {
             BorderColor::all(LINE),
         ))
         .with_children(|p| {
-            p.spawn(label("STAMP PREVIEW", 11.0, MUTED));
-            p.spawn((
-                StampImage,
-                ImageNode::default(),
-                Node {
-                    width: px(88),
-                    height: px(88),
-                    ..default()
-                },
-                Pickable::IGNORE,
-            ));
-            p.spawn((
-                StampCaption,
-                label("", 13.0, INK),
-                accessibility::named_node(accesskit::Role::Label, ""),
-            ));
+            p.spawn(Node {
+                align_items: AlignItems::Center,
+                column_gap: px(8),
+                ..default()
+            })
+            .with_children(|p| {
+                p.spawn((
+                    StampImage,
+                    ImageNode::default(),
+                    Node {
+                        width: px(48),
+                        height: px(48),
+                        flex_shrink: 0.0,
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ));
+                p.spawn((
+                    StampCaption,
+                    label("", 12.0, INK),
+                    Node {
+                        min_width: px(0),
+                        flex_grow: 1.0,
+                        flex_basis: px(0),
+                        ..default()
+                    },
+                    accessibility::named_node(accesskit::Role::Label, ""),
+                ));
+            });
             p.spawn(row()).with_children(|p| {
                 button(p, "Rotate", Action::Rotate);
                 button(p, "Flip", Action::Flip);
@@ -98,11 +213,19 @@ fn matches(name: &str, query: &str) -> bool {
     name.to_lowercase().contains(&query.trim().to_lowercase())
 }
 
+type FilterEntry<'a> = (
+    &'a mut Node,
+    Option<&'a Action>,
+    Option<&'a PatternGroup>,
+    Has<SearchPlaceholder>,
+);
+
 pub(super) fn filter(
     sim: Res<Simulation>,
     search: Query<&EditableText, With<PatternSearch>>,
-    mut entries: Query<(&mut Node, Option<&Action>, Option<&PatternGroup>)>,
-    mut summary: Query<&mut Text, With<SearchSummary>>,
+    mut entries: Query<FilterEntry>,
+    mut summary: Query<(&mut Text, &mut controls::TallLabel), With<SearchSummary>>,
+    mut scroll: Query<&mut ScrollPosition, With<LibraryScroll>>,
     mut previous: Local<Option<(String, usize)>>,
 ) {
     let Ok(search) = search.single() else {
@@ -120,8 +243,10 @@ pub(super) fn filter(
     let visible: Vec<bool> = (0..count)
         .map(|i| matches(sim.app.pattern_name_at(i).unwrap_or(""), &query))
         .collect();
-    for (mut node, action, group) in &mut entries {
-        let show = if let Some(Action::Pattern(index)) = action {
+    for (mut node, action, group, placeholder) in &mut entries {
+        let show = if placeholder {
+            query.is_empty()
+        } else if let Some(Action::Pattern(index)) = action {
             visible.get(*index).copied().unwrap_or(false)
         } else if let Some(PatternGroup(imported)) = group {
             visible
@@ -134,7 +259,13 @@ pub(super) fn filter(
         node.display = if show { Display::Flex } else { Display::None };
     }
     let found = visible.iter().filter(|v| **v).count();
-    if let Ok(mut text) = summary.single_mut() {
+    // A new query should show its first match, even after browsing a long list.
+    for mut position in &mut scroll {
+        position.y = 0.0;
+    }
+    if let Ok((mut text, mut responsive)) = summary.single_mut() {
+        // Keep empty-search feedback visible even in the shortest windows.
+        responsive.always_show = found == 0;
         text.0 = if found == 0 {
             "No matches. Try another name or clear the search.".into()
         } else if query.trim().is_empty() {
@@ -163,14 +294,16 @@ pub(super) fn sync_preview(
         return;
     }
     *previous = Some(key);
-    let Ok(mut panel) = panel.single_mut() else {
-        return;
-    };
+    if let Ok(mut panel) = panel.single_mut() {
+        panel.display = if sim.app.has_selected_pattern() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
     let Some((cells, width, height)) = sim.app.selected_pattern_layout() else {
-        panel.display = Display::None;
         return;
     };
-    panel.display = Display::Flex;
     if let Ok(mut image) = image.single_mut() {
         let bitmap = thumbnail(&cells, width, height);
         if image.image == ImageNode::default().image {
@@ -184,12 +317,12 @@ pub(super) fn sync_preview(
     if let Ok(mut text) = caption.single_mut() {
         let (rotation, flipped) = sim.app.stamp_orientation();
         text.0 = format!(
-            "{}\n{} × {} · {}° · {}\nClick the board to place",
+            "{}\n{} × {} · {}°{}",
             sim.app.selected_pattern_name().unwrap_or("Pattern"),
             width,
             height,
             rotation as u32 * 90,
-            if flipped { "flipped" } else { "unflipped" }
+            if flipped { " · flipped" } else { "" }
         );
     }
 }
@@ -256,7 +389,15 @@ mod tests {
             .unwrap();
         let mut world = World::new();
         world.insert_resource(Simulation::new(app));
-        world.spawn((PatternSearch, EditableText::new("imported")));
+        let search = world
+            .spawn((PatternSearch, EditableText::new("imported")))
+            .id();
+        let summary = world
+            .spawn((SearchSummary, Text::new(""), controls::TallLabel::default()))
+            .id();
+        let scroll = world
+            .spawn((LibraryScroll, ScrollPosition(Vec2::new(0.0, 500.0))))
+            .id();
         let builtin = world.spawn((Node::default(), Action::Pattern(0))).id();
         // Imports follow the built-ins, however many files there are.
         let first_import = crate::patterns::Pattern::builtin_count();
@@ -265,12 +406,30 @@ mod tests {
             .id();
         let heading = world.spawn((Node::default(), PatternGroup(false))).id();
         world.run_system_once(filter).unwrap();
+        assert_eq!(world.get::<ScrollPosition>(scroll).unwrap().y, 0.0);
         assert_eq!(world.get::<Node>(builtin).unwrap().display, Display::None);
         assert_eq!(world.get::<Node>(heading).unwrap().display, Display::None);
         assert_eq!(world.get::<Node>(imported).unwrap().display, Display::Flex);
         assert_eq!(
             world.resource::<Simulation>().app.selected_pattern_index(),
             Some(first_import)
+        );
+        world
+            .entity_mut(search)
+            .insert(EditableText::new("no matching pattern"));
+        world.run_system_once(filter).unwrap();
+        assert!(
+            world
+                .get::<controls::TallLabel>(summary)
+                .unwrap()
+                .always_show
+        );
+        assert!(
+            world
+                .get::<Text>(summary)
+                .unwrap()
+                .0
+                .starts_with("No matches.")
         );
     }
 }

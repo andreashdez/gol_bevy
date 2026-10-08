@@ -7,31 +7,33 @@ The window has four parts: the toolbar at the top, the pattern palette on the le
 
 The toolbar has two rows.
 
-The top row opens the dialogs: **Import / Export**, **Settings**, and **Help**.
+The top row holds view controls and opens the dialogs:
 
-The bottom row holds playback and view controls:
-
-- **Play / Pause** and **Step**
-- **Undo** and **Redo**, disabled when there is nothing to undo or redo
-- the **speed slider**, labelled in generations per second (see [Playback and rules](simulation.qd#speed))
 - **Grid**, to show or hide cell lines
 - **Palette**, to show or hide the pattern palette
+- **Import / Export**, **Settings**, and **Help**
+
+The bottom row holds playback on the left and board edits on the right:
+
+- **Play / Pause** and **Step**
+- the **speed slider**, labelled in generations per second (see [Playback and rules](simulation.qd#speed))
+- **Randomize** and **Clear**
+- **Undo** and **Redo**, disabled when there is nothing to undo or redo
 
 Hover over or focus a button to see its shortcut.
 
 ## Pattern palette
 
-The palette holds the editing tools, the pattern library, and board actions, from top to bottom:
+The palette holds the editing tools and the pattern library, from top to bottom:
 
 - the **Draw**, **Erase**, and **Stamp** tools
-- a **search field** that filters patterns by name, ignoring case
 - a **stamp preview** of the selected pattern in its current orientation, with **Rotate** and **Flip** buttons, shown while a stamp is active
+- a **search field** that filters patterns by name, ignoring case
 - pattern **thumbnails**, with built-in and imported patterns in separate groups
-- board actions: **Randomize**, **Clear**, **Edges** (wrapping or fixed), and **Board size…**, which opens Settings
 
-Filtering the library keeps the current stamp selected, even if the filter hides it. The palette scrolls with the mouse wheel.
+Only the thumbnails scroll, with the mouse wheel or the scrollbar; the tools, stamp preview, and search stay in place. Filtering the library keeps the current stamp selected, even if the filter hides it, and scrolls back to the first match.
 
-Press .keybinding {H} to hide or show the palette. See [Drawing and stamps](editing.qd) for how the tools work.
+Press .keybinding {H} or click **Palette** to hide or show the palette. Hiding it gives the board the full width of the window. See [Drawing and stamps](editing.qd) for how the tools work.
 
 ## Board canvas
 
@@ -41,9 +43,9 @@ The board has its own canvas beside the palette and between the toolbar and stat
 |--------------------------------|-----------------------------------------------------------|
 | Zoom                           | Scroll over the canvas                                    |
 | Pan                            | .keybinding {W} .keybinding {A} .keybinding {S} .keybinding {D} or the arrow keys |
-| Fit the whole board            | .keybinding {V}                                           |
+| Fit the whole board            | .keybinding {V} or **Fit board** in the status bar        |
 
-The board is fitted into the canvas on startup, after a board size change, and when you press .keybinding {V}. When the window or layout changes, the view keeps its pan position and its zoom relative to the fitted view.
+The board is fitted into the canvas on startup, after a board size change, and when you press .keybinding {V} or click **Fit board**. When the window size changes or the palette is shown or hidden, the view keeps its pan position and its zoom relative to the fitted view.
 
 An empty board shows a short hint, which disappears once you place the first cells.
 
@@ -58,29 +60,17 @@ Press .keybinding {T} or click **Grid** to draw lines between cells. The grid is
 The status bar reads, for example:
 
 ```text
-RUNNING    /    GENERATION 1520    /    842 LIVING    /    B3/S23
+RUNNING   ·   Gen 1520   ·   842 alive   ·   B3/S23
 ```
 
-That is: whether playback is running or paused, the generation counter, the number of living cells, and the rule.
-
-## Layout presets
-
-Three layouts trade palette space for board space:
-
-| Preset      | Palette                     |
-|-------------|-----------------------------|
-| **Full**    | Wide palette                |
-| **Compact** | Narrower palette            |
-| **Minimal** | No palette                  |
-
-Choose one in **Settings**, or press .keybinding {F2} to cycle Full → Compact → Minimal. The preset is saved between runs.
+That is: whether playback is running or paused, the generation counter, the number of living cells, and the rule. In wider windows, the right side also shows the board size and edge mode, next to the **Fit board** button.
 
 ## Dialogs
 
 | Dialog              | Opens with                               | Contains                                                       |
 |---------------------|------------------------------------------|----------------------------------------------------------------|
 | **Import / Export** | the **Import / Export** button           | RLE import, and copying the board as RLE                       |
-| **Settings**        | the **Settings** button                  | board size, rule, layout, grid, diagnostics, generation reset  |
+| **Settings**        | the **Settings** button                  | board size, rule, grid, edges, diagnostics, generation reset   |
 | **Help**            | .keybinding {/} or the **Help** button   | a summary and the full list of shortcuts                       |
 | **Diagnostics**     | .keybinding {F3} or **Settings**         | live simulation statistics                                     |
 

@@ -2,14 +2,13 @@ use crate::{
     app::EditTool,
     canvas_view::{CanvasView, cursor_world},
     shared::{
-        BINDING_CLEAR, BINDING_CLEAR_STAMP, BINDING_CYCLE_LAYOUT, BINDING_FLIP_STAMP,
-        BINDING_PAN_DOWN, BINDING_PAN_LEFT, BINDING_PAN_RIGHT, BINDING_PAN_UP, BINDING_QUIT,
-        BINDING_RANDOMIZE, BINDING_RESET_CAMERA, BINDING_RESET_EPOCH, BINDING_ROTATE_STAMP,
-        BINDING_RUN_PAUSE, BINDING_SLOW_DOWN, BINDING_SPEED_UP, BINDING_STEP,
-        BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_CONTROL_DECK, BINDING_TOGGLE_DIAGNOSTICS,
-        BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, CAMERA_PAN_SPEED, CAMERA_ZOOM_MAX,
-        CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay, GridOverlay, MainCamera,
-        PATTERN_SHORTCUTS, Simulation, UiLayout, UpdateSet, world_to_cell,
+        BINDING_CLEAR, BINDING_CLEAR_STAMP, BINDING_FLIP_STAMP, BINDING_PAN_DOWN, BINDING_PAN_LEFT,
+        BINDING_PAN_RIGHT, BINDING_PAN_UP, BINDING_QUIT, BINDING_RANDOMIZE, BINDING_RESET_CAMERA,
+        BINDING_RESET_EPOCH, BINDING_ROTATE_STAMP, BINDING_RUN_PAUSE, BINDING_SLOW_DOWN,
+        BINDING_SPEED_UP, BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_CONTROL_DECK,
+        BINDING_TOGGLE_DIAGNOSTICS, BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, CAMERA_PAN_SPEED,
+        CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay, GridOverlay,
+        MainCamera, PATTERN_SHORTCUTS, Simulation, UiLayout, UpdateSet, world_to_cell,
     },
     ui_input::{UiInputCapture, canvas_keyboard_available},
 };
@@ -25,12 +24,6 @@ impl Plugin for InputPlugin {
             UpdateSet::Input
                 .after(bevy::camera::CameraUpdateSystems)
                 .after(bevy::transform::TransformSystems::Propagate),
-        )
-        .add_systems(
-            PostUpdate,
-            handle_layout_cycle
-                .run_if(canvas_keyboard_available)
-                .in_set(UpdateSet::Input),
         )
         .add_systems(
             PostUpdate,
@@ -58,12 +51,6 @@ impl Plugin for InputPlugin {
                 .run_if(canvas_keyboard_available)
                 .in_set(UpdateSet::Camera),
         );
-    }
-}
-
-fn handle_layout_cycle(keys: Res<ButtonInput<KeyCode>>, mut ui_layout: ResMut<UiLayout>) {
-    if BINDING_CYCLE_LAYOUT.just_pressed(&keys) {
-        ui_layout.cycle();
     }
 }
 
@@ -290,15 +277,8 @@ fn handle_camera_reset(
         return;
     }
 
-    let Ok((mut transform, mut projection)) = camera_q.single_mut() else {
-        return;
-    };
-
-    transform.translation.x = 0.0;
-    transform.translation.y = 0.0;
-
-    if let Projection::Orthographic(ref mut ortho) = *projection {
-        ortho.scale = view.fit_scale;
+    if let Ok((mut transform, mut projection)) = camera_q.single_mut() {
+        view.fit_camera(&mut transform, &mut projection);
     }
 }
 

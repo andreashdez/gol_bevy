@@ -49,7 +49,6 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 | .keybinding {V}                                | Fit the whole board in view     |
 | .keybinding {T}                                | Toggle the grid                 |
 | .keybinding {H}                                | Hide or show the pattern palette |
-| .keybinding {F2}                               | Cycle layout: Full → Compact → Minimal |
 | .keybinding {F3}                               | Toggle diagnostics              |
 | .keybinding {/}                                | Toggle help                     |
 | .keybinding {Q} or .keybinding {Esc}           | Quit                            |

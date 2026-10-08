@@ -63,7 +63,7 @@ Changing the rule is an undoable edit. Undo brings back the previous rule togeth
 
 ## Edges
 
-The board is finite, so its edges need a rule of their own. Press .keybinding {M} or click **Edges** in the palette to switch between the two modes. The button shows the current one.
+The board is finite, so its edges need a rule of their own. Press .keybinding {M} or click **Edges** in **Settings** to switch between the two modes. The button shows the current one.
 
 | Mode      | Behaviour                                                                                  |
 |-----------|--------------------------------------------------------------------------------------------|

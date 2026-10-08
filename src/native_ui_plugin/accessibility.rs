@@ -91,8 +91,8 @@ fn sync_accessibility(
     mut focus: ResMut<InputFocus>,
     mut controls: Query<AccessibleControl>,
 ) {
-    // A layout change can hide the button that opened Settings. Restore focus
-    // to its visible equivalent, or return keyboard control to the canvas.
+    // Hiding the palette can hide the focused button. Restore focus to its
+    // visible equivalent, or return keyboard control to the canvas.
     if tree.mode.dialog.is_none()
         && let Some(entity) = focus.get()
         && let Ok((_, _, _, _, _, action, disabled, _, _)) = controls.get(entity)

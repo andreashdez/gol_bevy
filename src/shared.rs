@@ -140,11 +140,6 @@ pub const BINDING_TOGGLE_BOUNDARY_MODE: KeyBinding = KeyBinding {
     label: "m",
     action: "toggle boundary mode",
 };
-pub const BINDING_CYCLE_LAYOUT: KeyBinding = KeyBinding {
-    keys: &[KeyCode::F2],
-    label: "F2",
-    action: "cycle layout preset",
-};
 pub const BINDING_TOGGLE_CONTROL_DECK: KeyBinding = KeyBinding {
     keys: &[KeyCode::KeyH],
     label: "h",
@@ -168,7 +163,6 @@ pub const BINDING_TOGGLE_HELP: KeyBinding = KeyBinding {
 
 const UI_BINDINGS: &[KeyBinding] = &[
     BINDING_TOGGLE_BOUNDARY_MODE,
-    BINDING_CYCLE_LAYOUT,
     BINDING_TOGGLE_CONTROL_DECK,
     BINDING_TOGGLE_DIAGNOSTICS,
     BINDING_TOGGLE_GRID,
@@ -256,103 +250,26 @@ fn build_controls_text() -> String {
     out.push_str("\n\n");
     out.push_str("Pattern palette:\n");
     out.push_str("- Use Import / Export to paste RLE as a stamp or copy the board as RLE\n");
-    out.push_str("- Select a pattern thumbnail, then click the board to place it\n\n");
-    out.push_str("Layout presets:\n");
-    out.push_str("- Choose Full, Compact, or Minimal from Settings\n");
-    out.push_str("- Press F2 to cycle Full -> Compact -> Minimal\n");
-    out.push_str("- Layout preset is saved between runs");
+    out.push_str("- Select a pattern thumbnail, then click the board to place it");
     out
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub enum UiLayoutPreset {
-    #[default]
-    Full,
-    Compact,
-    Minimal,
-}
-
-impl UiLayoutPreset {
-    pub const ALL: [Self; 3] = [Self::Full, Self::Compact, Self::Minimal];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Full => "Full",
-            Self::Compact => "Compact",
-            Self::Minimal => "Minimal",
-        }
-    }
-
-    pub fn side_panel_width(self) -> f32 {
-        match self {
-            Self::Full => 350.0,
-            Self::Compact => 280.0,
-            Self::Minimal => 0.0,
-        }
-    }
-
-    pub fn uses_side_panel(self) -> bool {
-        !matches!(self, Self::Minimal)
-    }
-
-    pub fn show_pattern_lab(self) -> bool {
-        matches!(self, Self::Full | Self::Compact)
-    }
-
-    pub fn next(self) -> Self {
-        match self {
-            Self::Full => Self::Compact,
-            Self::Compact => Self::Minimal,
-            Self::Minimal => Self::Full,
-        }
-    }
-
-    pub fn as_storage_str(self) -> &'static str {
-        match self {
-            Self::Full => "full",
-            Self::Compact => "compact",
-            Self::Minimal => "minimal",
-        }
-    }
-
-    pub fn from_storage_str(value: &str) -> Option<Self> {
-        match value {
-            "full" => Some(Self::Full),
-            "compact" => Some(Self::Compact),
-            "minimal" => Some(Self::Minimal),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Resource)]
 pub struct UiLayout {
-    pub preset: UiLayoutPreset,
     pub control_deck_visible: bool,
 }
 
 impl Default for UiLayout {
     fn default() -> Self {
         Self {
-            preset: UiLayoutPreset::default(),
             control_deck_visible: true,
         }
     }
 }
 
 impl UiLayout {
-    pub fn cycle(&mut self) {
-        self.preset = self.preset.next();
-    }
-
     pub fn toggle_control_deck(&mut self) {
-        if self.preset.uses_side_panel() {
-            self.control_deck_visible = !self.control_deck_visible;
-        }
-    }
-
-    pub fn is_control_deck_visible(&self) -> bool {
-        self.preset.uses_side_panel() && self.control_deck_visible
+        self.control_deck_visible = !self.control_deck_visible;
     }
 }
 

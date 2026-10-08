@@ -15,7 +15,7 @@
 - **Boards up to 2048 × 2048**, independent of the window size, with zoom and pan.
 - **RLE import and export**, compatible with other Life tools such as [Golly](https://golly.sourceforge.io).
 - **Keyboard and screen reader friendly**: Tab navigation, focus handling, and accessible names on every control.
-- **Settings that persist**: layout, board size, rule, edges, speed, and grid are restored on the next launch.
+- **Settings that persist**: palette visibility, board size, rule, edges, speed, and grid are restored on the next launch.
 
 !(100%)[gol-bevy demo](media/demo.gif)
 
@@ -32,4 +32,4 @@
 
 ## License
 
-gol-bevy is distributed under the MIT License. The bundled Ubuntu Light font is distributed under the Ubuntu Font Licence; see `assets/fonts/` in the repository.
+gol-bevy is distributed under the MIT License. The bundled IBM Plex Sans font is distributed under the SIL Open Font License 1.1; see `assets/fonts/` in the repository.

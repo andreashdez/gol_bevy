@@ -32,7 +32,7 @@ const INK: Color = Color::srgb(0.88, 0.93, 0.94);
 const MUTED: Color = Color::srgb(0.52, 0.63, 0.68);
 const ACCENT: Color = Color::srgb(0.22, 0.85, 0.56);
 const TOP: f32 = 112.0;
-const BOTTOM: f32 = 44.0;
+const BOTTOM: f32 = 48.0;
 const SIDE: f32 = 256.0;
 const UI_FONT: Handle<Font> = bevy::asset::uuid_handle!("67dfd7f0-b829-4a23-a5ae-3e416c5aba2d");
 
@@ -51,8 +51,13 @@ impl Plugin for NativeUiPlugin {
             .add_plugins(TabNavigationPlugin)
             .add_observer(activate)
             .add_observer(controls::speed_changed)
+            .add_observer(controls::fit_board)
             .add_plugins(dialogs::NativeDialogsPlugin)
             .add_plugins(accessibility::NativeAccessibilityPlugin)
+            .add_systems(
+                PostUpdate,
+                palette::sync_scrollbar.after(bevy::ui::UiSystems::Layout),
+            )
             .add_systems(Startup, setup.after(StartupSet::BuildWorld))
             .add_systems(
                 Update,
@@ -83,6 +88,7 @@ struct Palette;
 #[derive(Component)]
 enum Readout {
     Status,
+    Board,
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
@@ -92,6 +98,7 @@ enum Action {
     Undo,
     Redo,
     Grid,
+    FitBoard,
     Sidebar,
     Import,
     Help,
@@ -105,7 +112,6 @@ enum Action {
     RulePreset(usize),
     ApplyRule,
     ExportRle,
-    Layout(crate::shared::UiLayoutPreset),
     ResetEpoch,
     Tool(EditTool),
     Pattern(usize),
@@ -146,6 +152,11 @@ fn button(parent: &mut ChildSpawnerCommands, text: &str, action: Action) -> Enti
         .spawn((
             Node {
                 padding: UiRect::axes(px(12), px(9)),
+                min_width: if action == Action::Play {
+                    px(72)
+                } else {
+                    px(0)
+                },
                 border: UiRect::all(px(1)),
                 border_radius: BorderRadius::all(px(7)),
                 align_items: AlignItems::Center,
@@ -173,7 +184,7 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
     fonts
         .insert(
             UI_FONT.id(),
-            Font::from_bytes(include_bytes!("../assets/fonts/Ubuntu-Light.ttf").to_vec()),
+            Font::from_bytes(include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf").to_vec()),
         )
         .expect("static UI font handle is valid");
     commands
@@ -189,9 +200,11 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
                 padding: UiRect::all(px(16)),
                 flex_direction: FlexDirection::Column,
                 row_gap: px(10),
+                border: UiRect::bottom(px(1)),
                 ..default()
             },
             BackgroundColor(PANEL),
+            BorderColor::all(LINE),
             GlobalZIndex(10),
         ))
         .with_children(|p| {
@@ -202,6 +215,8 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
                     flex_grow: 1.0,
                     ..default()
                 });
+                button(p, "Grid", Action::Grid);
+                button(p, "Palette", Action::Sidebar);
                 button(p, "Import / Export", Action::Import);
                 button(p, "Settings", Action::Settings);
                 button(p, "Help", Action::Help);
@@ -209,15 +224,16 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
             p.spawn(row()).with_children(|p| {
                 button(p, "Play", Action::Play);
                 button(p, "Step", Action::Step);
-                button(p, "Undo", Action::Undo);
-                button(p, "Redo", Action::Redo);
                 controls::speed_slider(p);
                 p.spawn(Node {
                     flex_grow: 1.0,
                     ..default()
                 });
-                button(p, "Grid", Action::Grid);
-                button(p, "Palette", Action::Sidebar);
+                // Board edits sit together, with Undo next to Clear.
+                button(p, "Randomize", Action::Randomize);
+                button(p, "Clear", Action::Clear);
+                button(p, "Undo", Action::Undo);
+                button(p, "Redo", Action::Redo);
             });
         });
     commands
@@ -225,17 +241,16 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
             NativeRoot,
             Sidebar,
             TabGroup::default(),
-            ScrollArea,
             Node {
                 position_type: PositionType::Absolute,
                 left: px(16),
                 top: px(TOP + 16.0),
                 bottom: px(BOTTOM + 16.0),
                 width: px(SIDE),
-                padding: UiRect::all(px(16)),
+                padding: UiRect::all(px(10)),
                 flex_direction: FlexDirection::Column,
-                row_gap: px(14),
-                overflow: Overflow::scroll_y(),
+                row_gap: px(8),
+                overflow: Overflow::clip(),
                 border: UiRect::all(px(1)),
                 border_radius: BorderRadius::all(px(12)),
                 ..default()
@@ -245,73 +260,45 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
             GlobalZIndex(10),
         ))
         .with_children(|p| {
-            p.spawn(label("WORKSPACE", 12.0, MUTED));
             p.spawn(row()).with_children(|p| {
                 button(p, "Draw", Action::Tool(EditTool::Draw));
                 button(p, "Erase", Action::Tool(EditTool::Erase));
                 button(p, "Stamp", Action::Tool(EditTool::Stamp));
             });
-            p.spawn(label("Patterns", 21.0, INK));
-            palette::search(p);
             palette::preview(p);
-            p.spawn((
-                Palette,
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(8),
-                    flex_shrink: 0.0,
-                    ..default()
-                },
-            ));
-            p.spawn((
-                Node {
-                    height: px(1),
-                    flex_shrink: 0.0,
-                    ..default()
-                },
-                BackgroundColor(LINE),
-            ));
-            p.spawn(label("Board", 21.0, INK));
-            p.spawn(row()).with_children(|p| {
-                button(p, "Randomize", Action::Randomize);
-                button(p, "Clear", Action::Clear);
-            });
-            button(p, "Edges", Action::Boundary);
-            button(p, "Board size…", Action::Settings);
-            p.spawn(label(
-                "Space to play · U to undo\nV fits the board.\nScroll for more controls.",
-                12.0,
-                MUTED,
-            ));
+            palette::search(p);
+            palette::library(p);
         });
     commands
         .spawn((
             NativeRoot,
+            TabGroup::default(),
             Node {
                 position_type: PositionType::Absolute,
                 left: px(0),
                 right: px(0),
                 bottom: px(0),
                 height: px(BOTTOM),
-                padding: UiRect::axes(px(18), px(10)),
+                padding: UiRect::axes(px(16), px(4)),
                 align_items: AlignItems::Center,
+                column_gap: px(16),
+                border: UiRect::top(px(1)),
                 ..default()
             },
             BackgroundColor(PANEL),
+            BorderColor::all(LINE),
             GlobalZIndex(10),
         ))
         .with_children(|p| {
-            p.spawn((label("", 13.0, MUTED), Readout::Status));
+            p.spawn((label("", 13.0, INK), Readout::Status));
+            p.spawn(Node {
+                flex_grow: 1.0,
+                ..default()
+            });
+            p.spawn((controls::WideLabel, label("", 12.0, MUTED), Readout::Board));
+            button(p, "Fit board", Action::FitBoard);
         });
     controls::overlays(&mut commands);
-}
-
-fn sidebar_width(layout: &UiLayout) -> f32 {
-    if layout.preset == crate::shared::UiLayoutPreset::Full {
-        300.0
-    } else {
-        SIDE
-    }
 }
 
 /// Logical rectangles shared by layout and input routing; gaps remain canvas.
@@ -320,11 +307,11 @@ pub fn panel_rects(size: Vec2, layout: &UiLayout) -> Vec<Rect> {
         Rect::new(0.0, 0.0, size.x, TOP),
         Rect::new(0.0, (size.y - BOTTOM).max(0.0), size.x, size.y),
     ];
-    if layout.is_control_deck_visible() && size.y > TOP + BOTTOM + 32.0 {
+    if layout.control_deck_visible && size.y > TOP + BOTTOM + 32.0 {
         rects.push(Rect::new(
             16.0,
             TOP + 16.0,
-            sidebar_width(layout) + 16.0,
+            SIDE + 16.0,
             size.y - BOTTOM - 16.0,
         ));
     }
@@ -333,8 +320,8 @@ pub fn panel_rects(size: Vec2, layout: &UiLayout) -> Vec<Rect> {
 
 /// The board is clipped to this workspace; the UI camera still covers the window.
 pub fn canvas_rect(size: Vec2, layout: &UiLayout) -> Rect {
-    let left = if layout.is_control_deck_visible() {
-        sidebar_width(layout) + 32.0
+    let left = if layout.control_deck_visible {
+        SIDE + 32.0
     } else {
         16.0
     };
@@ -370,6 +357,7 @@ fn activate(
     };
     match action {
         Action::Import
+        | Action::FitBoard
         | Action::Settings
         | Action::Diagnostics
         | Action::Help
@@ -379,17 +367,9 @@ fn activate(
         | Action::BoardPreset(_)
         | Action::RulePreset(_)
         | Action::ApplyRule
-        | Action::ExportRle
-        | Action::Layout(_) => {}
+        | Action::ExportRle => {}
         Action::Grid => grid.enabled = !grid.enabled,
-        Action::Sidebar => {
-            if !layout.preset.uses_side_panel() {
-                layout.preset = crate::shared::UiLayoutPreset::Compact;
-                layout.control_deck_visible = true;
-            } else {
-                layout.toggle_control_deck();
-            }
-        }
+        Action::Sidebar => layout.toggle_control_deck(),
         _ => apply_action(*action, &mut sim.app),
     }
 }
@@ -453,10 +433,7 @@ fn sync(
         focus,
     } = view;
     for (mut node, sidebar) in &mut roots {
-        if sidebar {
-            node.width = px(sidebar_width(&layout));
-        }
-        let display = if !sidebar || layout.is_control_deck_visible() {
+        let display = if !sidebar || layout.control_deck_visible {
             Display::Flex
         } else {
             Display::None
@@ -506,17 +483,12 @@ fn sync(
                     && sim.app.selected_pattern_index() == Some(*index)
             }
             Action::Grid => grid.enabled,
-            Action::Sidebar => layout.is_control_deck_visible(),
-            Action::Layout(preset) => layout.preset == *preset,
+            Action::Sidebar => layout.control_deck_visible,
             _ => false,
         };
         if matches!(
             action,
-            Action::Tool(_)
-                | Action::Pattern(_)
-                | Action::Grid
-                | Action::Sidebar
-                | Action::Layout(_)
+            Action::Tool(_) | Action::Pattern(_) | Action::Grid | Action::Sidebar
         ) {
             accessible.set_toggled(if selected {
                 accesskit::Toggled::True
@@ -575,7 +547,7 @@ fn sync(
     for (mut text, _, readout) in &mut texts {
         let value = match readout {
             Some(Readout::Status) => format!(
-                "{}    /    GENERATION {}    /    {} LIVING    /    {}   ",
+                "{}   ·   Gen {}   ·   {} alive   ·   {}",
                 if sim.app.is_running() {
                     "RUNNING"
                 } else {
@@ -584,6 +556,12 @@ fn sync(
                 sim.app.epoch,
                 sim.app.board.live_cells_count(),
                 sim.app.rule_label()
+            ),
+            Some(Readout::Board) => format!(
+                "{} × {} cells   ·   {} edges",
+                sim.app.board.size().0,
+                sim.app.board.size().1,
+                sim.app.boundary_mode_label()
             ),
             None => continue,
         };
@@ -633,9 +611,9 @@ fn sync_palette(
                     BorderColor::all(LINE),
                     Node {
                         width: percent(100),
-                        min_height: px(78),
-                        padding: UiRect::all(px(10)),
-                        column_gap: px(12),
+                        min_height: px(66),
+                        padding: UiRect::all(px(8)),
+                        column_gap: px(10),
                         align_items: AlignItems::Center,
                         border: UiRect::all(px(1)),
                         border_radius: BorderRadius::all(px(8)),
@@ -647,8 +625,8 @@ fn sync_palette(
                     p.spawn((
                         ImageNode::new(preview),
                         Node {
-                            width: px(52),
-                            height: px(52),
+                            width: px(44),
+                            height: px(44),
                             flex_shrink: 0.0,
                             ..default()
                         },
@@ -763,7 +741,6 @@ mod tests {
                 size,
                 &UiLayout {
                     control_deck_visible: sidebar,
-                    ..default()
                 },
             )
             .iter()

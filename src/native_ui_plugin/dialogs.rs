@@ -4,7 +4,7 @@ use crate::{
     board::{Rule, frontier_dense_threshold_percent_for_diagnostics},
     shared::{
         BOARD_SIZE_MAX, BOARD_SIZE_MIN, BOARD_SIZE_PRESETS, BoardSettings, CONTROLS_TEXT,
-        DiagnosticsOverlay, UiLayoutPreset,
+        DiagnosticsOverlay,
     },
 };
 use bevy::{
@@ -99,7 +99,6 @@ pub(super) struct DialogState<'w> {
     sim: ResMut<'w, Simulation>,
     diagnostics: ResMut<'w, DiagnosticsOverlay>,
     board: ResMut<'w, BoardSettings>,
-    layout: ResMut<'w, UiLayout>,
     focus: ResMut<'w, InputFocus>,
     /// Absent in tests, which must not touch the system clipboard.
     clipboard: Option<ResMut<'w, Clipboard>>,
@@ -252,10 +251,6 @@ fn dialog_action(
             }
         },
         Action::ExportRle => export_rle(&mut state),
-        Action::Layout(preset) => {
-            state.layout.preset = *preset;
-            state.layout.control_deck_visible = true;
-        }
         _ => {}
     }
 }
@@ -477,8 +472,12 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         p.spawn(row()).with_children(|p| {
                             for (size, _) in BOARD_SIZE_PRESETS { button(p, &format!("{size}²"), Action::BoardPreset(size)); }
                         });
-                        field(p, "Width (cells)", &drafts.width, Field::Width, false);
-                        field(p, "Height (cells)", &drafts.height, Field::Height, false);
+                        p.spawn(Node { column_gap: px(12), flex_shrink: 0.0, ..default() }).with_children(|p| {
+                            for (title, value, kind) in [("Width (cells)", &drafts.width, Field::Width), ("Height (cells)", &drafts.height, Field::Height)] {
+                                p.spawn(Node { flex_direction: FlexDirection::Column, row_gap: px(12), flex_grow: 1.0, flex_basis: px(0), min_width: px(0), ..default() })
+                                    .with_children(|p| field(p, title, value, kind, false));
+                            }
+                        });
                         button(p, "Apply board size", Action::ResizeBoard);
                         p.spawn(label("Rule", 19.0, INK));
                         p.spawn(label("Neighbour counts that give birth (B) and let a cell survive (S). Changing the rule can be undone.", 14.0, MUTED));
@@ -487,12 +486,9 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         });
                         field(p, "Rulestring", &drafts.rule, Field::Rule, false);
                         button(p, "Apply rule", Action::ApplyRule);
-                        p.spawn(label("Layout", 19.0, INK));
-                        p.spawn(row()).with_children(|p| {
-                            for preset in UiLayoutPreset::ALL { button(p, preset.label(), Action::Layout(preset)); }
-                        });
                         p.spawn(row()).with_children(|p| {
                             button(p, "Grid", Action::Grid);
+                            button(p, "Edges", Action::Boundary);
                             button(p, "Diagnostics", Action::Diagnostics);
                         });
                         button(p, "Reset generation counter", Action::ResetEpoch);
@@ -529,7 +525,6 @@ mod tests {
         world.init_resource::<crate::ui_input::UiInputCapture>();
         world.insert_resource(Simulation::new(GolApp::new(32, 32)));
         world.insert_resource(BoardSettings { cols: 32, rows: 32 });
-        world.insert_resource(UiLayout::default());
         world.insert_resource(DiagnosticsOverlay { enabled: false });
         world.insert_resource(InputFocus::default());
         world.insert_resource(ButtonInput::<KeyCode>::default());

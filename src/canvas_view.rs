@@ -14,6 +14,17 @@ pub struct CanvasView {
     board: Option<(usize, usize)>,
 }
 
+impl CanvasView {
+    /// Centres the board and zooms so all of it fits the canvas.
+    pub fn fit_camera(&self, transform: &mut Transform, projection: &mut Projection) {
+        transform.translation.x = 0.0;
+        transform.translation.y = 0.0;
+        if let Projection::Orthographic(ortho) = projection {
+            ortho.scale = self.fit_scale;
+        }
+    }
+}
+
 pub struct CanvasViewPlugin;
 impl Plugin for CanvasViewPlugin {
     fn build(&self, app: &mut App) {
@@ -115,17 +126,12 @@ mod tests {
     };
 
     #[test]
-    fn all_layouts_fit_the_largest_board_at_the_minimum_window_size() {
-        use crate::shared::{BOARD_SIZE_MAX, CELL_SIZE, UiLayoutPreset};
+    fn the_largest_board_fits_at_the_minimum_window_size_with_or_without_the_palette() {
+        use crate::shared::{BOARD_SIZE_MAX, CELL_SIZE};
         let size = Vec2::new(680.0, 420.0);
-        for preset in [
-            UiLayoutPreset::Full,
-            UiLayoutPreset::Compact,
-            UiLayoutPreset::Minimal,
-        ] {
+        for control_deck_visible in [true, false] {
             let layout = UiLayout {
-                preset,
-                control_deck_visible: true,
+                control_deck_visible,
             };
             let rect = canvas_rect(size, &layout);
             let fit = camera_scale_to_fit_board(rect.size(), BOARD_SIZE_MAX, BOARD_SIZE_MAX);

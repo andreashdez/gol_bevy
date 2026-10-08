@@ -29,9 +29,11 @@ cargo run
 The interface uses native Bevy UI throughout: playback controls, a searchable pattern
 palette, editing tools, live status, and import/settings/help/diagnostics dialogs.
 
-The native palette scrolls with the mouse wheel; scrolling over the canvas zooms it.
+The pattern library scrolls with the mouse wheel or its scrollbar; editing tools, the
+stamp preview with its rotate/flip controls, and search stay visible while browsing. Scrolling
+over the canvas zooms it. Randomize and Clear are always available in the toolbar.
 The board has its own canvas beside the palette and between the toolbar and status
-bar. Startup, board-size changes, and **V** fit the entire board into that space.
+bar. Startup, board-size changes, **Fit board**, and **V** fit the entire board into that space.
 Window and layout changes retain the pan position and zoom relative to the fitted
 view. Drawing and stamp previews stay inside the canvas, including on Retina displays.
 Search patterns by name; builtin and imported patterns have separate groups. The
@@ -54,25 +56,24 @@ to accessibility tools, buttons expose their actions and selected states, and in
 validation messages use polite live announcements. Editors support platform clipboard
 shortcuts (Cmd on macOS, Ctrl elsewhere) and Shift+Arrow selection.
 
-Open **Settings** or **Board size…** to choose a preset or enter dimensions, then
-apply the size. Invalid values are rejected with an inline message. Full uses a
-wider palette, Compact a narrower one, and Minimal hides it. Import drafts remain
-available for the current session.
+Open **Settings** to choose a board size preset or enter dimensions, then
+apply the size. Invalid values are rejected with an inline message. Import drafts
+remain available for the current session.
 
 The rule is chosen in Settings as well: pick Life, HighLife, Day & Night, or Seeds, or
 type any rulestring in B/S notation (`B36/S23`, or the older `23/36`). Changing the
 rule is an undoable edit.
 
-Layout, board size, rule, boundary mode, speed, and the grid are saved between runs
-in `ui_layout.toml`, in a `gol-bevy` folder in the platform's settings location:
+Palette visibility, board size, rule, boundary mode, speed, and the grid are saved between runs
+in `settings.toml`, in a `gol-bevy` folder in the platform's settings location:
 
 - Linux: `$XDG_CONFIG_HOME`, or `~/.config` if that is unset
 - macOS: `~/Library/Application Support`
 - Windows: `%APPDATA%`
 
-`GOL_BEVY_CONFIG_DIR` overrides the folder on every platform. Earlier versions used
-`~/.config/gol-bevy` everywhere; settings found there are read until the first save
-writes them to the new folder, and the old file is left alone. Entries that are
+`GOL_BEVY_CONFIG_DIR` overrides the folder on every platform. Earlier versions saved
+`ui_layout.toml`, at first in `~/.config/gol-bevy` everywhere; an old file is read
+until the first save writes `settings.toml`, and is left alone. Entries that are
 missing or unreadable keep their defaults.
 
 **Import / Export** also copies the board to the clipboard as RLE: the live cells,
@@ -105,7 +106,6 @@ z: rotate stamp
 f: flip stamp horizontally
 c: clear active stamp
 m: toggle boundary mode
-F2: cycle layout preset
 h: hide/show pattern sidebar
 F3: toggle diagnostics
 t: toggle grid
@@ -123,16 +123,11 @@ q / Esc: quit
 Pattern palette:
 - Use Import / Export to paste RLE as a stamp or copy the board as RLE
 - Select a pattern thumbnail, then click the board to place it
-
-Layout presets:
-- Choose Full, Compact, or Minimal from Settings
-- Press F2 to cycle Full -> Compact -> Minimal
-- Layout preset is saved between runs
 ```
 
 Board size is set in Settings: pick a preset (128², 256², 512², 1024²) or type exact dimensions, from 8 up to 2048 per side. The choice is saved between runs. Resizing the board clears undo history, because old snapshots no longer fit; resizing the window does not.
 
-The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools share a visual pattern palette; rotate and flip controls appear for stamps. Use Palette to show or hide the editing tools and board actions. Grid is available in the toolbar and Settings; diagnostics open from Settings or F3 and start hidden.
+The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools share a visual pattern palette; rotate and flip controls appear for stamps. Use Palette to show or hide the editing tools and library. Grid is available in the toolbar and Settings; boundary mode is in Settings. The status bar shows the generation, population, and rule, plus board dimensions and boundary mode when space allows. Diagnostics open from Settings or F3 and start hidden.
 
 Undo restores the board, generation, and rule before drawing, erasing, placing a stamp, randomizing, clearing, changing the rule, or importing a pattern that changes the rule, and pauses playback. Redo reapplies an undone edit, and making a new edit discards the redo chain. Each drag is one edit. History retains up to 32 edits within an approximate 16 MiB budget (with at least one edit), and clears when the board is resized. Imported patterns remain available for the current session.
 
@@ -144,7 +139,7 @@ Runtime flow from `src/main.rs`:
 main
   -> DefaultPlugins + resources
   -> RenderPlugin (world setup, board texture/grid/wall/preview rendering)
-  -> SettingsPlugin (layout, board size, rule, boundary, speed, and grid persistence)
+  -> SettingsPlugin (palette visibility, board size, rule, boundary, speed, and grid persistence)
   -> UiInputPlugin (UI regions, modal capture, and keyboard focus)
   -> CanvasViewPlugin (canvas viewport and board framing)
   -> NativeUiPlugin (native toolbar + palette + import/settings/help/diagnostics dialogs)

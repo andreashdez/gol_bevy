@@ -13,6 +13,10 @@ use bevy::{
 pub(super) struct Tooltip(pub String);
 #[derive(Component)]
 pub(super) struct WideLabel;
+#[derive(Component, Default)]
+pub(super) struct TallLabel {
+    pub always_show: bool,
+}
 #[derive(Component)]
 pub(super) struct SpeedSlider;
 #[derive(Component)]
@@ -58,6 +62,7 @@ pub(super) fn hint(action: Action) -> &'static str {
             }
         }
         Action::Grid => "Show / hide the grid · T",
+        Action::FitBoard => "Fit the whole board in the canvas · V",
         Action::Sidebar => "Show / hide the palette · H",
         Action::Help => "Controls and tips · /",
         Action::Diagnostics => "Simulation diagnostics · F3",
@@ -70,12 +75,26 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::Tool(EditTool::Erase) => "Erase cells · right-click also erases",
         Action::Tool(EditTool::Stamp) => "Place the selected pattern on the board",
         Action::Import => "Import RLE into your library, or copy the board as RLE",
-        Action::Settings => "Board dimensions, rule, and workspace layout",
+        Action::Settings => "Board size, rule, grid, and edges",
         Action::RulePreset(_) => "Switch the board to this rule · undo with U",
         Action::ApplyRule => "Use the rulestring above, written in B/S notation",
         Action::ExportRle => "Copy the live cells to the clipboard as RLE",
         Action::CloseDialog => "Close this dialog · Escape",
         _ => "",
+    }
+}
+
+pub(super) fn fit_board(
+    event: On<Activate>,
+    actions: Query<&Action>,
+    view: Res<crate::canvas_view::CanvasView>,
+    mut cameras: Query<(&mut Transform, &mut Projection), With<crate::shared::MainCamera>>,
+) {
+    if !matches!(actions.get(event.entity), Ok(Action::FitBoard)) {
+        return;
+    }
+    if let Ok((mut transform, mut projection)) = cameras.single_mut() {
+        view.fit_camera(&mut transform, &mut projection);
     }
 }
 
@@ -278,13 +297,20 @@ pub(super) fn overlays(commands: &mut Commands) {
     }
 }
 
+type OverlayNode<'a> = (
+    &'a mut Node,
+    Option<&'a mut Overlay>,
+    Has<WideLabel>,
+    Option<&'a TallLabel>,
+);
+
 pub(super) fn sync_overlays(
     sim: Res<Simulation>,
     view: ViewState,
     windows: Query<&Window, With<PrimaryWindow>>,
     time: Res<Time>,
     mut hints: Query<(Entity, &Tooltip, &Hovered, &mut AccessibilityNode)>,
-    mut nodes: Query<(&mut Node, Option<&mut Overlay>, Has<WideLabel>)>,
+    mut nodes: Query<OverlayNode>,
     mut texts: Query<(&mut Text, &OverlayText)>,
 ) {
     let Ok(window) = windows.single() else {
@@ -306,9 +332,16 @@ pub(super) fn sync_overlays(
     }
     let candidate = hovered.or(focused);
     let canvas = canvas_rect(window.size(), &view.layout);
-    for (mut node, overlay, wide) in &mut nodes {
+    for (mut node, overlay, wide, tall) in &mut nodes {
         if wide {
             node.display = if window.width() < 850.0 {
+                Display::None
+            } else {
+                Display::Flex
+            };
+        }
+        if let Some(tall) = tall {
+            node.display = if window.height() < 560.0 && !tall.always_show {
                 Display::None
             } else {
                 Display::Flex
@@ -375,6 +408,27 @@ pub(super) fn sync_overlays(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fit_button_restores_camera_center_and_zoom() {
+        let mut world = World::new();
+        let mut view = crate::canvas_view::CanvasView::default();
+        view.fit_scale = 2.5;
+        world.insert_resource(view);
+        world.add_observer(fit_board);
+        let camera = world.spawn((Camera2d, crate::shared::MainCamera)).id();
+        world.get_mut::<Transform>(camera).unwrap().translation = Vec3::new(90.0, -40.0, 10.0);
+        let fit = world.spawn(Action::FitBoard).id();
+        world.trigger(Activate { entity: fit });
+        assert_eq!(
+            world.get::<Transform>(camera).unwrap().translation,
+            Vec3::new(0.0, 0.0, 10.0)
+        );
+        let Projection::Orthographic(projection) = world.get::<Projection>(camera).unwrap() else {
+            panic!("expected an orthographic camera");
+        };
+        assert_eq!(projection.scale, 2.5);
+    }
     #[test]
     fn speed_slider_maps_to_simulation_limits_and_monotonic_rates() {
         assert_eq!(rate_to_ms(1.0), GolApp::tick_rate_bounds().1);

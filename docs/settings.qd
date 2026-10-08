@@ -1,7 +1,7 @@
 .docname {Settings}
 .include {docs}
 
-Open the **Settings** dialog from the toolbar, or click **Board size…** in the palette.
+Open the **Settings** dialog from the toolbar.
 
 ## Board size
 
@@ -15,10 +15,10 @@ The board size is independent of the window. Resizing the window only changes ho
 
 Pick **Life**, **HighLife**, **Day & Night**, or **Seeds**, or type a rulestring and click **Apply rule**. See [Rules](simulation.qd#rules) for the notation.
 
-## Layout and view
+## View and edges
 
-- **Full**, **Compact**, and **Minimal** choose the [layout preset](interface.qd#layout-presets).
 - **Grid** shows or hides cell lines.
+- **Edges** switches between [wrapping and fixed edges](simulation.qd#edges).
 - **Diagnostics** opens the [diagnostics view](interface.qd#diagnostics).
 - **Reset generation counter** sets the generation back to 0 without touching the cells.
 
@@ -28,7 +28,7 @@ These settings are saved whenever they change, and restored on the next launch:
 
 | Setting        | Saved as                             |
 |----------------|--------------------------------------|
-| Layout preset  | `layout_preset`                      |
+| Palette shown  | `palette`                            |
 | Board size     | `board_cols`, `board_rows`           |
 | Grid           | `grid`                               |
 | Rule           | `rule`                               |
@@ -39,7 +39,7 @@ The board's cells, undo history, and imported patterns are *not* saved.
 
 ## The settings file
 
-Settings are stored in `ui_layout.toml`, in a `gol-bevy` folder in your platform's settings location:
+Settings are stored in `settings.toml`, in a `gol-bevy` folder in your platform's settings location:
 
 | Platform | Folder                                                          |
 |----------|-----------------------------------------------------------------|
@@ -47,12 +47,12 @@ Settings are stored in `ui_layout.toml`, in a `gol-bevy` folder in your platform
 | macOS    | `~/Library/Application Support/gol-bevy`                        |
 | Windows  | `%APPDATA%\gol-bevy`                                            |
 
-Set the `GOL_BEVY_CONFIG_DIR` environment variable to use another folder on any platform. The file is then `$GOL_BEVY_CONFIG_DIR/ui_layout.toml`, with no `gol-bevy` subfolder.
+Set the `GOL_BEVY_CONFIG_DIR` environment variable to use another folder on any platform. The file is then `$GOL_BEVY_CONFIG_DIR/settings.toml`, with no `gol-bevy` subfolder.
 
 A typical file:
 
-```toml "ui_layout.toml"
-layout_preset = "full"
+```toml "settings.toml"
+palette = true
 board_cols = 256
 board_rows = 256
 grid = false
@@ -64,7 +64,7 @@ max_speed = false
 
 | Key             | Values                                                    |
 |-----------------|-----------------------------------------------------------|
-| `layout_preset` | `"full"`, `"compact"`, or `"minimal"`                     |
+| `palette`       | `true` or `false`                                         |
 | `board_cols`, `board_rows` | Whole numbers, clamped to 8–2048. Both must be present |
 | `grid`          | `true` or `false`                                         |
 | `rule`          | A [rulestring](simulation.qd#rulestring-formats)          |
@@ -76,4 +76,6 @@ You can edit the file while the app is closed. Entries that are missing or can't
 
 ### Moving from earlier versions
 
-Earlier versions saved settings in `~/.config/gol-bevy` on every platform. If the new file doesn't exist yet, gol-bevy reads the old one, and the first save writes to the new location. The old file is left alone, so you can delete it afterwards.
+Earlier versions saved settings as `ui_layout.toml`, and before that in `~/.config/gol-bevy` on every platform. If `settings.toml` doesn't exist yet, gol-bevy reads `ui_layout.toml` from the same folder, or else from `~/.config/gol-bevy`, and the first save writes `settings.toml`. Old files are left alone, so you can delete them afterwards.
+
+Old files saved a `layout_preset` instead of `palette`: `"minimal"` hides the palette, and `"full"` or `"compact"` shows it.

@@ -37,7 +37,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
 | `board`                 | Cell storage, rules, edge modes, stepping, and dirty-cell tracking            |
 | `patterns`              | Built-in patterns and RLE reading and writing                                 |
 | `shared`                | Bevy resources, system sets, key bindings, colours, and constants used across plugins |
-| `settings_plugin`       | Loading and saving `ui_layout.toml`                                           |
+| `settings_plugin`       | Loading and saving `settings.toml`                                            |
 | `ui_input`              | Deciding whether the pointer and keyboard belong to the UI or the board       |
 | `canvas_view`           | The board camera's viewport, and fitting the board into it                    |
 | `render_plugin`         | The world: board texture, grid, edge walls, and stamp preview                 |
@@ -68,7 +68,7 @@ Systems run in ordered sets, so each frame sees a consistent state.
 
 At **startup**:
 
-1. `StartupSet::LoadSettings`: read `ui_layout.toml` into the layout, board size, and grid resources.
+1. `StartupSet::LoadSettings`: read `settings.toml` into the layout, board size, and grid resources.
 2. `StartupSet::BuildWorld`: create the board, sized from settings or else from the window, and the scene.
 
 Then the simulation settings (rule, edges, speed) are applied. They are startup state, not edits, so they don't enter undo history.
@@ -92,7 +92,7 @@ Keyboard shortcuts and mouse editing run later, in the `Input` set of `PostUpdat
 |-------------------------------------|---------------------------------------------------------------|
 | `Simulation`                        | The `App`, the step timer, average step time, and measured rate |
 | `BoardSettings`                     | The chosen board size, independent of the window              |
-| `UiLayout`                          | The layout preset and whether the palette is shown            |
+| `UiLayout`                          | Whether the palette is shown                                  |
 | `RedrawRequested`                   | Whether this frame needs a redraw                             |
 | `DiagnosticsOverlay`, `GridOverlay` | Whether diagnostics and the grid are on                       |
 | `UiInputRegions`, `UiInputCapture`  | Where the UI is, and whether it has the pointer or keyboard   |

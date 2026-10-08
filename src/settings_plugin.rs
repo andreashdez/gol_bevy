@@ -1,7 +1,7 @@
 //! Persisted workspace settings, independent of the UI implementation.
 use crate::{
     board::{BoundaryMode, Rule},
-    shared::{BoardSettings, GridOverlay, Simulation, StartupSet, UiLayout, UiLayoutPreset},
+    shared::{BoardSettings, GridOverlay, Simulation, StartupSet, UiLayout},
 };
 use bevy::prelude::*;
 use std::path::PathBuf;
@@ -14,7 +14,7 @@ impl Plugin for SettingsPlugin {
             .add_systems(
                 Startup,
                 (
-                    setup_layout_persistence.in_set(StartupSet::LoadSettings),
+                    setup_settings_persistence.in_set(StartupSet::LoadSettings),
                     apply_simulation_settings.after(StartupSet::BuildWorld),
                 ),
             )
@@ -23,14 +23,14 @@ impl Plugin for SettingsPlugin {
 }
 
 #[derive(Resource)]
-struct UiLayoutPersistence {
+struct SettingsPersistence {
     path: PathBuf,
     last_saved: Option<PersistedSettings>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct PersistedSettings {
-    preset: UiLayoutPreset,
+    palette: bool,
     board: (usize, usize),
     simulation: SimulationSettings,
     grid: bool,
@@ -75,20 +75,24 @@ impl SimulationSettings {
 
 #[derive(Default)]
 struct ParsedSettings {
-    preset: Option<UiLayoutPreset>,
+    palette: Option<bool>,
     board: Option<(usize, usize)>,
     simulation: SimulationSettings,
     grid: Option<bool>,
 }
 
-fn setup_layout_persistence(
+fn setup_settings_persistence(
     mut commands: Commands,
     mut ui_layout: ResMut<UiLayout>,
     mut board_settings: ResMut<BoardSettings>,
     mut grid: ResMut<GridOverlay>,
 ) {
-    let path = ui_layout_config_path();
-    let source = settings_source(&path, legacy_config_path(SETTINGS_FILE));
+    let path = settings_path();
+    let older = [
+        Some(config_path(OLD_SETTINGS_FILE)),
+        legacy_config_path(OLD_SETTINGS_FILE),
+    ];
+    let source = settings_source(&path, older.into_iter().flatten());
     if source != path {
         info!(
             "Reading settings from {}; they will be saved to {}",
@@ -100,7 +104,7 @@ fn setup_layout_persistence(
     let simulation = load_settings(&source, &mut ui_layout, &mut board_settings, &mut grid);
 
     commands.insert_resource(simulation);
-    commands.insert_resource(UiLayoutPersistence {
+    commands.insert_resource(SettingsPersistence {
         path,
         last_saved: None,
     });
@@ -124,12 +128,8 @@ fn load_settings(
     match std::fs::read_to_string(path) {
         Ok(contents) => {
             let settings = parse_settings_from_toml(&contents);
-            match settings.preset {
-                Some(preset) => ui_layout.preset = preset,
-                None => warn!(
-                    "Ignoring invalid persisted layout preset in {}",
-                    path.display()
-                ),
+            if let Some(visible) = settings.palette {
+                ui_layout.control_deck_visible = visible;
             }
             // Left unset, startup falls back to a board that fills the window.
             if let Some((cols, rows)) = settings.board {
@@ -158,7 +158,7 @@ fn persist_settings(
     board_settings: Res<BoardSettings>,
     grid: Res<GridOverlay>,
     sim: Option<Res<Simulation>>,
-    mut persistence: ResMut<UiLayoutPersistence>,
+    mut persistence: ResMut<SettingsPersistence>,
 ) {
     // Saving before the world is built would overwrite the file with defaults.
     let Some(sim) = sim else {
@@ -168,7 +168,7 @@ fn persist_settings(
         return;
     }
     let current = PersistedSettings {
-        preset: ui_layout.preset,
+        palette: ui_layout.control_deck_visible,
         board: (board_settings.cols, board_settings.rows),
         simulation: SimulationSettings::of(&sim),
         grid: grid.enabled,
@@ -190,11 +190,8 @@ fn persist_settings(
 
     let simulation = current.simulation;
     let mut contents = format!(
-        "layout_preset = \"{}\"\nboard_cols = {}\nboard_rows = {}\ngrid = {}\n",
-        current.preset.as_storage_str(),
-        current.board.0,
-        current.board.1,
-        current.grid,
+        "palette = {}\nboard_cols = {}\nboard_rows = {}\ngrid = {}\n",
+        current.palette, current.board.0, current.board.1, current.grid,
     );
     if let Some(rule) = simulation.rule {
         contents.push_str(&format!("rule = \"{rule}\"\n"));
@@ -240,7 +237,16 @@ fn parse_settings_from_toml(contents: &str) -> ParsedSettings {
         let value = unquote(raw_value.trim());
 
         match key.trim() {
-            "layout_preset" => parsed.preset = UiLayoutPreset::from_storage_str(value),
+            "palette" => parsed.palette = value.parse::<bool>().ok(),
+            // Older files saved a layout preset; only "minimal" hid the palette.
+            "layout_preset" => {
+                let visible = match value {
+                    "full" | "compact" => Some(true),
+                    "minimal" => Some(false),
+                    _ => None,
+                };
+                parsed.palette = parsed.palette.or(visible);
+            }
             "board_cols" => cols = value.parse::<usize>().ok(),
             "board_rows" => rows = value.parse::<usize>().ok(),
             "grid" => parsed.grid = value.parse::<bool>().ok(),
@@ -286,16 +292,18 @@ fn unquote(value: &str) -> &str {
         .trim()
 }
 
-const SETTINGS_FILE: &str = "ui_layout.toml";
+const SETTINGS_FILE: &str = "settings.toml";
+/// What the settings file was called while it only held the layout preset.
+const OLD_SETTINGS_FILE: &str = "ui_layout.toml";
 
-fn ui_layout_config_path() -> PathBuf {
-    ui_layout_config_path_with_file(SETTINGS_FILE)
+fn settings_path() -> PathBuf {
+    config_path(SETTINGS_FILE)
 }
 
 /// The platform's settings folder: `$XDG_CONFIG_HOME` or `~/.config` on Linux,
 /// `~/Library/Application Support` on macOS, and `%APPDATA%` on Windows.
 /// `GOL_BEVY_CONFIG_DIR` overrides it everywhere.
-fn ui_layout_config_path_with_file(file_name: &str) -> PathBuf {
+fn config_path(file_name: &str) -> PathBuf {
     if let Some(config_dir) = std::env::var_os("GOL_BEVY_CONFIG_DIR") {
         return PathBuf::from(config_dir).join(file_name);
     }
@@ -324,20 +332,23 @@ fn legacy_config_path(file_name: &str) -> Option<PathBuf> {
     Some(legacy.join(file_name))
 }
 
-/// Reads from the legacy file until the first save creates `path`, so moving
-/// the settings folder does not lose what was saved before. The legacy file is
-/// left in place.
-fn settings_source(path: &std::path::Path, legacy: Option<PathBuf>) -> PathBuf {
-    match legacy {
-        Some(legacy) if !path.exists() && legacy.exists() => legacy,
-        _ => path.to_path_buf(),
+/// Reads from the first older file that exists until the first save creates
+/// `path`, so renaming or moving the settings file does not lose what was saved
+/// before. Older files are left in place.
+fn settings_source(path: &std::path::Path, older: impl IntoIterator<Item = PathBuf>) -> PathBuf {
+    if path.exists() {
+        return path.to_path_buf();
     }
+    older
+        .into_iter()
+        .find(|older| older.exists())
+        .unwrap_or_else(|| path.to_path_buf())
 }
 
 #[cfg(test)]
 mod persistence_tests {
     use super::{parse_settings_from_toml, settings_source, unquote};
-    use crate::shared::UiLayoutPreset;
+    use std::path::PathBuf;
 
     #[test]
     fn legacy_settings_load_save_and_reload_without_a_ui() {
@@ -352,10 +363,10 @@ mod persistence_tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&directory).unwrap();
-        let path = directory.join("ui_layout.toml");
+        let path = directory.join("settings.toml");
         std::fs::write(
             &path,
-            "layout_preset = \"compact\"\nboard_cols = 512\nboard_rows = 256\n",
+            "layout_preset = \"minimal\"\nboard_cols = 512\nboard_rows = 256\n",
         )
         .unwrap();
         let mut layout = UiLayout::default();
@@ -363,7 +374,7 @@ mod persistence_tests {
         let mut grid = GridOverlay { enabled: false };
         // A file from before the simulation settings were saved leaves them alone.
         let legacy = load_settings(&path, &mut layout, &mut board, &mut grid);
-        assert_eq!(layout.preset, UiLayoutPreset::Compact);
+        assert!(!layout.control_deck_visible);
         assert_eq!((board.cols, board.rows), (512, 256));
         assert_eq!(legacy, SimulationSettings::default());
         assert!(!grid.enabled);
@@ -375,19 +386,21 @@ mod persistence_tests {
         app.set_tick_rate_ms(100);
         app.set_max_speed();
         let mut world = World::new();
-        layout.preset = UiLayoutPreset::Minimal;
+        layout.control_deck_visible = true;
         board.set(128, 64);
         world.insert_resource(layout);
         world.insert_resource(board);
         world.insert_resource(GridOverlay { enabled: true });
         world.insert_resource(Simulation::new(app));
-        world.insert_resource(UiLayoutPersistence {
+        world.insert_resource(SettingsPersistence {
             path: path.clone(),
             last_saved: None,
         });
         world.run_system_once(persist_settings).unwrap();
 
-        let mut loaded_layout = UiLayout::default();
+        let mut loaded_layout = UiLayout {
+            control_deck_visible: false,
+        };
         let mut loaded_board = BoardSettings::default();
         let mut loaded_grid = GridOverlay { enabled: false };
         let simulation = load_settings(
@@ -396,7 +409,7 @@ mod persistence_tests {
             &mut loaded_board,
             &mut loaded_grid,
         );
-        assert_eq!(loaded_layout.preset, UiLayoutPreset::Minimal);
+        assert!(loaded_layout.control_deck_visible);
         assert_eq!((loaded_board.cols, loaded_board.rows), (128, 64));
         assert!(loaded_grid.enabled);
 
@@ -412,26 +425,39 @@ mod persistence_tests {
     }
 
     #[test]
-    fn reads_layout_preset_and_board_size() {
+    fn reads_palette_visibility_and_board_size() {
         let parsed = parse_settings_from_toml(
-            "# saved by gol-bevy\nlayout_preset = \"compact\"\nboard_cols = 512\nboard_rows = 256\n",
+            "# saved by gol-bevy\npalette = false\nboard_cols = 512\nboard_rows = 256\n",
         );
-        assert_eq!(parsed.preset, Some(UiLayoutPreset::Compact));
+        assert_eq!(parsed.palette, Some(false));
         assert_eq!(parsed.board, Some((512, 256)));
+    }
+
+    #[test]
+    fn old_layout_presets_only_hide_the_palette_when_minimal() {
+        for (preset, visible) in [("full", true), ("compact", true), ("minimal", false)] {
+            let parsed = parse_settings_from_toml(&format!("layout_preset = \"{preset}\"\n"));
+            assert_eq!(parsed.palette, Some(visible));
+        }
+        // A saved palette setting wins over a leftover preset, in either order.
+        let both = parse_settings_from_toml("palette = true\nlayout_preset = \"minimal\"\n");
+        assert_eq!(both.palette, Some(true));
+        let both = parse_settings_from_toml("layout_preset = \"minimal\"\npalette = true\n");
+        assert_eq!(both.palette, Some(true));
     }
 
     #[test]
     fn a_partial_or_invalid_file_leaves_fields_unset() {
         // Only one of the two dimensions is useless on its own.
-        let half = parse_settings_from_toml("layout_preset = 'minimal'\nboard_cols = 512\n");
-        assert_eq!(half.preset, Some(UiLayoutPreset::Minimal));
+        let half = parse_settings_from_toml("palette = 'false'\nboard_cols = 512\n");
+        assert_eq!(half.palette, Some(false));
         assert_eq!(half.board, None);
 
         let junk = parse_settings_from_toml(
-            "layout_preset = \"nope\"\nboard_cols = wide\nrule = \"B9\"\nboundary_mode = \"round\"\n\
+            "layout_preset = \"nope\"\npalette = maybe\nboard_cols = wide\nrule = \"B9\"\nboundary_mode = \"round\"\n\
              tick_rate_ms = fast\nmax_speed = yes\ngrid = 1\n",
         );
-        assert_eq!(junk.preset, None);
+        assert_eq!(junk.palette, None);
         assert_eq!(junk.board, None);
         assert_eq!(junk.simulation, super::SimulationSettings::default());
         assert_eq!(junk.grid, None);
@@ -440,7 +466,7 @@ mod persistence_tests {
     }
 
     #[test]
-    fn settings_are_read_from_the_old_folder_until_the_new_one_has_a_file() {
+    fn settings_are_read_from_older_files_until_the_new_one_exists() {
         let directory = std::env::temp_dir().join(format!(
             "gol-settings-move-{}-{}",
             std::process::id(),
@@ -449,22 +475,29 @@ mod persistence_tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let path = directory.join("new").join("ui_layout.toml");
+        let path = directory.join("new").join("settings.toml");
+        let renamed = directory.join("new").join("ui_layout.toml");
         let legacy = directory.join("old").join("ui_layout.toml");
 
+        let older = || [renamed.clone(), legacy.clone()];
+
         // Nothing saved anywhere: read, and later save, the new location.
-        assert_eq!(settings_source(&path, Some(legacy.clone())), path);
+        assert_eq!(settings_source(&path, older()), path);
 
         std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
         std::fs::write(&legacy, "board_cols = 64\nboard_rows = 64\n").unwrap();
-        assert_eq!(settings_source(&path, Some(legacy.clone())), legacy);
-        assert_eq!(settings_source(&path, None), path);
+        assert_eq!(settings_source(&path, older()), legacy);
+        assert_eq!(settings_source(&path, None::<PathBuf>), path);
 
-        // Once the new file exists it wins, even though the old one remains.
+        // The old name in the current folder is newer than the old folder.
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&renamed, "board_cols = 96\nboard_rows = 96\n").unwrap();
+        assert_eq!(settings_source(&path, older()), renamed);
+
+        // Once the new file exists it wins, even though the old ones remain.
         std::fs::write(&path, "board_cols = 128\nboard_rows = 128\n").unwrap();
-        assert_eq!(settings_source(&path, Some(legacy.clone())), path);
-        assert!(legacy.exists());
+        assert_eq!(settings_source(&path, older()), path);
+        assert!(renamed.exists() && legacy.exists());
 
         std::fs::remove_dir_all(directory).unwrap();
     }
