@@ -1,8 +1,9 @@
 //! Everyday controls, shortcut hints, and first-use guidance.
 use super::*;
-use crate::shared::PATTERN_SHORTCUTS;
+use crate::shared::{CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, MainCamera, PATTERN_SHORTCUTS};
 use bevy::{
     a11y::AccessibilityNode,
+    text::FontFeatureTag,
     ui_widgets::{
         Slider, SliderPrecision, SliderRange, SliderStep, SliderThumb, SliderValue, TrackClick,
         ValueChange,
@@ -23,6 +24,21 @@ pub(super) struct SpeedSlider;
 pub(super) struct SpeedThumb;
 #[derive(Component)]
 pub(super) struct SpeedLabel;
+#[derive(Component)]
+pub(super) struct ZoomLabel;
+#[derive(Component)]
+pub(super) struct FeedbackOverlay;
+#[derive(Component)]
+pub(super) struct FeedbackText;
+
+pub(super) fn numeric_font(size: f32) -> TextFont {
+    TextFont {
+        font: UI_FONT.into(),
+        font_size: FontSize::Px(size),
+        font_features: [FontFeatureTag::TABULAR_FIGURES].into(),
+        ..default()
+    }
+}
 #[derive(Component)]
 pub(super) enum Overlay {
     Hint {
@@ -63,6 +79,12 @@ pub(super) fn hint(action: Action) -> &'static str {
         }
         Action::Grid => "Show / hide the grid · T",
         Action::FitBoard => "Fit the whole board in the canvas · V",
+        Action::FitLiveCells => {
+            "Fit live cells with a small margin · empty boards fit the whole board"
+        }
+        Action::ZoomIn => "Zoom in · scroll over the canvas to zoom · middle-drag to pan",
+        Action::ZoomOut => "Zoom out · scroll over the canvas to zoom · middle-drag to pan",
+        Action::MaxSpeed => "Toggle maximum speed · switch off to restore your selected rate",
         Action::Sidebar => "Show / hide the palette · H",
         Action::Help => "Controls and tips · /",
         Action::Diagnostics => "Simulation diagnostics · F3",
@@ -84,43 +106,59 @@ pub(super) fn hint(action: Action) -> &'static str {
     }
 }
 
-pub(super) fn fit_board(
+pub(super) fn navigate(
     event: On<Activate>,
     actions: Query<&Action>,
     view: Res<crate::canvas_view::CanvasView>,
-    mut cameras: Query<(&mut Transform, &mut Projection), With<crate::shared::MainCamera>>,
+    sim: Res<Simulation>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    layout: Res<UiLayout>,
+    mut cameras: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
 ) {
-    if !matches!(actions.get(event.entity), Ok(Action::FitBoard)) {
+    let Ok(action) = actions.get(event.entity) else {
         return;
-    }
+    };
     if let Ok((mut transform, mut projection)) = cameras.single_mut() {
-        view.fit_camera(&mut transform, &mut projection);
+        match action {
+            Action::FitBoard => view.fit_camera(&mut transform, &mut projection),
+            Action::FitLiveCells => {
+                if let Ok(window) = windows.single() {
+                    view.fit_live_cells(
+                        &sim.app.board,
+                        canvas_rect(window.size(), &layout).size(),
+                        &mut transform,
+                        &mut projection,
+                    );
+                }
+            }
+            Action::ZoomIn | Action::ZoomOut => {
+                if let Projection::Orthographic(ortho) = &mut *projection {
+                    let factor = if *action == Action::ZoomIn {
+                        1.0 / 1.25
+                    } else {
+                        1.25
+                    };
+                    ortho.scale = (ortho.scale * factor).clamp(CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
-/// The slider runs through fixed rates in generations per second, then one
-/// notch past the fastest of them for max speed.
+/// Maximum speed is a separate toggle; the slider always selects a fixed rate.
 const SLIDER_FASTEST_RATE: f32 = 40.0;
-const SLIDER_MAX_SPEED: f32 = SLIDER_FASTEST_RATE + 1.0;
 
 fn rate_to_ms(rate: f32) -> u64 {
     (1000.0 / rate.clamp(1.0, SLIDER_FASTEST_RATE)).round() as u64
 }
 
 fn apply_slider_value(app: &mut GolApp, value: f32) {
-    if value > SLIDER_FASTEST_RATE {
-        app.set_max_speed();
-    } else {
-        app.set_tick_rate_ms(rate_to_ms(value));
-    }
+    app.set_tick_rate_ms(rate_to_ms(value));
 }
 
 fn slider_value(app: &GolApp) -> f32 {
-    if app.is_max_speed() {
-        SLIDER_MAX_SPEED
-    } else {
-        1000.0 / app.tick_rate_ms() as f32
-    }
+    1000.0 / app.tick_rate_ms() as f32
 }
 
 pub(super) fn speed_slider(p: &mut ChildSpawnerCommands) {
@@ -131,12 +169,15 @@ pub(super) fn speed_slider(p: &mut ChildSpawnerCommands) {
             ..default()
         },
         SliderValue(SLIDER_FASTEST_RATE),
-        SliderRange::new(1.0, SLIDER_MAX_SPEED),
+        SliderRange::new(1.0, SLIDER_FASTEST_RATE),
         SliderStep(1.0),
         SliderPrecision(0),
         TabIndex(0),
         Hovered::default(),
-        Tooltip("Speed · Left/Right adjusts · Home slowest · End max speed · +/− on canvas".into()),
+        Tooltip(
+            "Fixed speed · Left/Right adjusts · Home 1 gen/s · End 40 gen/s · adjusting leaves Max"
+                .into(),
+        ),
         accessibility::named_node(
             accesskit::Role::Slider,
             "Simulation speed (generations per second)",
@@ -182,6 +223,7 @@ pub(super) fn speed_slider(p: &mut ChildSpawnerCommands) {
             Pickable::IGNORE,
         ));
     });
+    toolbar::button(p, "Max", Action::MaxSpeed);
     p.spawn(Node {
         width: px(84),
         height: px(34),
@@ -190,7 +232,8 @@ pub(super) fn speed_slider(p: &mut ChildSpawnerCommands) {
         ..default()
     })
     .with_children(|p| {
-        p.spawn((SpeedLabel, label("40.0 gen/s", 13.0, INK)));
+        p.spawn((SpeedLabel, label("40.0 gen/s", 13.0, INK)))
+            .insert(numeric_font(13.0));
     });
 }
 
@@ -233,11 +276,11 @@ pub(super) fn sync_speed(
     let (spoken, shown) = if sim.app.is_max_speed() && sim.app.is_running() && measured > 0.0 {
         (
             format!("Maximum speed, {measured:.0} generations per second"),
-            format!("Max {measured:.0}/s"),
+            format!("{measured:.0}/s"),
         )
     } else if sim.app.is_max_speed() {
         // Paused, or running for less than one measuring window.
-        ("Maximum speed".to_owned(), "Max".to_owned())
+        ("Maximum speed".to_owned(), "— gen/s".to_owned())
     } else {
         (
             format!("{position:.1} generations per second"),
@@ -245,7 +288,11 @@ pub(super) fn sync_speed(
         )
     };
     accessible.set_numeric_value(position as f64);
-    accessible.set_value(spoken);
+    accessible.set_value(if sim.app.is_max_speed() {
+        format!("{position:.1} generations per second selected; {spoken}")
+    } else {
+        spoken
+    });
     accessible.add_action(accesskit::Action::SetValue);
     accessible.add_action(accesskit::Action::Increment);
     accessible.add_action(accesskit::Action::Decrement);
@@ -256,7 +303,7 @@ pub(super) fn sync_speed(
     });
     if let Ok(mut thumb) = thumbs.single_mut() {
         let travel = (computed.size().x * computed.inverse_scale_factor - 16.0).max(0.0);
-        thumb.left = px(travel * (position - 1.0) / (SLIDER_MAX_SPEED - 1.0));
+        thumb.left = px(travel * (position - 1.0) / (SLIDER_FASTEST_RATE - 1.0));
     }
     if let Ok(mut label) = labels.single_mut()
         && label.0 != shown
@@ -309,7 +356,14 @@ pub(super) fn sync_overlays(
     view: ViewState,
     windows: Query<&Window, With<PrimaryWindow>>,
     time: Res<Time>,
-    mut hints: Query<(Entity, &Tooltip, &Hovered, &mut AccessibilityNode)>,
+    mut hints: Query<(
+        Entity,
+        &Tooltip,
+        &Hovered,
+        &ComputedNode,
+        &UiGlobalTransform,
+        &mut AccessibilityNode,
+    )>,
     mut nodes: Query<OverlayNode>,
     mut texts: Query<(&mut Text, &OverlayText)>,
 ) {
@@ -318,16 +372,20 @@ pub(super) fn sync_overlays(
     };
     let mut hovered = None;
     let mut focused = None;
-    for (entity, tooltip, hover, mut accessible) in &mut hints {
+    for (entity, tooltip, hover, computed, transform, mut accessible) in &mut hints {
         if tooltip.0.is_empty() {
             continue;
         }
         accessible.set_description(tooltip.0.clone());
+        // Layout works in physical pixels; the overlay is placed in logical ones.
+        let scale = computed.inverse_scale_factor();
+        let rect = Rect::from_center_size(transform.translation * scale, computed.size() * scale);
         if hover.get() {
-            hovered = Some((entity, tooltip.0.clone()));
+            hovered = Some((entity, tooltip.0.clone(), rect));
         }
-        if view.focus.get() == Some(entity) {
-            focused = Some((entity, tooltip.0.clone()));
+        // Clicking a control also focuses it, so only keyboard focus counts.
+        if view.focus_visible.0 && view.focus.get() == Some(entity) {
+            focused = Some((entity, tooltip.0.clone(), rect));
         }
     }
     let candidate = hovered.or(focused);
@@ -350,7 +408,7 @@ pub(super) fn sync_overlays(
         let Some(mut overlay) = overlay else {
             continue;
         };
-        let (show, hint, text, position, width) = match &mut *overlay {
+        let (show, hint, text, left, top, bottom, width) = match &mut *overlay {
             Overlay::Hint { target, elapsed } => {
                 let next = candidate.as_ref().map(|c| c.0);
                 if *target != next {
@@ -358,19 +416,26 @@ pub(super) fn sync_overlays(
                     *elapsed = 0.0;
                 }
                 *elapsed += time.delta_secs();
-                let show = candidate.is_some() && (*elapsed >= 0.45 || view.focus.get() == next);
-                let cursor = window
-                    .cursor_position()
-                    .unwrap_or(Vec2::new(canvas.min.x, window.height() - BOTTOM - 60.0));
-                let pos = (cursor + Vec2::splat(18.0))
-                    .min(window.size() - Vec2::new(300.0, 90.0))
-                    .max(Vec2::splat(8.0));
+                let keyboard = view.focus_visible.0 && view.focus.get() == next;
+                let show = candidate.is_some() && (*elapsed >= 0.45 || keyboard);
+                let width = 280.0;
+                let rect = candidate.as_ref().map_or(Rect::default(), |c| c.2);
+                let left = rect.min.x.min(window.width() - width - 8.0).max(8.0);
+                // Open away from the nearest window edge, anchored to the
+                // control so the hint never depends on its own height.
+                let (top, bottom) = if rect.center().y < window.height() / 2.0 {
+                    (px(rect.max.y + 8.0), Val::Auto)
+                } else {
+                    (Val::Auto, px(window.height() - rect.min.y + 8.0))
+                };
                 (
                     show,
                     true,
                     candidate.as_ref().map(|c| c.1.clone()).unwrap_or_default(),
-                    pos,
-                    280.0,
+                    left,
+                    top,
+                    bottom,
+                    width,
                 )
             }
             Overlay::Empty => {
@@ -384,7 +449,9 @@ pub(super) fn sync_overlays(
                     sim.app.board.live_cells_count() == 0,
                     false,
                     text.to_owned(),
-                    Vec2::new(canvas.center().x - width / 2.0, canvas.min.y + 16.0),
+                    canvas.center().x - width / 2.0,
+                    px(canvas.min.y + 16.0),
+                    Val::Auto,
                     width,
                 )
             }
@@ -394,13 +461,144 @@ pub(super) fn sync_overlays(
         } else {
             Display::None
         };
-        node.left = px(position.x);
-        node.top = px(position.y);
+        node.left = px(left);
+        node.top = top;
+        node.bottom = bottom;
         node.width = px(width);
         for (mut label, kind) in &mut texts {
             if kind.0 == hint && label.0 != text {
                 label.0 = text.clone();
             }
+        }
+    }
+}
+
+type FooterNode<'a> = (
+    &'a mut Node,
+    Has<Footer>,
+    Has<FooterStatus>,
+    Has<Sidebar>,
+    Option<&'a Readout>,
+    Option<&'a Action>,
+    Has<toolbar::ToolbarButton>,
+);
+
+pub(super) fn sync_footer(
+    windows: Query<&Window, With<PrimaryWindow>>,
+    view: Res<crate::canvas_view::CanvasView>,
+    cameras: Query<&Projection, With<MainCamera>>,
+    mut nodes: Query<FooterNode>,
+    mut zoom: Query<&mut Text, With<ZoomLabel>>,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let narrow = window.width() < 1000.0;
+    for (mut node, footer, status, sidebar, readout, action, toolbar_button) in &mut nodes {
+        if footer {
+            node.height = px(bottom_height(window.size()));
+            node.flex_direction = if narrow {
+                FlexDirection::Column
+            } else {
+                FlexDirection::Row
+            };
+            node.align_items = if narrow {
+                AlignItems::Stretch
+            } else {
+                AlignItems::Center
+            };
+        }
+        if status {
+            node.flex_grow = if narrow { 0.0 } else { 1.0 };
+        }
+        if sidebar {
+            node.bottom = px(bottom_height(window.size()) + 16.0);
+        }
+        if matches!(readout, Some(Readout::Board)) {
+            node.display = if window.width() >= 1400.0 {
+                Display::Flex
+            } else {
+                Display::None
+            };
+        }
+        if let Some(action) = action
+            && !toolbar_button
+            && !matches!(action, Action::Pattern(_))
+        {
+            node.padding = UiRect::axes(px(if window.width() < 850.0 { 8.0 } else { 12.0 }), px(9));
+            if *action == Action::Play {
+                node.min_width = px(if window.width() < 850.0 { 64.0 } else { 72.0 });
+            }
+        }
+    }
+    if let Ok(Projection::Orthographic(ortho)) = cameras.single()
+        && let Ok(mut text) = zoom.single_mut()
+    {
+        let value = format!("{:.0}%", view.fit_scale / ortho.scale * 100.0);
+        if text.0 != value {
+            text.0 = value;
+        }
+    }
+}
+
+pub(super) fn feedback_overlay(commands: &mut Commands) {
+    commands
+        .spawn((
+            NativeRoot,
+            FeedbackOverlay,
+            Node {
+                display: Display::None,
+                position_type: PositionType::Absolute,
+                padding: UiRect::all(px(12)),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(8)),
+                ..default()
+            },
+            BackgroundColor(PANEL),
+            BorderColor::all(LINE),
+            GlobalZIndex(20),
+            Pickable::IGNORE,
+        ))
+        .with_children(|p| {
+            p.spawn((
+                FeedbackText,
+                label("", 14.0, INK),
+                accessibility::feedback_node(),
+            ));
+        });
+}
+
+pub(super) fn sync_feedback(
+    time: Res<Time>,
+    mut feedback: ResMut<EditFeedback>,
+    view: ViewState,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut nodes: Query<&mut Node, With<FeedbackOverlay>>,
+    mut texts: Query<&mut Text, With<FeedbackText>>,
+) {
+    feedback.remaining = (feedback.remaining - time.delta_secs()).max(0.0);
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let canvas = canvas_rect(window.size(), &view.layout);
+    for mut node in &mut nodes {
+        node.display = if feedback.remaining > 0.0 && view.mode.dialog.is_none() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        node.left = px(canvas.min.x + 12.0);
+        node.bottom = px(window.height() - canvas.max.y + 12.0);
+        node.max_width = px((canvas.width() - 24.0).max(0.0));
+    }
+    for mut text in &mut texts {
+        let value = if feedback.remaining > 0.0 {
+            feedback.message
+        } else {
+            ""
+        };
+        if text.0 != value {
+            text.0 = value.to_owned();
         }
     }
 }
@@ -415,7 +613,9 @@ mod tests {
         let mut view = crate::canvas_view::CanvasView::default();
         view.fit_scale = 2.5;
         world.insert_resource(view);
-        world.add_observer(fit_board);
+        world.insert_resource(Simulation::new(GolApp::new(8, 8)));
+        world.insert_resource(UiLayout::default());
+        world.add_observer(navigate);
         let camera = world.spawn((Camera2d, crate::shared::MainCamera)).id();
         world.get_mut::<Transform>(camera).unwrap().translation = Vec3::new(90.0, -40.0, 10.0);
         let fit = world.spawn(Action::FitBoard).id();
@@ -439,18 +639,28 @@ mod tests {
     }
 
     #[test]
-    fn the_notch_past_the_fastest_rate_is_max_speed() {
+    fn max_toggle_restores_rate_and_slider_always_chooses_a_fixed_rate() {
         let mut app = GolApp::new(8, 8);
-        apply_slider_value(&mut app, SLIDER_MAX_SPEED);
+        apply_slider_value(&mut app, 10.0);
+        apply_action(Action::MaxSpeed, &mut app);
         assert!(app.is_max_speed());
-        assert_eq!(slider_value(&app), SLIDER_MAX_SPEED);
+        assert_eq!(slider_value(&app), 10.0);
+        assert!(!app.speed_up());
+        assert_eq!(slider_value(&app), 10.0);
+        apply_action(Action::MaxSpeed, &mut app);
+        assert!(!app.is_max_speed());
+        assert_eq!(app.tick_rate_ms(), 100);
 
+        apply_action(Action::MaxSpeed, &mut app);
         apply_slider_value(&mut app, SLIDER_FASTEST_RATE);
         assert!(!app.is_max_speed());
         assert_eq!(slider_value(&app), SLIDER_FASTEST_RATE);
 
-        // The + key past the fastest rate lands on the same notch.
+        // Keyboard shortcuts retain their existing Max behavior.
         app.speed_up();
-        assert_eq!(slider_value(&app), SLIDER_MAX_SPEED);
+        assert!(app.is_max_speed());
+        assert_eq!(slider_value(&app), SLIDER_FASTEST_RATE);
+        apply_slider_value(&mut app, SLIDER_FASTEST_RATE + 1.0);
+        assert!(!app.is_max_speed());
     }
 }

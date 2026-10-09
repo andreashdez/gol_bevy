@@ -112,7 +112,10 @@ fn capture_input(
     capture.keyboard |= regions.modal || editing;
     if !regions.modal
         && ((editing && inputs.keys.just_pressed(KeyCode::Escape))
-            || (inputs.mouse.just_pressed(MouseButton::Left) && !capture.pointer))
+            || (inputs
+                .mouse
+                .any_just_pressed([MouseButton::Left, MouseButton::Middle])
+                && !capture.pointer))
     {
         focus.clear();
     }

@@ -1,9 +1,10 @@
 //! The board camera occupies the workspace while UI keeps a full-window camera.
 use crate::{
+    board::Board,
     native_ui_plugin::canvas_rect,
     shared::{
         BoardSettings, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, MainCamera, UiLayout, UpdateSet,
-        camera_scale_to_fit_board,
+        camera_scale_to_fit_board, cell_to_world,
     },
 };
 use bevy::{camera::Viewport, prelude::*, window::PrimaryWindow};
@@ -21,6 +22,31 @@ impl CanvasView {
         transform.translation.y = 0.0;
         if let Projection::Orthographic(ortho) = projection {
             ortho.scale = self.fit_scale;
+        }
+    }
+
+    /// Fit the occupied rectangle, including a two-cell margin for small patterns.
+    /// Empty boards fall back to the whole board.
+    pub fn fit_live_cells(
+        &self,
+        board: &Board,
+        canvas_size: Vec2,
+        transform: &mut Transform,
+        projection: &mut Projection,
+    ) {
+        let Some((min, max)) = board.live_bounds() else {
+            self.fit_camera(transform, projection);
+            return;
+        };
+        let (cols, rows) = board.size();
+        let centre = (cell_to_world(min.0, min.1, cols, rows)
+            + cell_to_world(max.0, max.1, cols, rows))
+            / 2.0;
+        transform.translation.x = centre.x;
+        transform.translation.y = centre.y;
+        if let Projection::Orthographic(ortho) = projection {
+            ortho.scale =
+                camera_scale_to_fit_board(canvas_size, max.0 - min.0 + 5, max.1 - min.1 + 5);
         }
     }
 }
@@ -124,6 +150,39 @@ mod tests {
         camera::{CameraProjection, ComputedCameraValues, RenderTargetInfo},
         ecs::system::RunSystemOnce,
     };
+
+    #[test]
+    fn live_fit_centres_off_axis_patterns_and_empty_boards_reset_the_view() {
+        let mut board = Board::new(100, 80);
+        let view = CanvasView {
+            fit_scale: 3.0,
+            ..default()
+        };
+        let size = Vec2::new(800.0, 400.0);
+        let mut transform = Transform::from_xyz(0.0, 0.0, 10.0);
+        let mut projection = Projection::Orthographic(OrthographicProjection::default_2d());
+        board.populate(5, 60);
+        board.populate(15, 70);
+        view.fit_live_cells(&board, size, &mut transform, &mut projection);
+        assert_eq!(
+            transform.translation,
+            cell_to_world(10, 65, 100, 80) + Vec3::Z * 10.0
+        );
+        let Projection::Orthographic(ortho) = &projection else {
+            panic!()
+        };
+        // Eleven occupied cells plus four margin cells fit in both directions.
+        assert!(ortho.scale * size.min_element() >= 15.0 * crate::shared::CELL_SIZE);
+        assert!(ortho.scale < view.fit_scale);
+
+        board.clear();
+        view.fit_live_cells(&board, size, &mut transform, &mut projection);
+        assert_eq!(transform.translation, Vec3::new(0.0, 0.0, 10.0));
+        let Projection::Orthographic(ortho) = &projection else {
+            panic!()
+        };
+        assert_eq!(ortho.scale, view.fit_scale);
+    }
 
     #[test]
     fn the_largest_board_fits_at_the_minimum_window_size_with_or_without_the_palette() {

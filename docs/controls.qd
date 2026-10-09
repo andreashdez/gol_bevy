@@ -44,7 +44,9 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 
 | Key or mouse                                   | Action                          |
 |------------------------------------------------|---------------------------------|
-| Mouse wheel over the board                     | Zoom                            |
+| Mouse wheel over the board, or **− / +** in the status bar | Zoom                    |
+| Middle-button drag over the board             | Pan without editing cells       |
+| **Fit live cells** in the status bar          | Frame the living cells          |
 | .keybinding {W} .keybinding {A} .keybinding {S} .keybinding {D} or arrow keys | Pan          |
 | .keybinding {V}                                | Fit the whole board in view     |
 | .keybinding {T}                                | Toggle the grid                 |
@@ -60,7 +62,7 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 | .keybinding {Tab}, .keybinding {Shift+Tab}  | Move between controls                                     |
 | .keybinding {Enter} or .keybinding {Space}  | Activate the focused button                               |
 | .keybinding {Left}, .keybinding {Right}     | Change speed, with the slider focused                     |
-| .keybinding {Home}, .keybinding {End}       | Slowest or Max speed, with the slider focused             |
+| .keybinding {Home}, .keybinding {End}       | 1 or 40 gen/s, with the slider focused             |
 | .keybinding {Esc}                           | Close a dialog, or leave a text field or the slider       |
 | .keybinding {Mod+C}, .keybinding {Mod+X}, .keybinding {Mod+V}, .keybinding {Mod+A} | Copy, cut, paste, and select all in text fields |
 | .keybinding {Shift} + arrow keys            | Select text in text fields                                |

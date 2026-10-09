@@ -22,7 +22,7 @@ Speed is shown in generations per second (gen/s) on the toolbar slider. It range
 
 ### Max speed
 
-The notch past 40 gen/s is **Max**. At Max, each frame runs as many generations as fit in about 8 ms, up to 1024, and leaves the rest of the frame for drawing and input. The slider label shows the rate actually achieved, which depends on the board size and how busy it is.
+Click the separate **Max** toggle beside the slider to enable maximum speed. Switch it off to return to your previous fixed rate; adjusting the slider also leaves Max. The slider always stays within 1–40 gen/s. At Max, each frame runs as many generations as fit in about 8 ms, up to 1024, and leaves the rest of the frame for drawing and input. The adjacent readout shows the rate actually achieved while running, which depends on the board size and how busy it is.
 
 Pressing .keybinding {plus} at 40 gen/s also selects Max, and .keybinding {minus} from Max returns to 40 gen/s.
 
@@ -34,7 +34,7 @@ At a fixed speed, a frame that arrives late runs the generations it missed, up t
 
 A rule says how many live neighbours make a dead cell come alive (*birth*, **B**) and let a live cell stay alive (*survival*, **S**). Conway's Game of Life is `B3/S23`.
 
-Choose a rule in **Settings**, either from a preset or by typing a rulestring and clicking **Apply rule**.
+Choose a rule in **Settings**, either from a preset or by typing a rulestring and clicking **Apply rule**. The preset matching the active board rule is highlighted, including after an import or undo; a custom rule leaves all presets unselected.
 
 | Preset          | Rulestring       | Character                                                           |
 |-----------------|------------------|---------------------------------------------------------------------|

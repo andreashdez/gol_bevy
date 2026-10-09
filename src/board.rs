@@ -597,6 +597,23 @@ impl Board {
         self.live_count
     }
 
+    /// Inclusive bounds, computed on demand rather than during simulation steps.
+    pub fn live_bounds(&self) -> Option<((usize, usize), (usize, usize))> {
+        if self.live_count == 0 {
+            return None;
+        }
+        let mut min = (self.cols, self.rows);
+        let mut max = (0, 0);
+        for (index, &cell) in self.current.iter().enumerate() {
+            if cell == CELL_ALIVE {
+                let (col, row) = (index % self.cols, index / self.cols);
+                min = (min.0.min(col), min.1.min(row));
+                max = (max.0.max(col), max.1.max(row));
+            }
+        }
+        Some((min, max))
+    }
+
     pub fn take_dirty_cells(&mut self) -> DirtyCells {
         if self.dirty_full {
             self.dirty_full = false;

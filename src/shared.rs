@@ -14,7 +14,7 @@ pub const GRID_LINE_COLOR: Color = Color::srgba(0.02, 0.02, 0.03, 0.8);
 pub const CAMERA_ZOOM_STEP: f32 = 0.10;
 pub const CAMERA_ZOOM_MIN: f32 = 0.25;
 // Fit the largest board even in the native canvas at the minimum window size.
-pub const CAMERA_ZOOM_MAX: f32 = 128.0;
+pub const CAMERA_ZOOM_MAX: f32 = 160.0;
 pub const CAMERA_PAN_SPEED: f32 = 700.0;
 
 #[derive(Clone, Copy)]
@@ -231,6 +231,7 @@ fn build_controls_text() -> String {
     append_binding_lines(&mut out, STAMP_BINDINGS);
     append_binding_lines(&mut out, UI_BINDINGS);
     out.push_str("Wheel: zoom camera\n");
+    out.push_str("Middle drag: pan camera\n");
     out.push_str(BINDING_PAN_CAMERA.label);
     out.push_str(": ");
     out.push_str(BINDING_PAN_CAMERA.action);
@@ -334,6 +335,50 @@ impl RateMeter {
 
 #[derive(Resource, Default)]
 pub struct RedrawRequested(pub bool);
+
+/// Short, non-modal feedback shared by toolbar and keyboard edits.
+#[derive(Resource, Default)]
+pub struct EditFeedback {
+    pub message: &'static str,
+    pub remaining: f32,
+}
+
+impl EditFeedback {
+    pub fn show(&mut self, message: &'static str) {
+        self.message = message;
+        self.remaining = 4.0;
+    }
+
+    pub fn undo(&mut self, app: &mut GolApp) {
+        self.show(if app.undo() {
+            "Edit undone"
+        } else {
+            "Nothing to undo"
+        });
+    }
+
+    pub fn redo(&mut self, app: &mut GolApp) {
+        self.show(if app.redo() {
+            "Edit redone · U to undo"
+        } else {
+            "Nothing to redo"
+        });
+    }
+
+    pub fn clear(&mut self, app: &mut GolApp) {
+        if app.board.live_cells_count() == 0 {
+            self.show("Board is already empty");
+        } else {
+            app.clear_board();
+            self.show("Board cleared · U to undo");
+        }
+    }
+
+    pub fn randomize(&mut self, app: &mut GolApp) {
+        app.randomize_board();
+        self.show("Board randomized · U to undo");
+    }
+}
 
 #[derive(Resource)]
 pub struct DiagnosticsOverlay {

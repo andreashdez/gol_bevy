@@ -3,9 +3,10 @@ mod accessibility;
 mod controls;
 mod dialogs;
 mod palette;
+mod toolbar;
 use crate::{
     app::{App as GolApp, EditTool},
-    shared::{GridOverlay, Simulation, StartupSet, UiLayout, UpdateSet},
+    shared::{EditFeedback, GridOverlay, Simulation, StartupSet, UiLayout, UpdateSet},
     ui_input::{UiInputRegions, UiInputSet},
 };
 use bevy::{
@@ -13,7 +14,7 @@ use bevy::{
     ecs::system::SystemParam,
     image::ImageSampler,
     input_focus::{
-        InputFocus,
+        InputFocus, InputFocusVisible,
         tab_navigation::{TabGroup, TabIndex, TabNavigationPlugin},
     },
     picking::hover::Hovered,
@@ -31,8 +32,10 @@ const LINE: Color = Color::srgb(0.18, 0.23, 0.27);
 const INK: Color = Color::srgb(0.88, 0.93, 0.94);
 const MUTED: Color = Color::srgb(0.52, 0.63, 0.68);
 const ACCENT: Color = Color::srgb(0.22, 0.85, 0.56);
-const TOP: f32 = 112.0;
-const BOTTOM: f32 = 48.0;
+
+fn bottom_height(size: Vec2) -> f32 {
+    if size.x < 1000.0 { 88.0 } else { 48.0 }
+}
 const SIDE: f32 = 256.0;
 const UI_FONT: Handle<Font> = bevy::asset::uuid_handle!("67dfd7f0-b829-4a23-a5ae-3e416c5aba2d");
 
@@ -48,10 +51,11 @@ pub struct NativeUiPlugin;
 impl Plugin for NativeUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<NativeUi>()
+            .init_resource::<EditFeedback>()
             .add_plugins(TabNavigationPlugin)
             .add_observer(activate)
             .add_observer(controls::speed_changed)
-            .add_observer(controls::fit_board)
+            .add_observer(controls::navigate)
             .add_plugins(dialogs::NativeDialogsPlugin)
             .add_plugins(accessibility::NativeAccessibilityPlugin)
             .add_systems(
@@ -69,6 +73,9 @@ impl Plugin for NativeUiPlugin {
                     palette::sync_preview,
                     controls::sync_speed,
                     controls::sync_overlays,
+                    controls::sync_footer,
+                    toolbar::sync_layout,
+                    controls::sync_feedback,
                     publish_input_regions,
                 )
                     .chain()
@@ -86,8 +93,15 @@ struct Sidebar;
 #[derive(Component)]
 struct Palette;
 #[derive(Component)]
+struct Footer;
+#[derive(Component)]
+struct FooterStatus;
+#[derive(Component)]
 enum Readout {
     Status,
+    Generation,
+    Population,
+    Rule,
     Board,
 }
 
@@ -99,6 +113,10 @@ enum Action {
     Redo,
     Grid,
     FitBoard,
+    FitLiveCells,
+    ZoomIn,
+    ZoomOut,
+    MaxSpeed,
     Sidebar,
     Import,
     Help,
@@ -187,55 +205,7 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
             Font::from_bytes(include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf").to_vec()),
         )
         .expect("static UI font handle is valid");
-    commands
-        .spawn((
-            NativeRoot,
-            TabGroup::default(),
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(0),
-                right: px(0),
-                top: px(0),
-                height: px(TOP),
-                padding: UiRect::all(px(16)),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(10),
-                border: UiRect::bottom(px(1)),
-                ..default()
-            },
-            BackgroundColor(PANEL),
-            BorderColor::all(LINE),
-            GlobalZIndex(10),
-        ))
-        .with_children(|p| {
-            p.spawn(row()).with_children(|p| {
-                p.spawn(label("LIFE", 23.0, ACCENT));
-                p.spawn((controls::WideLabel, label("/  GAME OF LIFE", 12.0, MUTED)));
-                p.spawn(Node {
-                    flex_grow: 1.0,
-                    ..default()
-                });
-                button(p, "Grid", Action::Grid);
-                button(p, "Palette", Action::Sidebar);
-                button(p, "Import / Export", Action::Import);
-                button(p, "Settings", Action::Settings);
-                button(p, "Help", Action::Help);
-            });
-            p.spawn(row()).with_children(|p| {
-                button(p, "Play", Action::Play);
-                button(p, "Step", Action::Step);
-                controls::speed_slider(p);
-                p.spawn(Node {
-                    flex_grow: 1.0,
-                    ..default()
-                });
-                // Board edits sit together, with Undo next to Clear.
-                button(p, "Randomize", Action::Randomize);
-                button(p, "Clear", Action::Clear);
-                button(p, "Undo", Action::Undo);
-                button(p, "Redo", Action::Redo);
-            });
-        });
+    toolbar::spawn(&mut commands);
     commands
         .spawn((
             NativeRoot,
@@ -244,8 +214,8 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
             Node {
                 position_type: PositionType::Absolute,
                 left: px(16),
-                top: px(TOP + 16.0),
-                bottom: px(BOTTOM + 16.0),
+                top: px(toolbar::height(1200.0) + 16.0),
+                bottom: px(64),
                 width: px(SIDE),
                 padding: UiRect::all(px(10)),
                 flex_direction: FlexDirection::Column,
@@ -272,16 +242,18 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
     commands
         .spawn((
             NativeRoot,
+            Footer,
             TabGroup::default(),
             Node {
                 position_type: PositionType::Absolute,
                 left: px(0),
                 right: px(0),
                 bottom: px(0),
-                height: px(BOTTOM),
+                height: px(48),
                 padding: UiRect::axes(px(16), px(4)),
                 align_items: AlignItems::Center,
                 column_gap: px(16),
+                row_gap: px(8),
                 border: UiRect::top(px(1)),
                 ..default()
             },
@@ -290,29 +262,72 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
             GlobalZIndex(10),
         ))
         .with_children(|p| {
-            p.spawn((label("", 13.0, INK), Readout::Status));
-            p.spawn(Node {
-                flex_grow: 1.0,
-                ..default()
+            p.spawn((
+                FooterStatus,
+                Node {
+                    align_items: AlignItems::Center,
+                    column_gap: px(8),
+                    height: px(34),
+                    flex_grow: 1.0,
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+            ))
+            .with_children(|p| {
+                for (kind, width) in [
+                    (Readout::Status, 68.0),
+                    (Readout::Generation, 176.0),
+                    (Readout::Population, 104.0),
+                    (Readout::Rule, 150.0),
+                ] {
+                    p.spawn(Node {
+                        width: px(width),
+                        flex_shrink: 0.0,
+                        ..default()
+                    })
+                    .with_children(|p| {
+                        p.spawn((label("", 13.0, INK), kind))
+                            .insert(controls::numeric_font(13.0));
+                    });
+                }
+                p.spawn((label("", 12.0, MUTED), Readout::Board));
             });
-            p.spawn((controls::WideLabel, label("", 12.0, MUTED), Readout::Board));
-            button(p, "Fit board", Action::FitBoard);
+            p.spawn(row()).with_children(|p| {
+                button(p, "−", Action::ZoomOut);
+                p.spawn((
+                    controls::ZoomLabel,
+                    label("100%", 13.0, INK),
+                    controls::Tooltip("Zoom relative to Fit board (100%)".into()),
+                    Hovered::default(),
+                    Node {
+                        width: px(56),
+                        flex_shrink: 0.0,
+                        ..default()
+                    },
+                ));
+                button(p, "+", Action::ZoomIn);
+                button(p, "Fit board", Action::FitBoard);
+                button(p, "Fit live cells", Action::FitLiveCells);
+            });
         });
     controls::overlays(&mut commands);
+    controls::feedback_overlay(&mut commands);
 }
 
 /// Logical rectangles shared by layout and input routing; gaps remain canvas.
 pub fn panel_rects(size: Vec2, layout: &UiLayout) -> Vec<Rect> {
+    let top = toolbar::height(size.x);
+    let bottom = bottom_height(size);
     let mut rects = vec![
-        Rect::new(0.0, 0.0, size.x, TOP),
-        Rect::new(0.0, (size.y - BOTTOM).max(0.0), size.x, size.y),
+        Rect::new(0.0, 0.0, size.x, top),
+        Rect::new(0.0, (size.y - bottom).max(0.0), size.x, size.y),
     ];
-    if layout.control_deck_visible && size.y > TOP + BOTTOM + 32.0 {
+    if layout.control_deck_visible && size.y > top + bottom + 32.0 {
         rects.push(Rect::new(
             16.0,
-            TOP + 16.0,
+            top + 16.0,
             SIDE + 16.0,
-            size.y - BOTTOM - 16.0,
+            size.y - bottom - 16.0,
         ));
     }
     rects
@@ -325,8 +340,8 @@ pub fn canvas_rect(size: Vec2, layout: &UiLayout) -> Rect {
     } else {
         16.0
     };
-    let max = (size - Vec2::new(16.0, BOTTOM + 16.0)).max(Vec2::ONE);
-    let min = Vec2::new(left, TOP + 16.0)
+    let max = (size - Vec2::new(16.0, bottom_height(size) + 16.0)).max(Vec2::ONE);
+    let min = Vec2::new(left, toolbar::height(size.x) + 16.0)
         .min(max - Vec2::ONE)
         .max(Vec2::ZERO);
     Rect::from_corners(min, max)
@@ -351,6 +366,7 @@ fn activate(
     mut sim: ResMut<Simulation>,
     mut grid: ResMut<GridOverlay>,
     mut layout: ResMut<UiLayout>,
+    mut feedback: ResMut<EditFeedback>,
 ) {
     let Ok(action) = actions.get(event.entity) else {
         return;
@@ -358,6 +374,9 @@ fn activate(
     match action {
         Action::Import
         | Action::FitBoard
+        | Action::FitLiveCells
+        | Action::ZoomIn
+        | Action::ZoomOut
         | Action::Settings
         | Action::Diagnostics
         | Action::Help
@@ -370,6 +389,10 @@ fn activate(
         | Action::ExportRle => {}
         Action::Grid => grid.enabled = !grid.enabled,
         Action::Sidebar => layout.toggle_control_deck(),
+        Action::Undo => feedback.undo(&mut sim.app),
+        Action::Redo => feedback.redo(&mut sim.app),
+        Action::Clear => feedback.clear(&mut sim.app),
+        Action::Randomize => feedback.randomize(&mut sim.app),
         _ => apply_action(*action, &mut sim.app),
     }
 }
@@ -377,6 +400,13 @@ fn activate(
 fn apply_action(action: Action, app: &mut GolApp) {
     match action {
         Action::Play => app.toggle_running(),
+        Action::MaxSpeed => {
+            if app.is_max_speed() {
+                app.set_tick_rate_ms(app.tick_rate_ms());
+            } else {
+                app.set_max_speed();
+            }
+        }
         Action::Step => app.increment_epoch(),
         Action::Undo => {
             app.undo();
@@ -416,13 +446,16 @@ struct ViewState<'w> {
     layout: Res<'w, UiLayout>,
     grid: Res<'w, GridOverlay>,
     focus: Res<'w, InputFocus>,
+    focus_visible: Res<'w, InputFocusVisible>,
 }
+
+type RootNode<'a> = (&'a mut Node, Has<Sidebar>, Has<toolbar::Toolbar>);
 
 fn sync(
     mut commands: Commands,
     sim: Res<Simulation>,
     view: ViewState,
-    mut roots: Query<(&mut Node, Has<Sidebar>), With<NativeRoot>>,
+    mut roots: Query<RootNode, With<NativeRoot>>,
     mut buttons: Query<ButtonState>,
     mut texts: Query<(&mut Text, &mut TextColor, Option<&Readout>)>,
 ) {
@@ -431,12 +464,15 @@ fn sync(
         layout,
         grid,
         focus,
+        focus_visible: _,
     } = view;
-    for (mut node, sidebar) in &mut roots {
-        let display = if !sidebar || layout.control_deck_visible {
-            Display::Flex
-        } else {
+    for (mut node, sidebar, toolbar) in &mut roots {
+        let display = if sidebar && !layout.control_deck_visible {
             Display::None
+        } else if toolbar {
+            Display::Grid
+        } else {
+            Display::Flex
         };
         if node.display != display {
             node.display = display;
@@ -484,11 +520,20 @@ fn sync(
             }
             Action::Grid => grid.enabled,
             Action::Sidebar => layout.control_deck_visible,
+            Action::MaxSpeed => sim.app.is_max_speed(),
+            Action::RulePreset(index) => dialogs::RULE_PRESETS
+                .get(*index)
+                .is_some_and(|(_, rule)| sim.app.rule_label() == *rule),
             _ => false,
         };
         if matches!(
             action,
-            Action::Tool(_) | Action::Pattern(_) | Action::Grid | Action::Sidebar
+            Action::Tool(_)
+                | Action::Pattern(_)
+                | Action::Grid
+                | Action::Sidebar
+                | Action::MaxSpeed
+                | Action::RulePreset(_)
         ) {
             accessible.set_toggled(if selected {
                 accesskit::Toggled::True
@@ -546,17 +591,15 @@ fn sync(
     }
     for (mut text, _, readout) in &mut texts {
         let value = match readout {
-            Some(Readout::Status) => format!(
-                "{}   ·   Gen {}   ·   {} alive   ·   {}",
-                if sim.app.is_running() {
-                    "RUNNING"
-                } else {
-                    "PAUSED"
-                },
-                sim.app.epoch,
-                sim.app.board.live_cells_count(),
-                sim.app.rule_label()
-            ),
+            Some(Readout::Status) => if sim.app.is_running() {
+                "RUNNING"
+            } else {
+                "PAUSED"
+            }
+            .to_owned(),
+            Some(Readout::Generation) => format!("Gen {}", sim.app.epoch),
+            Some(Readout::Population) => format!("{} alive", sim.app.board.live_cells_count()),
+            Some(Readout::Rule) => sim.app.rule_label(),
             Some(Readout::Board) => format!(
                 "{} × {} cells   ·   {} edges",
                 sim.app.board.size().0,
@@ -731,6 +774,41 @@ mod tests {
         assert_eq!(app.board.live_cells_count(), 5);
         apply_action(Action::Play, &mut app);
         assert!(app.is_running());
+    }
+
+    #[test]
+    fn compact_toolbar_returns_space_to_the_canvas_and_input_regions_follow_it() {
+        let layout = UiLayout::default();
+        let narrow = Vec2::new(1199.0, 800.0);
+        let wide = Vec2::new(1200.0, 800.0);
+        assert_eq!(
+            canvas_rect(narrow, &layout).min.y - canvas_rect(wide, &layout).min.y,
+            48.0
+        );
+        let returned_space = Vec2::new(500.0, 100.0);
+        assert!(
+            panel_rects(narrow, &layout)
+                .iter()
+                .any(|r| r.contains(returned_space))
+        );
+        assert!(
+            !panel_rects(wide, &layout)
+                .iter()
+                .any(|r| r.contains(returned_space))
+        );
+        assert!(canvas_rect(wide, &layout).contains(returned_space));
+        for width in [680.0, 999.0, 1000.0, 1199.0, 1200.0, 1600.0] {
+            for visible in [true, false] {
+                let size = Vec2::new(width, 420.0);
+                let layout = UiLayout {
+                    control_deck_visible: visible,
+                };
+                let canvas = canvas_rect(size, &layout);
+                for panel in panel_rects(size, &layout) {
+                    assert!(canvas.intersect(panel).is_empty());
+                }
+            }
+        }
     }
 
     #[test]

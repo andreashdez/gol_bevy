@@ -198,7 +198,7 @@ impl App {
     }
 
     /// Runs generations back to back instead of on the tick interval. The
-    /// interval is kept so slowing down returns to the fastest fixed rate.
+    /// interval is kept so switching off Max restores the selected fixed rate.
     pub fn set_max_speed(&mut self) -> bool {
         if self.max_speed {
             return false;
@@ -218,6 +218,9 @@ impl App {
     }
 
     pub fn speed_up(&mut self) -> bool {
+        if self.max_speed {
+            return false;
+        }
         if self.tick_rate_ms <= Self::TICK_RATE_MIN_MS {
             // Past the fastest interval is max speed.
             return self.set_max_speed();

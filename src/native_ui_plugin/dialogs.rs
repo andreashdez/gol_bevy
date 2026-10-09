@@ -34,7 +34,7 @@ impl DialogKind {
 }
 
 /// Well-known rules offered as one-click choices in the settings dialog.
-const RULE_PRESETS: [(&str, &str); 4] = [
+pub(super) const RULE_PRESETS: [(&str, &str); 4] = [
     ("Life", "B3/S23"),
     ("HighLife", "B36/S23"),
     ("Day & Night", "B3678/S34678"),

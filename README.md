@@ -29,11 +29,18 @@ cargo run
 The interface uses native Bevy UI throughout: playback controls, a searchable pattern
 palette, editing tools, live status, and import/settings/help/diagnostics dialogs.
 
+At 1200 pixels wide and above, the toolbar uses a single 64-pixel row, grouped into
+playback, board edits, and workspace controls. Narrower windows use two rows.
+Resizing preserves keyboard focus and the camera view relative to the fitted board.
+
 The pattern library scrolls with the mouse wheel or its scrollbar; editing tools, the
 stamp preview with its rotate/flip controls, and search stay visible while browsing. Scrolling
 over the canvas zooms it. Randomize and Clear are always available in the toolbar.
 The board has its own canvas beside the palette and between the toolbar and status
 bar. Startup, board-size changes, **Fit board**, and **V** fit the entire board into that space.
+Use **− / +** next to **Fit board** to zoom; 100% means the whole-board fit.
+**Fit live cells** frames the occupied cells with a small margin, or fits the whole
+board when empty. Middle-button dragging pans without editing cells.
 Window and layout changes retain the pan position and zoom relative to the fitted
 view. Drawing and stamp previews stay inside the canvas, including on Retina displays.
 Search patterns by name; builtin and imported patterns have separate groups. The
@@ -41,9 +48,11 @@ stamp preview shows the orientation that will be placed, including rotation and
 horizontal flip. Filtering the library keeps the current stamp selected.
 
 Drag the native speed slider or focus it and use Left/Right (Home/End for the
-limits). The notch past 40 gen/s is **Max**: each frame runs as many generations
-as fit in about 8 ms, and the label shows the rate actually achieved. **+** at
-40 gen/s also selects Max, and **-** returns to 40 gen/s. Hover or focus buttons for shortcut hints. Empty boards show guidance
+limits). A separate **Max** toggle runs as many generations as fit in about 8 ms per frame,
+and the adjacent readout shows the achieved rate while running. Switching Max off
+restores the previously selected fixed rate; adjusting the slider leaves Max.
+The slider and its Home/End keys stay within 1–40 gen/s. **+** at 40 gen/s also
+selects Max, and **-** returns to 40 gen/s. Hover or focus buttons for shortcut hints. Empty boards show guidance
 that disappears after the first cells are placed. Search and slider focus block
 board shortcuts; Escape returns keyboard control to the canvas.
 
@@ -111,6 +120,7 @@ F3: toggle diagnostics
 t: toggle grid
 /: toggle help
 Wheel: zoom camera
+Middle drag: pan camera
 WASD / Arrows: pan camera
 v: reset camera
 Left drag: draw or erase with the selected tool
@@ -127,7 +137,10 @@ Pattern palette:
 
 Board size is set in Settings: pick a preset (128², 256², 512², 1024²) or type exact dimensions, from 8 up to 2048 per side. The choice is saved between runs. Resizing the board clears undo history, because old snapshots no longer fit; resizing the window does not.
 
-The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools share a visual pattern palette; rotate and flip controls appear for stamps. Use Palette to show or hide the editing tools and library. Grid is available in the toolbar and Settings; boundary mode is in Settings. The status bar shows the generation, population, and rule, plus board dimensions and boundary mode when space allows. Diagnostics open from Settings or F3 and start hidden.
+The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools share a visual pattern palette; rotate and flip controls appear for stamps. Use Palette to show or hide the editing tools and library. Grid is available in the toolbar and Settings; boundary mode is in Settings. The status bar shows the generation, population, and rule, plus board dimensions and boundary mode when space allows. Generation and population use fixed-width readouts with tabular digits. The footer
+stacks into two rows in narrower windows. The active rule preset is highlighted in
+Settings. Clear, randomize, undo, and redo show brief feedback, including the undo
+shortcut where applicable. Diagnostics open from Settings or F3 and start hidden.
 
 Undo restores the board, generation, and rule before drawing, erasing, placing a stamp, randomizing, clearing, changing the rule, or importing a pattern that changes the rule, and pauses playback. Redo reapplies an undone edit, and making a new edit discards the redo chain. Each drag is one edit. History retains up to 32 edits within an approximate 16 MiB budget (with at least one edit), and clears when the board is resized. Imported patterns remain available for the current session.
 
