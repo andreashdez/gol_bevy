@@ -1,4 +1,16 @@
 //! Native Bevy interface for the simulation.
+
+/// Assigns only when the value differs. UI rendering is retained, so writing an
+/// unchanged value every frame would still mark the node for re-extraction.
+macro_rules! set_if_neq {
+    ($place:expr, $value:expr) => {{
+        let value = $value;
+        if $place != value {
+            $place = value;
+        }
+    }};
+}
+
 mod accessibility;
 mod controls;
 mod dialogs;
@@ -474,9 +486,7 @@ fn sync(
         } else {
             Display::Flex
         };
-        if node.display != display {
-            node.display = display;
-        }
+        set_if_neq!(node.display, display);
     }
     for (entity, action, hovered, pressed, mut bg, mut border, children, name, mut accessible) in
         &mut buttons
@@ -541,7 +551,7 @@ fn sync(
                 accesskit::Toggled::False
             });
         }
-        bg.0 = if disabled {
+        bg.set_if_neq(BackgroundColor(if disabled {
             PANEL
         } else if *action == Action::Play {
             if pressed {
@@ -555,23 +565,23 @@ fn sync(
             Color::srgb(0.08, 0.21, 0.17)
         } else {
             SURFACE
-        };
-        *border = BorderColor::all(if focus.get() == Some(entity) {
+        }));
+        border.set_if_neq(BorderColor::all(if focus.get() == Some(entity) {
             INK
         } else if selected {
             ACCENT
         } else {
             LINE
-        });
+        }));
         for child in children.iter() {
             if let Ok((mut text, mut color, _)) = texts.get_mut(child) {
-                color.0 = if disabled {
+                color.set_if_neq(TextColor(if disabled {
                     MUTED
                 } else if *action == Action::Play {
                     PANEL
                 } else {
                     INK
-                };
+                }));
                 let replacement = match action {
                     Action::Play => Some(if sim.app.is_running() {
                         "Pause".to_string()
@@ -759,6 +769,41 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn unchanged_frames_leave_button_render_state_untouched() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Assets<Font>>();
+        world.insert_resource(Simulation::new(GolApp::new(8, 8)));
+        world.init_resource::<NativeUi>();
+        world.init_resource::<UiLayout>();
+        world.insert_resource(GridOverlay { enabled: false });
+        world.init_resource::<InputFocus>();
+        world.init_resource::<InputFocusVisible>();
+        world.run_system_once(setup).unwrap();
+        world.run_system_once(sync).unwrap();
+        let ticks = |world: &mut World| {
+            let mut ticks = Vec::new();
+            ticks.extend(
+                world
+                    .query_filtered::<(Ref<BackgroundColor>, Ref<BorderColor>), With<Action>>()
+                    .iter(world)
+                    .flat_map(|(bg, border)| [bg.last_changed(), border.last_changed()]),
+            );
+            ticks.extend(
+                world
+                    .query::<Ref<TextColor>>()
+                    .iter(world)
+                    .map(|color| color.last_changed()),
+            );
+            ticks
+        };
+        let before = ticks(&mut world);
+        assert!(!before.is_empty());
+        world.run_system_once(sync).unwrap();
+        assert_eq!(ticks(&mut world), before);
     }
 
     #[test]

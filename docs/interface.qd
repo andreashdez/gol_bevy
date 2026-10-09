@@ -76,7 +76,7 @@ Clear, randomize, undo, and redo briefly show feedback above the status bar. Und
 | **Help**            | .keybinding {/} or the **Help** button   | a summary and the full list of shortcuts                       |
 | **Diagnostics**     | .keybinding {F3} or **Settings**         | live simulation statistics                                     |
 
-Dialogs are modal. While one is open, typing and scrolling inside it do not reach the board, and board shortcuts are disabled. Press .keybinding {Esc} or click **Close** to close a dialog without quitting; focus returns to the control that opened it.
+Dialogs are modal. While one is open, typing and scrolling inside it do not reach the board, and board shortcuts are disabled. Press .keybinding {Esc} or click **Close** to close a dialog; focus returns to the control that opened it.
 
 ### Diagnostics
 

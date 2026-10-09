@@ -359,11 +359,11 @@ pub(super) fn update_dialogs(
     for (kind, mut text, mut color) in &mut readouts {
         let value = match kind {
             DialogReadout::Feedback => {
-                color.0 = if state.drafts.error {
+                color.set_if_neq(TextColor(if state.drafts.error {
                     Color::srgb(1.0, 0.55, 0.5)
                 } else {
                     ACCENT
-                };
+                }));
                 state.drafts.feedback.clone()
             }
             DialogReadout::Diagnostics => {

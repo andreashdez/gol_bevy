@@ -133,7 +133,7 @@ fn sync_accessibility(
         }
         if let Some(mut index) = tab_index {
             // Bevy's tab walker does not skip Display::None or disabled widgets.
-            index.0 = if visible && !disabled { 0 } else { -1 };
+            index.set_if_neq(TabIndex(if visible && !disabled { 0 } else { -1 }));
             node.add_action(AccessibleAction::Focus);
         }
         if action.is_some() {
@@ -149,11 +149,11 @@ fn sync_accessibility(
                 node.set_role(Role::MultilineTextInput);
             }
             if let Some(mut border) = border {
-                *border = BorderColor::all(if focus.get() == Some(entity) {
+                border.set_if_neq(BorderColor::all(if focus.get() == Some(entity) {
                     ACCENT
                 } else {
                     LINE
-                });
+                }));
             }
         } else if let Some(text) = text
             && node.label() != Some(text.0.as_str())

@@ -209,8 +209,8 @@ pub const BINDING_RESET_CAMERA: KeyBinding = KeyBinding {
     action: "reset camera",
 };
 pub const BINDING_QUIT: KeyBinding = KeyBinding {
-    keys: &[KeyCode::KeyQ, KeyCode::Escape],
-    label: "q / Esc",
+    keys: &[KeyCode::KeyQ],
+    label: "q",
     action: "quit",
 };
 

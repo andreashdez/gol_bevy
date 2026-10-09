@@ -53,7 +53,7 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 | .keybinding {H}                                | Hide or show the pattern palette |
 | .keybinding {F3}                               | Toggle diagnostics              |
 | .keybinding {/}                                | Toggle help                     |
-| .keybinding {Q} or .keybinding {Esc}           | Quit                            |
+| .keybinding {Q}                                | Quit                            |
 
 ## Controls and dialogs
 

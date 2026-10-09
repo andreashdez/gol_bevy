@@ -58,8 +58,8 @@ board shortcuts; Escape returns keyboard control to the canvas.
 
 Tab moves between visible, enabled native controls and Enter/Space activates the focused button;
 click the canvas to return Space to playback. RLE import, help, diagnostics, and
-workspace settings now use native Bevy dialogs. Escape closes a dialog without
-quitting; typing and scrolling inside dialogs do not affect the board or camera.
+workspace settings now use native Bevy dialogs. Escape closes a dialog;
+typing and scrolling inside dialogs do not affect the board or camera.
 Closing a dialog restores focus to its opener. Native fields expose names and values
 to accessibility tools, buttons expose their actions and selected states, and inline
 validation messages use polite live announcements. Editors support platform clipboard
@@ -128,7 +128,7 @@ Left click (stamp): place pattern
 Right drag: erase
 U or Cmd/Ctrl+Z: undo last edit and pause
 Cmd/Ctrl+Shift+Z: redo last undone edit
-q / Esc: quit
+q: quit
 
 Pattern palette:
 - Use Import / Export to paste RLE as a stamp or copy the board as RLE

@@ -296,14 +296,17 @@ pub(super) fn sync_speed(
     accessible.add_action(accesskit::Action::SetValue);
     accessible.add_action(accesskit::Action::Increment);
     accessible.add_action(accesskit::Action::Decrement);
-    *border = BorderColor::all(if focus.get() == Some(entity) {
+    border.set_if_neq(BorderColor::all(if focus.get() == Some(entity) {
         INK
     } else {
         LINE
-    });
+    }));
     if let Ok(mut thumb) = thumbs.single_mut() {
         let travel = (computed.size().x * computed.inverse_scale_factor - 16.0).max(0.0);
-        thumb.left = px(travel * (position - 1.0) / (SLIDER_FASTEST_RATE - 1.0));
+        set_if_neq!(
+            thumb.left,
+            px(travel * (position - 1.0) / (SLIDER_FASTEST_RATE - 1.0))
+        );
     }
     if let Ok(mut label) = labels.single_mut()
         && label.0 != shown
@@ -392,18 +395,24 @@ pub(super) fn sync_overlays(
     let canvas = canvas_rect(window.size(), &view.layout);
     for (mut node, overlay, wide, tall) in &mut nodes {
         if wide {
-            node.display = if window.width() < 850.0 {
-                Display::None
-            } else {
-                Display::Flex
-            };
+            set_if_neq!(
+                node.display,
+                if window.width() < 850.0 {
+                    Display::None
+                } else {
+                    Display::Flex
+                }
+            );
         }
         if let Some(tall) = tall {
-            node.display = if window.height() < 560.0 && !tall.always_show {
-                Display::None
-            } else {
-                Display::Flex
-            };
+            set_if_neq!(
+                node.display,
+                if window.height() < 560.0 && !tall.always_show {
+                    Display::None
+                } else {
+                    Display::Flex
+                }
+            );
         }
         let Some(mut overlay) = overlay else {
             continue;
@@ -456,15 +465,18 @@ pub(super) fn sync_overlays(
                 )
             }
         };
-        node.display = if show && view.mode.dialog.is_none() {
-            Display::Flex
-        } else {
-            Display::None
-        };
-        node.left = px(left);
-        node.top = top;
-        node.bottom = bottom;
-        node.width = px(width);
+        set_if_neq!(
+            node.display,
+            if show && view.mode.dialog.is_none() {
+                Display::Flex
+            } else {
+                Display::None
+            }
+        );
+        set_if_neq!(node.left, px(left));
+        set_if_neq!(node.top, top);
+        set_if_neq!(node.bottom, bottom);
+        set_if_neq!(node.width, px(width));
         for (mut label, kind) in &mut texts {
             if kind.0 == hint && label.0 != text {
                 label.0 = text.clone();
@@ -496,38 +508,53 @@ pub(super) fn sync_footer(
     let narrow = window.width() < 1000.0;
     for (mut node, footer, status, sidebar, readout, action, toolbar_button) in &mut nodes {
         if footer {
-            node.height = px(bottom_height(window.size()));
-            node.flex_direction = if narrow {
-                FlexDirection::Column
-            } else {
-                FlexDirection::Row
-            };
-            node.align_items = if narrow {
-                AlignItems::Stretch
-            } else {
-                AlignItems::Center
-            };
+            set_if_neq!(node.height, px(bottom_height(window.size())));
+            set_if_neq!(
+                node.flex_direction,
+                if narrow {
+                    FlexDirection::Column
+                } else {
+                    FlexDirection::Row
+                }
+            );
+            set_if_neq!(
+                node.align_items,
+                if narrow {
+                    AlignItems::Stretch
+                } else {
+                    AlignItems::Center
+                }
+            );
         }
         if status {
-            node.flex_grow = if narrow { 0.0 } else { 1.0 };
+            set_if_neq!(node.flex_grow, if narrow { 0.0 } else { 1.0 });
         }
         if sidebar {
-            node.bottom = px(bottom_height(window.size()) + 16.0);
+            set_if_neq!(node.bottom, px(bottom_height(window.size()) + 16.0));
         }
         if matches!(readout, Some(Readout::Board)) {
-            node.display = if window.width() >= 1400.0 {
-                Display::Flex
-            } else {
-                Display::None
-            };
+            set_if_neq!(
+                node.display,
+                if window.width() >= 1400.0 {
+                    Display::Flex
+                } else {
+                    Display::None
+                }
+            );
         }
         if let Some(action) = action
             && !toolbar_button
             && !matches!(action, Action::Pattern(_))
         {
-            node.padding = UiRect::axes(px(if window.width() < 850.0 { 8.0 } else { 12.0 }), px(9));
+            set_if_neq!(
+                node.padding,
+                UiRect::axes(px(if window.width() < 850.0 { 8.0 } else { 12.0 }), px(9))
+            );
             if *action == Action::Play {
-                node.min_width = px(if window.width() < 850.0 { 64.0 } else { 72.0 });
+                set_if_neq!(
+                    node.min_width,
+                    px(if window.width() < 850.0 { 64.0 } else { 72.0 })
+                );
             }
         }
     }
@@ -582,14 +609,17 @@ pub(super) fn sync_feedback(
     };
     let canvas = canvas_rect(window.size(), &view.layout);
     for mut node in &mut nodes {
-        node.display = if feedback.remaining > 0.0 && view.mode.dialog.is_none() {
-            Display::Flex
-        } else {
-            Display::None
-        };
-        node.left = px(canvas.min.x + 12.0);
-        node.bottom = px(window.height() - canvas.max.y + 12.0);
-        node.max_width = px((canvas.width() - 24.0).max(0.0));
+        set_if_neq!(
+            node.display,
+            if feedback.remaining > 0.0 && view.mode.dialog.is_none() {
+                Display::Flex
+            } else {
+                Display::None
+            }
+        );
+        set_if_neq!(node.left, px(canvas.min.x + 12.0));
+        set_if_neq!(node.bottom, px(window.height() - canvas.max.y + 12.0));
+        set_if_neq!(node.max_width, px((canvas.width() - 24.0).max(0.0)));
     }
     for mut text in &mut texts {
         let value = if feedback.remaining > 0.0 {

@@ -17,7 +17,7 @@ While a text field or the speed slider has focus, board shortcuts are disabled, 
 
 Dialogs are modal: .keybinding {Tab} stays inside the open dialog. The Help and Diagnostics dialogs focus their **Close** button when they open.
 
-.keybinding {Esc} closes a dialog without quitting the app, and focus returns to the control that opened it. The key that opened Help (.keybinding {/}) or Diagnostics (.keybinding {F3}) closes it again.
+.keybinding {Esc} closes a dialog, and focus returns to the control that opened it. The key that opened Help (.keybinding {/}) or Diagnostics (.keybinding {F3}) closes it again.
 
 ## Screen readers
 
