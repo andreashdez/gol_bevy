@@ -1,7 +1,7 @@
 //! Search, library grouping, and a preview of the actual stamp orientation.
 use super::*;
 use bevy::text::{EditableText, TextCursorStyle};
-use bevy::ui_widgets::{ControlOrientation, Scrollbar, ScrollbarThumb};
+use bevy::ui_widgets::{ControlOrientation, Scrollbar, ScrollbarThumb, TextInput};
 
 #[derive(Component)]
 pub(super) struct PatternSearch;
@@ -110,6 +110,7 @@ pub(super) fn search(parent: &mut ChildSpawnerCommands) {
         .spawn((
             PatternSearch,
             input,
+            TextInput,
             TabIndex(0),
             accessibility::named_node(accesskit::Role::TextInput, "Search patterns"),
             Node {

@@ -11,7 +11,7 @@ use bevy::{
     clipboard::Clipboard,
     input_focus::AutoFocus,
     text::{EditableText, TextCursorStyle, TextEdit},
-    ui_widgets::SelectAllOnFocus,
+    ui_widgets::{SelectAllOnFocus, TextInput},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -404,6 +404,7 @@ fn field(
     input.visible_lines = Some(if multiline { 7.0 } else { 1.0 });
     let mut entity = parent.spawn((
         input,
+        TextInput,
         super::accessibility::named_node(accesskit::Role::TextInput, title),
         field,
         TabIndex(0),

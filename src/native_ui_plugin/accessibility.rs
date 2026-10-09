@@ -307,6 +307,9 @@ mod tests {
                     Action::Step,
                     named_node(Role::Button, "Step"),
                     TabIndex(0),
+                    // Tab navigation skips invisible entities, and this bare
+                    // world never runs visibility propagation.
+                    InheritedVisibility::VISIBLE,
                     ChildOf(parent),
                 ))
                 .id()
@@ -387,7 +390,7 @@ mod tests {
         app.add_plugins((
             bevy::input::InputPlugin,
             bevy::input_focus::InputDispatchPlugin,
-            bevy::ui_widgets::EditableTextInputPlugin,
+            bevy::ui_widgets::TextInputPlugin,
         ));
         let window = app
             .world_mut()
@@ -395,7 +398,10 @@ mod tests {
             .id();
         let field = app
             .world_mut()
-            .spawn(EditableText::new("two lines\nof text"))
+            .spawn((
+                EditableText::new("two lines\nof text"),
+                bevy::ui_widgets::TextInput,
+            ))
             .id();
         app.world_mut()
             .resource_mut::<InputFocus>()
