@@ -97,8 +97,9 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::Tool(EditTool::Erase) => "Erase cells · right-click also erases",
         Action::Tool(EditTool::Stamp) => "Place the selected pattern on the board",
         Action::Import => "Import RLE into your library, or copy the board as RLE",
-        Action::Settings => "Board size, rule, grid, and edges",
+        Action::Settings => "Board size, rule, theme, grid, and edges",
         Action::RulePreset(_) => "Switch the board to this rule · undo with U",
+        Action::Theme(_) => "Switch the colours of the board and interface · saved automatically",
         Action::ApplyRule => "Use the rulestring above, written in B/S notation",
         Action::ExportRle => "Copy the live cells to the clipboard as RLE",
         Action::CloseDialog => "Close this dialog · Escape",
@@ -193,8 +194,8 @@ pub(super) fn speed_slider(p: &mut ChildSpawnerCommands) {
             align_items: AlignItems::Center,
             ..default()
         },
-        BorderColor::all(LINE),
-        BackgroundColor(PANEL),
+        ThemedBorder(Token::Line),
+        ThemedBackground(Token::Panel),
     ))
     .with_children(|p| {
         p.spawn((
@@ -206,7 +207,7 @@ pub(super) fn speed_slider(p: &mut ChildSpawnerCommands) {
                 border_radius: BorderRadius::all(px(2)),
                 ..default()
             },
-            BackgroundColor(LINE),
+            ThemedBackground(Token::Line),
             Pickable::IGNORE,
         ));
         p.spawn((
@@ -219,7 +220,7 @@ pub(super) fn speed_slider(p: &mut ChildSpawnerCommands) {
                 border_radius: BorderRadius::all(px(5)),
                 ..default()
             },
-            BackgroundColor(ACCENT),
+            ThemedBackground(Token::Accent),
             Pickable::IGNORE,
         ));
     });
@@ -232,7 +233,7 @@ pub(super) fn speed_slider(p: &mut ChildSpawnerCommands) {
         ..default()
     })
     .with_children(|p| {
-        p.spawn((SpeedLabel, label("40.0 gen/s", 13.0, INK)))
+        p.spawn((SpeedLabel, label("40.0 gen/s", 13.0, Token::Ink)))
             .insert(numeric_font(13.0));
     });
 }
@@ -258,7 +259,7 @@ pub(super) fn sync_speed(
             &ComputedNode,
             &SliderValue,
             &mut AccessibilityNode,
-            &mut BorderColor,
+            &mut ThemedBorder,
         ),
         With<SpeedSlider>,
     >,
@@ -296,10 +297,10 @@ pub(super) fn sync_speed(
     accessible.add_action(accesskit::Action::SetValue);
     accessible.add_action(accesskit::Action::Increment);
     accessible.add_action(accesskit::Action::Decrement);
-    border.set_if_neq(BorderColor::all(if focus.get() == Some(entity) {
-        INK
+    border.set_if_neq(ThemedBorder(if focus.get() == Some(entity) {
+        Token::Focus
     } else {
-        LINE
+        Token::Line
     }));
     if let Ok(mut thumb) = thumbs.single_mut() {
         let travel = (computed.size().x * computed.inverse_scale_factor - 16.0).max(0.0);
@@ -336,13 +337,13 @@ pub(super) fn overlays(commands: &mut Commands) {
                     border_radius: BorderRadius::all(px(8)),
                     ..default()
                 },
-                BackgroundColor(PANEL),
-                BorderColor::all(LINE),
+                ThemedBackground(Token::Panel),
+                ThemedBorder(Token::Line),
                 GlobalZIndex(if hint { 100 } else { 1 }),
                 Pickable::IGNORE,
             ))
             .with_children(|p| {
-                p.spawn((OverlayText(hint), label("", 13.0, MUTED)));
+                p.spawn((OverlayText(hint), label("", 13.0, Token::Muted)));
             });
     }
 }
@@ -581,15 +582,15 @@ pub(super) fn feedback_overlay(commands: &mut Commands) {
                 border_radius: BorderRadius::all(px(8)),
                 ..default()
             },
-            BackgroundColor(PANEL),
-            BorderColor::all(LINE),
+            ThemedBackground(Token::Panel),
+            ThemedBorder(Token::Line),
             GlobalZIndex(20),
             Pickable::IGNORE,
         ))
         .with_children(|p| {
             p.spawn((
                 FeedbackText,
-                label("", 14.0, INK),
+                label("", 14.0, Token::Ink),
                 accessibility::feedback_node(),
             ));
         });

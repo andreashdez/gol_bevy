@@ -15,10 +15,11 @@ mod accessibility;
 mod controls;
 mod dialogs;
 mod palette;
+mod theme;
 mod toolbar;
 use crate::{
     app::{App as GolApp, EditTool},
-    shared::{EditFeedback, GridOverlay, Simulation, StartupSet, UiLayout, UpdateSet},
+    shared::{EditFeedback, GridOverlay, Simulation, StartupSet, Theme, UiLayout, UpdateSet},
     ui_input::{UiInputRegions, UiInputSet},
 };
 use bevy::{
@@ -37,13 +38,7 @@ use bevy::{
     window::PrimaryWindow,
 };
 use dialogs::DialogKind;
-
-const PANEL: Color = Color::srgb(0.055, 0.075, 0.095);
-const SURFACE: Color = Color::srgb(0.095, 0.12, 0.145);
-const LINE: Color = Color::srgb(0.18, 0.23, 0.27);
-const INK: Color = Color::srgb(0.88, 0.93, 0.94);
-const MUTED: Color = Color::srgb(0.52, 0.63, 0.68);
-const ACCENT: Color = Color::srgb(0.22, 0.85, 0.56);
+use theme::{ThemedBackground, ThemedBorder, ThemedText, Token};
 
 fn bottom_height(size: Vec2) -> f32 {
     if size.x < 1000.0 { 88.0 } else { 48.0 }
@@ -64,6 +59,7 @@ impl Plugin for NativeUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<NativeUi>()
             .init_resource::<EditFeedback>()
+            .init_resource::<Theme>()
             .add_plugins(TabNavigationPlugin)
             .add_observer(activate)
             .add_observer(controls::speed_changed)
@@ -72,7 +68,10 @@ impl Plugin for NativeUiPlugin {
             .add_plugins(accessibility::NativeAccessibilityPlugin)
             .add_systems(
                 PostUpdate,
-                palette::sync_scrollbar.after(bevy::ui::UiSystems::Layout),
+                (
+                    palette::sync_scrollbar.after(bevy::ui::UiSystems::Layout),
+                    theme::apply.after(bevy::a11y::AccessibilitySystems::Update),
+                ),
             )
             .add_systems(Startup, setup.after(StartupSet::BuildWorld))
             .add_systems(
@@ -140,6 +139,7 @@ enum Action {
     BoardPreset(usize),
     /// Index into the rule presets of the settings dialog.
     RulePreset(usize),
+    Theme(Theme),
     ApplyRule,
     ExportRle,
     ResetEpoch,
@@ -152,7 +152,7 @@ enum Action {
     Boundary,
 }
 
-fn label(value: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+fn label(value: impl Into<String>, size: f32, color: Token) -> impl Bundle {
     (
         Text::new(value),
         TextFont {
@@ -160,7 +160,7 @@ fn label(value: impl Into<String>, size: f32, color: Color) -> impl Bundle {
             font_size: FontSize::Px(size),
             ..default()
         },
-        TextColor(color),
+        ThemedText(color),
         Pickable::IGNORE,
     )
 }
@@ -198,13 +198,13 @@ fn button(parent: &mut ChildSpawnerCommands, text: &str, action: Action) -> Enti
             action,
             Hovered::default(),
             TabIndex(0),
-            BackgroundColor(SURFACE),
-            BorderColor::all(LINE),
+            ThemedBackground(Token::Surface),
+            ThemedBorder(Token::Line),
             Name::new(text.to_owned()),
             controls::Tooltip(controls::hint(action).to_owned()),
         ))
         .with_children(|p| {
-            p.spawn(label(text, 14.0, INK));
+            p.spawn(label(text, 14.0, Token::Ink));
         })
         .id()
 }
@@ -237,8 +237,8 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
                 border_radius: BorderRadius::all(px(12)),
                 ..default()
             },
-            BackgroundColor(PANEL),
-            BorderColor::all(LINE),
+            ThemedBackground(Token::Panel),
+            ThemedBorder(Token::Line),
             GlobalZIndex(10),
         ))
         .with_children(|p| {
@@ -269,8 +269,8 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
                 border: UiRect::top(px(1)),
                 ..default()
             },
-            BackgroundColor(PANEL),
-            BorderColor::all(LINE),
+            ThemedBackground(Token::Panel),
+            ThemedBorder(Token::Line),
             GlobalZIndex(10),
         ))
         .with_children(|p| {
@@ -298,17 +298,17 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
                         ..default()
                     })
                     .with_children(|p| {
-                        p.spawn((label("", 13.0, INK), kind))
+                        p.spawn((label("", 13.0, Token::Ink), kind))
                             .insert(controls::numeric_font(13.0));
                     });
                 }
-                p.spawn((label("", 12.0, MUTED), Readout::Board));
+                p.spawn((label("", 12.0, Token::Muted), Readout::Board));
             });
             p.spawn(row()).with_children(|p| {
                 button(p, "−", Action::ZoomOut);
                 p.spawn((
                     controls::ZoomLabel,
-                    label("100%", 13.0, INK),
+                    label("100%", 13.0, Token::Ink),
                     controls::Tooltip("Zoom relative to Fit board (100%)".into()),
                     Hovered::default(),
                     Node {
@@ -379,6 +379,7 @@ fn activate(
     mut grid: ResMut<GridOverlay>,
     mut layout: ResMut<UiLayout>,
     mut feedback: ResMut<EditFeedback>,
+    mut theme: ResMut<Theme>,
 ) {
     let Ok(action) = actions.get(event.entity) else {
         return;
@@ -401,6 +402,9 @@ fn activate(
         | Action::ExportRle => {}
         Action::Grid => grid.enabled = !grid.enabled,
         Action::Sidebar => layout.toggle_control_deck(),
+        Action::Theme(choice) => {
+            theme.set_if_neq(*choice);
+        }
         Action::Undo => feedback.undo(&mut sim.app),
         Action::Redo => feedback.redo(&mut sim.app),
         Action::Clear => feedback.clear(&mut sim.app),
@@ -445,8 +449,8 @@ type ButtonState<'a> = (
     &'a Action,
     &'a Hovered,
     Has<Pressed>,
-    &'a mut BackgroundColor,
-    &'a mut BorderColor,
+    &'a mut ThemedBackground,
+    &'a mut ThemedBorder,
     &'a Children,
     &'a Name,
     &'a mut bevy::a11y::AccessibilityNode,
@@ -459,6 +463,7 @@ struct ViewState<'w> {
     grid: Res<'w, GridOverlay>,
     focus: Res<'w, InputFocus>,
     focus_visible: Res<'w, InputFocusVisible>,
+    theme: Res<'w, Theme>,
 }
 
 type RootNode<'a> = (&'a mut Node, Has<Sidebar>, Has<toolbar::Toolbar>);
@@ -469,7 +474,7 @@ fn sync(
     view: ViewState,
     mut roots: Query<RootNode, With<NativeRoot>>,
     mut buttons: Query<ButtonState>,
-    mut texts: Query<(&mut Text, &mut TextColor, Option<&Readout>)>,
+    mut texts: Query<(&mut Text, &mut ThemedText, Option<&Readout>)>,
 ) {
     let ViewState {
         mode: _,
@@ -477,6 +482,7 @@ fn sync(
         grid,
         focus,
         focus_visible: _,
+        theme,
     } = view;
     for (mut node, sidebar, toolbar) in &mut roots {
         let display = if sidebar && !layout.control_deck_visible {
@@ -531,6 +537,7 @@ fn sync(
             Action::Grid => grid.enabled,
             Action::Sidebar => layout.control_deck_visible,
             Action::MaxSpeed => sim.app.is_max_speed(),
+            Action::Theme(choice) => *theme == *choice,
             Action::RulePreset(index) => dialogs::RULE_PRESETS
                 .get(*index)
                 .is_some_and(|(_, rule)| sim.app.rule_label() == *rule),
@@ -544,6 +551,7 @@ fn sync(
                 | Action::Sidebar
                 | Action::MaxSpeed
                 | Action::RulePreset(_)
+                | Action::Theme(_)
         ) {
             accessible.set_toggled(if selected {
                 accesskit::Toggled::True
@@ -551,36 +559,36 @@ fn sync(
                 accesskit::Toggled::False
             });
         }
-        bg.set_if_neq(BackgroundColor(if disabled {
-            PANEL
+        bg.set_if_neq(ThemedBackground(if disabled {
+            Token::Panel
         } else if *action == Action::Play {
             if pressed {
-                Color::srgb(0.15, 0.65, 0.43)
+                Token::AccentPressed
             } else {
-                ACCENT
+                Token::Accent
             }
         } else if pressed || hovered.get() {
-            Color::srgb(0.16, 0.23, 0.26)
+            Token::Hover
         } else if selected {
-            Color::srgb(0.08, 0.21, 0.17)
+            Token::Selected
         } else {
-            SURFACE
+            Token::Surface
         }));
-        border.set_if_neq(BorderColor::all(if focus.get() == Some(entity) {
-            INK
+        border.set_if_neq(ThemedBorder(if focus.get() == Some(entity) {
+            Token::Focus
         } else if selected {
-            ACCENT
+            Token::Accent
         } else {
-            LINE
+            Token::Line
         }));
         for child in children.iter() {
             if let Ok((mut text, mut color, _)) = texts.get_mut(child) {
-                color.set_if_neq(TextColor(if disabled {
-                    MUTED
+                color.set_if_neq(ThemedText(if disabled {
+                    Token::Muted
                 } else if *action == Action::Play {
-                    PANEL
+                    Token::OnAccent
                 } else {
-                    INK
+                    Token::Ink
                 }));
                 let replacement = match action {
                     Action::Play => Some(if sim.app.is_running() {
@@ -627,11 +635,13 @@ fn sync(
 fn sync_palette(
     mut commands: Commands,
     sim: Res<Simulation>,
+    theme: Res<Theme>,
     palette: Query<Entity, With<Palette>>,
     mut images: ResMut<Assets<Image>>,
     mut count: Local<usize>,
 ) {
-    if *count == sim.app.pattern_count() {
+    // Thumbnails are drawn in board colours, so a new theme redraws the library.
+    if *count == sim.app.pattern_count() && !theme.is_changed() {
         return;
     }
     let Ok(entity) = palette.single() else {
@@ -646,13 +656,22 @@ fn sync_palette(
                 if index == 0 || index == builtin_count {
                     p.spawn((
                         palette::PatternGroup(index >= builtin_count),
-                        label(if index == 0 { "BUILTIN" } else { "IMPORTED" }, 11.0, MUTED),
+                        label(
+                            if index == 0 { "BUILTIN" } else { "IMPORTED" },
+                            11.0,
+                            Token::Muted,
+                        ),
                     ));
                 }
                 let Some(pattern) = sim.app.pattern_at(index) else {
                     continue;
                 };
-                let preview = images.add(thumbnail(&pattern.cells, pattern.width, pattern.height));
+                let preview = images.add(thumbnail(
+                    &pattern.cells,
+                    pattern.width,
+                    pattern.height,
+                    theme.board(),
+                ));
                 p.spawn((
                     WidgetButton,
                     Action::Pattern(index),
@@ -660,8 +679,8 @@ fn sync_palette(
                     Hovered::default(),
                     TabIndex(0),
                     Name::new(pattern.name.clone()),
-                    BackgroundColor(SURFACE),
-                    BorderColor::all(LINE),
+                    ThemedBackground(Token::Surface),
+                    ThemedBorder(Token::Line),
                     Node {
                         width: percent(100),
                         min_height: px(66),
@@ -695,7 +714,7 @@ fn sync_palette(
                         Pickable::IGNORE,
                     ))
                     .with_children(|p| {
-                        p.spawn(label(&pattern.name, 15.0, INK));
+                        p.spawn(label(&pattern.name, 15.0, Token::Ink));
                         p.spawn(label(
                             format!(
                                 "{} × {} · {} cells",
@@ -704,7 +723,7 @@ fn sync_palette(
                                 pattern.cells.len()
                             ),
                             11.0,
-                            MUTED,
+                            Token::Muted,
                         ));
                     });
                 });
@@ -714,7 +733,13 @@ fn sync_palette(
 }
 
 /// A bounded thumbnail keeps large imported patterns from spawning thousands of UI entities.
-fn thumbnail(cells: &[(usize, usize)], width: usize, height: usize) -> Image {
+fn thumbnail(
+    cells: &[(usize, usize)],
+    width: usize,
+    height: usize,
+    colors: &crate::shared::BoardColors,
+) -> Image {
+    let live = crate::render_plugin::color_to_texel(colors.live);
     let mut image = Image::new_fill(
         Extent3d {
             width: 64,
@@ -722,7 +747,7 @@ fn thumbnail(cells: &[(usize, usize)], width: usize, height: usize) -> Image {
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        &[18, 29, 35, 255],
+        &crate::render_plugin::color_to_texel(colors.dead),
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     );
@@ -736,8 +761,7 @@ fn thumbnail(cells: &[(usize, usize)], width: usize, height: usize) -> Image {
             let top = (y_pad + height.saturating_sub(y + 1) as f32 * scale) as usize;
             for py in top..(top + (scale - 1.0).max(1.0) as usize).min(64) {
                 for px in left..(left + (scale - 1.0).max(1.0) as usize).min(64) {
-                    data[(py * 64 + px) * 4..(py * 64 + px) * 4 + 4]
-                        .copy_from_slice(&[56, 217, 143, 255]);
+                    data[(py * 64 + px) * 4..(py * 64 + px) * 4 + 4].copy_from_slice(&live);
                 }
             }
         }
@@ -782,10 +806,18 @@ mod tests {
         world.insert_resource(GridOverlay { enabled: false });
         world.init_resource::<InputFocus>();
         world.init_resource::<InputFocusVisible>();
+        world.init_resource::<Theme>();
         world.run_system_once(setup).unwrap();
         world.run_system_once(sync).unwrap();
+        world.run_system_once(theme::apply).unwrap();
         let ticks = |world: &mut World| {
             let mut ticks = Vec::new();
+            ticks.extend(
+                world
+                    .query_filtered::<(Ref<ThemedBackground>, Ref<ThemedBorder>), With<Action>>()
+                    .iter(world)
+                    .flat_map(|(bg, border)| [bg.last_changed(), border.last_changed()]),
+            );
             ticks.extend(
                 world
                     .query_filtered::<(Ref<BackgroundColor>, Ref<BorderColor>), With<Action>>()
@@ -794,15 +826,16 @@ mod tests {
             );
             ticks.extend(
                 world
-                    .query::<Ref<TextColor>>()
+                    .query::<(Ref<ThemedText>, Ref<TextColor>)>()
                     .iter(world)
-                    .map(|color| color.last_changed()),
+                    .flat_map(|(token, color)| [token.last_changed(), color.last_changed()]),
             );
             ticks
         };
         let before = ticks(&mut world);
         assert!(!before.is_empty());
         world.run_system_once(sync).unwrap();
+        world.run_system_once(theme::apply).unwrap();
         assert_eq!(ticks(&mut world), before);
     }
 

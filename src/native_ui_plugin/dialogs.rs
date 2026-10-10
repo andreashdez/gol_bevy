@@ -10,7 +10,7 @@ use crate::{
 use bevy::{
     clipboard::Clipboard,
     input_focus::AutoFocus,
-    text::{EditableText, TextCursorStyle, TextEdit},
+    text::{EditableText, TextEdit},
     ui_widgets::{SelectAllOnFocus, TextInput},
 };
 
@@ -325,7 +325,7 @@ pub(super) fn update_dialogs(
     roots: Query<Entity, With<DialogRoot>>,
     mut rendered: Local<Option<DialogKind>>,
     fields: Query<(&Field, &mut EditableText), Changed<EditableText>>,
-    mut readouts: Query<(&DialogReadout, &mut Text, &mut TextColor)>,
+    mut readouts: Query<(&DialogReadout, &mut Text, &mut ThemedText)>,
 ) {
     save_fields(&mut state.drafts, &fields);
     if state.mode.dialog.is_none() {
@@ -359,10 +359,10 @@ pub(super) fn update_dialogs(
     for (kind, mut text, mut color) in &mut readouts {
         let value = match kind {
             DialogReadout::Feedback => {
-                color.set_if_neq(TextColor(if state.drafts.error {
-                    Color::srgb(1.0, 0.55, 0.5)
+                color.set_if_neq(ThemedText(if state.drafts.error {
+                    Token::Error
                 } else {
-                    ACCENT
+                    Token::Accent
                 }));
                 state.drafts.feedback.clone()
             }
@@ -398,7 +398,7 @@ fn field(
     field: Field,
     multiline: bool,
 ) {
-    parent.spawn(label(title, 13.0, MUTED));
+    parent.spawn(label(title, 13.0, Token::Muted));
     let mut input = EditableText::new(value);
     input.allow_newlines = multiline;
     input.visible_lines = Some(if multiline { 7.0 } else { 1.0 });
@@ -421,13 +421,10 @@ fn field(
             font_size: FontSize::Px(16.0),
             ..default()
         },
-        TextColor(INK),
-        TextCursorStyle {
-            color: ACCENT,
-            ..default()
-        },
-        BackgroundColor(Color::srgb(0.025, 0.04, 0.055)),
-        BorderColor::all(LINE),
+        ThemedText(Token::Ink),
+        theme::ThemedCursor(Token::Accent),
+        ThemedBackground(Token::Field),
+        ThemedBorder(Token::Line),
     ));
     if !multiline {
         entity.insert(SelectAllOnFocus);
@@ -442,15 +439,15 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
         position_type: PositionType::Absolute, width: percent(100), height: percent(100),
         align_items: AlignItems::Center, justify_content: JustifyContent::Center,
         padding: UiRect::all(px(20)), ..default()
-    }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.65)), GlobalZIndex(50)))
+    }, ThemedBackground(Token::Scrim), GlobalZIndex(50)))
     .with_children(|p| {
         p.spawn((TabGroup::modal(), super::accessibility::dialog_node(kind.title()), Node {
             width: px(540), max_width: percent(100), max_height: percent(100),
             flex_direction: FlexDirection::Column, padding: UiRect::all(px(22)), row_gap: px(16),
             border: UiRect::all(px(1)), border_radius: BorderRadius::all(px(14)), ..default()
-        }, BackgroundColor(PANEL), BorderColor::all(LINE))).with_children(|p| {
+        }, ThemedBackground(Token::Panel), ThemedBorder(Token::Line))).with_children(|p| {
             p.spawn(row()).with_children(|p| {
-                p.spawn(label(kind.title(), 24.0, INK));
+                p.spawn(label(kind.title(), 24.0, Token::Ink));
                 p.spawn(Node { flex_grow: 1.0, ..default() });
                 let close_button = button(p, "Close", Action::CloseDialog);
                 if matches!(kind, DialogKind::Help | DialogKind::Diagnostics) { p.commands().entity(close_button).insert(AutoFocus); }
@@ -459,17 +456,17 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                 overflow: Overflow::scroll_y(), min_height: px(0), ..default() })).with_children(|p| {
                 match kind {
                     DialogKind::Import => {
-                        p.spawn(label("Paste RLE to add a stamp to your palette. A rule in the header also updates the board rule.", 14.0, MUTED));
+                        p.spawn(label("Paste RLE to add a stamp to your palette. A rule in the header also updates the board rule.", 14.0, Token::Muted));
                         field(p, "Pattern name", &drafts.name, Field::Name, false);
                         field(p, "RLE source", &drafts.source, Field::Source, true);
                         button(p, "Import and select", Action::ImportSubmit);
-                        p.spawn(label("Export", 19.0, INK));
-                        p.spawn(label("Copy the live cells, cropped to their bounding box, as RLE with the board rule.", 14.0, MUTED));
+                        p.spawn(label("Export", 19.0, Token::Ink));
+                        p.spawn(label("Copy the live cells, cropped to their bounding box, as RLE with the board rule.", 14.0, Token::Muted));
                         button(p, "Copy board as RLE", Action::ExportRle);
                     }
                     DialogKind::Settings => {
-                        p.spawn(label("Board dimensions", 19.0, INK));
-                        p.spawn(label("Resizing preserves cells that fit and clears undo history. Window resizing leaves the board size unchanged.", 14.0, MUTED));
+                        p.spawn(label("Board dimensions", 19.0, Token::Ink));
+                        p.spawn(label("Resizing preserves cells that fit and clears undo history. Window resizing leaves the board size unchanged.", 14.0, Token::Muted));
                         p.spawn(row()).with_children(|p| {
                             for (size, _) in BOARD_SIZE_PRESETS { button(p, &format!("{size}²"), Action::BoardPreset(size)); }
                         });
@@ -480,13 +477,18 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                             }
                         });
                         button(p, "Apply board size", Action::ResizeBoard);
-                        p.spawn(label("Rule", 19.0, INK));
-                        p.spawn(label("Neighbour counts that give birth (B) and let a cell survive (S). Changing the rule can be undone.", 14.0, MUTED));
+                        p.spawn(label("Rule", 19.0, Token::Ink));
+                        p.spawn(label("Neighbour counts that give birth (B) and let a cell survive (S). Changing the rule can be undone.", 14.0, Token::Muted));
                         p.spawn(row()).with_children(|p| {
                             for (index, (name, _)) in RULE_PRESETS.iter().enumerate() { button(p, name, Action::RulePreset(index)); }
                         });
                         field(p, "Rulestring", &drafts.rule, Field::Rule, false);
                         button(p, "Apply rule", Action::ApplyRule);
+                        p.spawn(label("Theme", 19.0, Token::Ink));
+                        p.spawn(label("Colours of the board, the pattern library, and the interface.", 14.0, Token::Muted));
+                        p.spawn(row()).with_children(|p| {
+                            for theme in Theme::ALL { button(p, theme.label(), Action::Theme(theme)); }
+                        });
                         p.spawn(row()).with_children(|p| {
                             button(p, "Grid", Action::Grid);
                             button(p, "Edges", Action::Boundary);
@@ -495,17 +497,17 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         button(p, "Reset generation counter", Action::ResetEpoch);
                     }
                     DialogKind::Help => {
-                        p.spawn(label("Choose a stamp or draw cells, then press Space to play. U undoes an edit and pauses; one drag counts as one edit.", 16.0, INK));
-                        p.spawn(label("Tab moves between controls. Escape closes a dialog. Simulation shortcuts are disabled while a dialog is open.", 14.0, MUTED));
-                        p.spawn((label(CONTROLS_TEXT.as_str(), 14.0, INK), super::accessibility::named_node(accesskit::Role::Label, CONTROLS_TEXT.as_str())));
+                        p.spawn(label("Choose a stamp or draw cells, then press Space to play. U undoes an edit and pauses; one drag counts as one edit.", 16.0, Token::Ink));
+                        p.spawn(label("Tab moves between controls. Escape closes a dialog. Simulation shortcuts are disabled while a dialog is open.", 14.0, Token::Muted));
+                        p.spawn((label(CONTROLS_TEXT.as_str(), 14.0, Token::Ink), super::accessibility::named_node(accesskit::Role::Label, CONTROLS_TEXT.as_str())));
                     }
                     DialogKind::Diagnostics => {
                         p.spawn((Text::default(), TextFont { font_size: FontSize::Px(14.0), ..default() },
-                            TextColor(INK), DialogReadout::Diagnostics, super::accessibility::named_node(accesskit::Role::Label, "Diagnostics"), Pickable::IGNORE));
+                            ThemedText(Token::Ink), DialogReadout::Diagnostics, super::accessibility::named_node(accesskit::Role::Label, "Diagnostics"), Pickable::IGNORE));
                     }
                 }
                 if matches!(kind, DialogKind::Import | DialogKind::Settings) {
-                    p.spawn((label("", 14.0, ACCENT), DialogReadout::Feedback, super::accessibility::feedback_node()));
+                    p.spawn((label("", 14.0, Token::Accent), DialogReadout::Feedback, super::accessibility::feedback_node()));
                 }
             });
         });

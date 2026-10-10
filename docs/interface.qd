@@ -72,7 +72,7 @@ Clear, randomize, undo, and redo briefly show feedback above the status bar. Und
 | Dialog              | Opens with                               | Contains                                                       |
 |---------------------|------------------------------------------|----------------------------------------------------------------|
 | **Import / Export** | the **Import / Export** button           | RLE import, and copying the board as RLE                       |
-| **Settings**        | the **Settings** button                  | board size, rule, grid, edges, diagnostics, generation reset   |
+| **Settings**        | the **Settings** button                  | board size, rule, theme, grid, edges, diagnostics, generation reset |
 | **Help**            | .keybinding {/} or the **Help** button   | a summary and the full list of shortcuts                       |
 | **Diagnostics**     | .keybinding {F3} or **Settings**         | live simulation statistics                                     |
 

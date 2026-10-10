@@ -4,9 +4,8 @@ use crate::app::{App as GolApp, EditTool};
 use crate::board::{BoundaryMode, DirtyCells};
 use crate::canvas_view::cursor_world;
 use crate::shared::{
-    BoardSettings, CELL_SIZE, DEAD_COLOR, GHOST_LIVE_COLOR, GRID_LINE_COLOR, GridOverlay,
-    LIVE_COLOR, MainCamera, RedrawRequested, Simulation, StartupSet, UpdateSet, WALL_BRIGHT_COLOR,
-    WALL_COLOR, board_size_for_window, cell_to_world, world_to_cell,
+    BoardSettings, CELL_SIZE, GridOverlay, MainCamera, RedrawRequested, Simulation, StartupSet,
+    Theme, UpdateSet, board_size_for_window, cell_to_world, world_to_cell,
 };
 use crate::ui_input::UiInputCapture;
 use bevy::{
@@ -42,7 +41,7 @@ struct BoardTexture {
 #[derive(Component)]
 struct BoardSprite;
 
-fn color_to_texel(color: Color) -> [u8; 4] {
+pub(crate) fn color_to_texel(color: Color) -> [u8; 4] {
     let srgba = color.to_srgba();
     [
         (srgba.red * 255.0).round().clamp(0.0, 255.0) as u8,
@@ -64,7 +63,12 @@ fn board_sprite_size(cols: usize, rows: usize) -> Vec2 {
     Vec2::new(cols as f32 * CELL_SIZE, rows as f32 * CELL_SIZE)
 }
 
-fn create_board_image(images: &mut Assets<Image>, cols: usize, rows: usize) -> Handle<Image> {
+fn create_board_image(
+    images: &mut Assets<Image>,
+    cols: usize,
+    rows: usize,
+    dead: Color,
+) -> Handle<Image> {
     let mut image = Image::new_fill(
         Extent3d {
             width: cols as u32,
@@ -72,7 +76,7 @@ fn create_board_image(images: &mut Assets<Image>, cols: usize, rows: usize) -> H
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        &color_to_texel(DEAD_COLOR),
+        &color_to_texel(dead),
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     );
@@ -88,13 +92,14 @@ struct BoardCanvas<'w, 's> {
     images: ResMut<'w, Assets<Image>>,
     texture: ResMut<'w, BoardTexture>,
     sprite_q: Query<'w, 's, &'static mut Sprite, With<BoardSprite>>,
+    theme: Res<'w, Theme>,
 }
 
 impl BoardCanvas<'_, '_> {
     /// Point the sprite at a freshly sized texture. The previous image is dropped
     /// once the old handle goes away.
     fn rebuild(&mut self, cols: usize, rows: usize) {
-        let handle = create_board_image(&mut self.images, cols, rows);
+        let handle = create_board_image(&mut self.images, cols, rows, self.theme.board().dead);
         if let Ok(mut sprite) = self.sprite_q.single_mut() {
             sprite.image = handle.clone();
             sprite.custom_size = Some(board_sprite_size(cols, rows));
@@ -130,6 +135,7 @@ impl Default for BoundaryWallPulse {
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HoveredCell>()
+            .init_resource::<Theme>()
             .insert_resource(BoundaryWallPulse::default())
             .insert_resource(BoardTexture::default())
             .insert_resource(PatternPreviewPool::default())
@@ -158,6 +164,7 @@ fn setup_world(
     mut images: ResMut<Assets<Image>>,
     mut board_texture: ResMut<BoardTexture>,
     mut settings: ResMut<BoardSettings>,
+    theme: Res<Theme>,
 ) {
     let Ok(window) = window_q.single() else {
         return;
@@ -182,7 +189,7 @@ fn setup_world(
     ));
     commands.insert_resource(Simulation::new(GolApp::new(cols, rows)));
 
-    let handle = create_board_image(&mut images, cols, rows);
+    let handle = create_board_image(&mut images, cols, rows, theme.board().dead);
     commands.spawn((
         Sprite {
             image: handle.clone(),
@@ -194,10 +201,10 @@ fn setup_world(
     ));
     *board_texture = BoardTexture { handle, cols, rows };
 
-    spawn_boundary_walls(&mut commands, cols, rows);
+    spawn_boundary_walls(&mut commands, cols, rows, theme.board().wall);
 }
 
-fn spawn_boundary_walls(commands: &mut Commands, cols: usize, rows: usize) {
+fn spawn_boundary_walls(commands: &mut Commands, cols: usize, rows: usize, color: Color) {
     let width = cols as f32 * CELL_SIZE;
     let height = rows as f32 * CELL_SIZE;
     let wall_thickness = 3.0;
@@ -206,7 +213,7 @@ fn spawn_boundary_walls(commands: &mut Commands, cols: usize, rows: usize) {
 
     commands.spawn((
         Sprite::from_color(
-            WALL_COLOR,
+            color,
             Vec2::new(wall_thickness, height + wall_thickness * 2.0),
         ),
         Transform::from_translation(Vec3::new(-offset_x, 0.0, 3.0)),
@@ -215,7 +222,7 @@ fn spawn_boundary_walls(commands: &mut Commands, cols: usize, rows: usize) {
     ));
     commands.spawn((
         Sprite::from_color(
-            WALL_COLOR,
+            color,
             Vec2::new(wall_thickness, height + wall_thickness * 2.0),
         ),
         Transform::from_translation(Vec3::new(offset_x, 0.0, 3.0)),
@@ -224,7 +231,7 @@ fn spawn_boundary_walls(commands: &mut Commands, cols: usize, rows: usize) {
     ));
     commands.spawn((
         Sprite::from_color(
-            WALL_COLOR,
+            color,
             Vec2::new(width + wall_thickness * 2.0, wall_thickness),
         ),
         Transform::from_translation(Vec3::new(0.0, offset_y, 3.0)),
@@ -233,7 +240,7 @@ fn spawn_boundary_walls(commands: &mut Commands, cols: usize, rows: usize) {
     ));
     commands.spawn((
         Sprite::from_color(
-            WALL_COLOR,
+            color,
             Vec2::new(width + wall_thickness * 2.0, wall_thickness),
         ),
         Transform::from_translation(Vec3::new(0.0, -offset_y, 3.0)),
@@ -242,11 +249,16 @@ fn spawn_boundary_walls(commands: &mut Commands, cols: usize, rows: usize) {
     ));
 }
 
-fn ensure_preview_pool(commands: &mut Commands, pool: &mut PatternPreviewPool, target: usize) {
+fn ensure_preview_pool(
+    commands: &mut Commands,
+    pool: &mut PatternPreviewPool,
+    target: usize,
+    color: Color,
+) {
     while pool.entities.len() < target {
         let entity = commands
             .spawn((
-                Sprite::from_color(GHOST_LIVE_COLOR, Vec2::splat(CELL_SIZE - 2.0)),
+                Sprite::from_color(color, Vec2::splat(CELL_SIZE - 2.0)),
                 Transform::from_translation(Vec3::new(0.0, 0.0, 2.0)),
                 Visibility::Hidden,
                 GhostPreviewCell,
@@ -280,7 +292,8 @@ fn apply_board_settings(
     for entity in &wall_q {
         commands.entity(entity).despawn();
     }
-    spawn_boundary_walls(&mut commands, cols, rows);
+    let wall = canvas.theme.board().wall;
+    spawn_boundary_walls(&mut commands, cols, rows, wall);
 }
 
 /// Draws only the grid lines that intersect the viewport, so the cost tracks
@@ -288,6 +301,7 @@ fn apply_board_settings(
 /// per-cell entity problem straight back.
 fn render_grid(
     grid_overlay: Res<GridOverlay>,
+    theme: Res<Theme>,
     sim: Res<Simulation>,
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     mut gizmos: Gizmos,
@@ -333,18 +347,19 @@ fn render_grid(
         return;
     }
 
+    let color = theme.board().grid_line;
     let first_col = line_index(visible_min.x + half_width, cols);
     let last_col = line_index((visible_max.x + half_width).ceil(), cols);
     for col in first_col..=last_col {
         let x = -half_width + col as f32 * CELL_SIZE;
-        gizmos.line_2d(Vec2::new(x, y_min), Vec2::new(x, y_max), GRID_LINE_COLOR);
+        gizmos.line_2d(Vec2::new(x, y_min), Vec2::new(x, y_max), color);
     }
 
     let first_row = line_index(visible_min.y + half_height, rows);
     let last_row = line_index((visible_max.y + half_height).ceil(), rows);
     for row in first_row..=last_row {
         let y = -half_height + row as f32 * CELL_SIZE;
-        gizmos.line_2d(Vec2::new(x_min, y), Vec2::new(x_max, y), GRID_LINE_COLOR);
+        gizmos.line_2d(Vec2::new(x_min, y), Vec2::new(x_max, y), color);
     }
 }
 
@@ -355,11 +370,14 @@ fn line_index(offset_from_edge: f32, cells: usize) -> usize {
 
 fn sync_cells(
     redraw_requested: Res<RedrawRequested>,
+    theme: Res<Theme>,
     mut sim: ResMut<Simulation>,
     board_texture: Res<BoardTexture>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    if !redraw_requested.0 {
+    // A new theme recolours every cell, not just the ones that changed.
+    let recolor = theme.is_changed();
+    if !redraw_requested.0 && !recolor {
         return;
     }
 
@@ -378,13 +396,14 @@ fn sync_cells(
 
     let dirty = sim.app.board.take_dirty_cells();
     let indices: Box<dyn Iterator<Item = usize>> = match dirty {
+        _ if recolor => Box::new(0..cols * rows),
         DirtyCells::None => return,
         DirtyCells::Full => Box::new(0..cols * rows),
         DirtyCells::Cells(cells) => Box::new(cells.into_iter()),
     };
 
-    let live = color_to_texel(LIVE_COLOR);
-    let dead = color_to_texel(DEAD_COLOR);
+    let live = color_to_texel(theme.board().live);
+    let dead = color_to_texel(theme.board().dead);
     for idx in indices {
         if idx >= cols * rows {
             continue;
@@ -401,6 +420,7 @@ fn sync_cells(
 
 fn sync_boundary_wall_visibility(
     time: Res<Time>,
+    theme: Res<Theme>,
     redraw_requested: Res<RedrawRequested>,
     sim: Res<Simulation>,
     mut pulse: ResMut<BoundaryWallPulse>,
@@ -416,9 +436,10 @@ fn sync_boundary_wall_visibility(
         }
     }
 
-    if !redraw_requested.0 && !pulse.active {
+    if !redraw_requested.0 && !pulse.active && !theme.is_changed() {
         return;
     }
+    let colors = theme.board();
 
     let visibility = if mode == BoundaryMode::Fixed {
         Visibility::Visible
@@ -437,9 +458,9 @@ fn sync_boundary_wall_visibility(
 
         let phase = pulse.timer.fraction();
         let pulse_t = (phase * PI).sin().max(0.0);
-        blend_color(WALL_COLOR, WALL_BRIGHT_COLOR, pulse_t)
+        blend_color(colors.wall, colors.wall_bright, pulse_t)
     } else {
-        WALL_COLOR
+        colors.wall
     };
 
     for (mut wall_visibility, mut wall_sprite) in &mut wall_q {
@@ -464,9 +485,17 @@ fn sync_pattern_preview(
     mut commands: Commands,
     hovered: Res<HoveredCell>,
     sim: Res<Simulation>,
+    theme: Res<Theme>,
     mut preview_pool: ResMut<PatternPreviewPool>,
     mut preview_q: Query<(&mut Transform, &mut Visibility), With<GhostPreviewCell>>,
+    mut ghosts: Query<&mut Sprite, With<GhostPreviewCell>>,
 ) {
+    let ghost = theme.board().ghost;
+    if theme.is_changed() {
+        for mut sprite in &mut ghosts {
+            sprite.color = ghost;
+        }
+    }
     let Some((cursor_col, cursor_row)) = hovered.0 else {
         hide_preview_cells(&preview_pool, &mut preview_q);
         return;
@@ -475,7 +504,7 @@ fn sync_pattern_preview(
         hide_preview_cells(&preview_pool, &mut preview_q);
         return;
     };
-    ensure_preview_pool(&mut commands, &mut preview_pool, pattern.len());
+    ensure_preview_pool(&mut commands, &mut preview_pool, pattern.len(), ghost);
     let (cols, rows) = sim.app.board.size();
 
     let origin_col = cursor_col.saturating_sub(width / 2);
@@ -542,6 +571,7 @@ fn update_hovered_cell(
 
 fn render_hover_cell(
     hovered: Res<HoveredCell>,
+    theme: Res<Theme>,
     sim: Res<Simulation>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mut gizmos: Gizmos,
@@ -552,9 +582,9 @@ fn render_hover_cell(
     let (cols, rows) = sim.app.board.size();
     let erasing = sim.app.tool() == EditTool::Erase || mouse_buttons.pressed(MouseButton::Right);
     let color = if erasing {
-        Color::srgb(1.0, 0.60, 0.55)
+        theme.board().hover_erase
     } else {
-        Color::srgb(0.75, 0.95, 0.85)
+        theme.board().hover
     };
     gizmos.rect_2d(
         Isometry2d::from_translation(cell_to_world(col, row, cols, rows).truncate()),
@@ -565,8 +595,7 @@ fn render_hover_cell(
 
 #[cfg(test)]
 mod tests {
-    use super::{color_to_texel, texel_offset};
-    use crate::shared::{CELL_SIZE, DEAD_COLOR, LIVE_COLOR, cell_to_world};
+    use super::*;
 
     #[test]
     fn texel_rows_are_flipped_relative_to_board_rows() {
@@ -609,7 +638,45 @@ mod tests {
 
     #[test]
     fn cell_colors_round_trip_to_srgb_bytes() {
-        assert_eq!(color_to_texel(LIVE_COLOR), [56, 217, 143, 255]);
-        assert_eq!(color_to_texel(DEAD_COLOR), [20, 23, 28, 255]);
+        let colors = Theme::Dark.board();
+        assert_eq!(color_to_texel(colors.live), [56, 217, 143, 255]);
+        assert_eq!(color_to_texel(colors.dead), [20, 23, 28, 255]);
+    }
+
+    #[test]
+    fn switching_themes_repaints_every_cell_without_a_board_change() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let mut app = GolApp::new(4, 3);
+        app.board.populate(1, 2);
+        world.insert_resource(Simulation::new(app));
+        world.insert_resource(RedrawRequested(true));
+        world.insert_resource(Theme::Dark);
+        let mut images = Assets::<Image>::default();
+        let handle = create_board_image(&mut images, 4, 3, Theme::Dark.board().dead);
+        world.insert_resource(images);
+        world.insert_resource(BoardTexture {
+            handle: handle.clone(),
+            cols: 4,
+            rows: 3,
+        });
+        world.run_system_once(sync_cells).unwrap();
+
+        // Nothing on the board changes, so only the theme can cause a repaint.
+        world.resource_mut::<RedrawRequested>().0 = false;
+        *world.resource_mut::<Theme>() = Theme::Light;
+        world.run_system_once(sync_cells).unwrap();
+        let colors = Theme::Light.board();
+        let images = world.resource::<Assets<Image>>();
+        let data = images.get(&handle).unwrap().data.as_ref().unwrap();
+        for idx in 0..12 {
+            let expected = if idx == 2 * 4 + 1 {
+                colors.live
+            } else {
+                colors.dead
+            };
+            let offset = texel_offset(idx, 4, 3);
+            assert_eq!(data[offset..offset + 4], color_to_texel(expected), "{idx}");
+        }
     }
 }

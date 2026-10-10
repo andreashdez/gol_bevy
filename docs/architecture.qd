@@ -25,6 +25,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
         - controls.rs
         - dialogs.rs
         - palette.rs
+        - theme.rs
     - assets
       - patterns
       - fonts

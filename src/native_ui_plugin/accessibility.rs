@@ -83,7 +83,7 @@ type AccessibleControl<'a> = (
     Option<&'a Action>,
     Has<InteractionDisabled>,
     Has<ImageNode>,
-    Option<&'a mut BorderColor>,
+    Option<&'a mut ThemedBorder>,
 );
 
 fn sync_accessibility(
@@ -149,10 +149,10 @@ fn sync_accessibility(
                 node.set_role(Role::MultilineTextInput);
             }
             if let Some(mut border) = border {
-                border.set_if_neq(BorderColor::all(if focus.get() == Some(entity) {
-                    ACCENT
+                border.set_if_neq(ThemedBorder(if focus.get() == Some(entity) {
+                    Token::Accent
                 } else {
-                    LINE
+                    Token::Line
                 }));
             }
         } else if let Some(text) = text

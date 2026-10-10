@@ -1,6 +1,6 @@
 //! Search, library grouping, and a preview of the actual stamp orientation.
 use super::*;
-use bevy::text::{EditableText, TextCursorStyle};
+use bevy::text::EditableText;
 use bevy::ui_widgets::{ControlOrientation, Scrollbar, ScrollbarThumb, TextInput};
 
 #[derive(Component)]
@@ -69,7 +69,7 @@ pub(super) fn library(parent: &mut ChildSpawnerCommands) {
                     border_radius: BorderRadius::all(px(4)),
                     ..default()
                 },
-                BackgroundColor(SURFACE),
+                ThemedBackground(Token::Surface),
             ))
             .with_children(|p| {
                 p.spawn((
@@ -77,7 +77,7 @@ pub(super) fn library(parent: &mut ChildSpawnerCommands) {
                         border_radius: BorderRadius::all(px(4)),
                         ..default()
                     },
-                    BackgroundColor(MUTED),
+                    ThemedBackground(Token::Muted),
                 ));
             });
         });
@@ -102,7 +102,7 @@ pub(super) fn sync_scrollbar(
 pub(super) fn search(parent: &mut ChildSpawnerCommands) {
     parent.spawn((
         controls::TallLabel::default(),
-        label("Search patterns", 12.0, MUTED),
+        label("Search patterns", 12.0, Token::Muted),
     ));
     let mut input = EditableText::new("");
     input.visible_lines = Some(1.0);
@@ -128,18 +128,15 @@ pub(super) fn search(parent: &mut ChildSpawnerCommands) {
                 font_size: FontSize::Px(15.0),
                 ..default()
             },
-            TextColor(INK),
-            TextCursorStyle {
-                color: ACCENT,
-                ..default()
-            },
-            BorderColor::all(LINE),
-            BackgroundColor(Color::srgb(0.025, 0.04, 0.055)),
+            ThemedText(Token::Ink),
+            theme::ThemedCursor(Token::Accent),
+            ThemedBorder(Token::Line),
+            ThemedBackground(Token::Field),
         ))
         .with_children(|p| {
             p.spawn((
                 SearchPlaceholder,
-                label("Find a pattern…", 15.0, MUTED),
+                label("Find a pattern…", 15.0, Token::Muted),
                 Node {
                     position_type: PositionType::Absolute,
                     left: px(9),
@@ -151,7 +148,7 @@ pub(super) fn search(parent: &mut ChildSpawnerCommands) {
     parent.spawn((
         SearchSummary,
         controls::TallLabel::default(),
-        label("", 12.0, MUTED),
+        label("", 12.0, Token::Muted),
         accessibility::feedback_node(),
     ));
 }
@@ -170,8 +167,8 @@ pub(super) fn preview(parent: &mut ChildSpawnerCommands) {
                 flex_shrink: 0.0,
                 ..default()
             },
-            BackgroundColor(SURFACE),
-            BorderColor::all(LINE),
+            ThemedBackground(Token::Surface),
+            ThemedBorder(Token::Line),
         ))
         .with_children(|p| {
             p.spawn(Node {
@@ -193,7 +190,7 @@ pub(super) fn preview(parent: &mut ChildSpawnerCommands) {
                 ));
                 p.spawn((
                     StampCaption,
-                    label("", 12.0, INK),
+                    label("", 12.0, Token::Ink),
                     Node {
                         min_width: px(0),
                         flex_grow: 1.0,
@@ -278,18 +275,23 @@ pub(super) fn filter(
     *previous = Some((query, count));
 }
 
+/// What the stamp preview was last drawn from.
+type PreviewKey = (Option<usize>, String, bool, Theme);
+
 pub(super) fn sync_preview(
     sim: Res<Simulation>,
+    theme: Res<Theme>,
     mut panel: Query<&mut Node, With<StampPreview>>,
     mut image: Query<&mut ImageNode, With<StampImage>>,
     mut caption: Query<&mut Text, With<StampCaption>>,
     mut images: ResMut<Assets<Image>>,
-    mut previous: Local<Option<(Option<usize>, String, bool)>>,
+    mut previous: Local<Option<PreviewKey>>,
 ) {
     let key = (
         sim.app.selected_pattern_index(),
         sim.app.selected_pattern_status_label(),
         sim.app.has_selected_pattern(),
+        *theme,
     );
     if previous.as_ref() == Some(&key) {
         return;
@@ -306,7 +308,7 @@ pub(super) fn sync_preview(
         return;
     };
     if let Ok(mut image) = image.single_mut() {
-        let bitmap = thumbnail(&cells, width, height);
+        let bitmap = thumbnail(&cells, width, height, theme.board());
         if image.image == ImageNode::default().image {
             image.image = images.add(bitmap);
         } else if let Some(mut existing) = images.get_mut(&image.image) {
@@ -338,9 +340,10 @@ mod tests {
         let mut app = GolApp::new(30, 30);
         app.select_pattern_index(0);
         world.insert_resource(Simulation::new(app));
+        world.init_resource::<Theme>();
         world.init_resource::<Assets<Image>>();
         let shared = ImageNode::default().image;
-        let placeholder = thumbnail(&[], 1, 1);
+        let placeholder = thumbnail(&[], 1, 1, Theme::Dark.board());
         let original = placeholder.data.clone();
         world
             .resource_mut::<Assets<Image>>()

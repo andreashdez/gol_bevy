@@ -13,6 +13,10 @@ Focused controls have a bright outline, and are scrolled into view if the palett
 
 While a text field or the speed slider has focus, board shortcuts are disabled, so typing a pattern name does not run or clear the board.
 
+## Colours
+
+The **High contrast** theme in [Settings](settings.qd#theme) uses black panels, white text, bright green cells, and a yellow focus outline. A **Light** theme is available too. Every theme keeps text at a contrast of at least 4.5:1 against its background, and live cells and the pointer outline at least 3:1 against empty cells.
+
 ## Dialogs
 
 Dialogs are modal: .keybinding {Tab} stays inside the open dialog. The Help and Diagnostics dialogs focus their **Close** button when they open.

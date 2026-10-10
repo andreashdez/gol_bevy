@@ -15,6 +15,10 @@ The board size is independent of the window. Resizing the window only changes ho
 
 Pick **Life**, **HighLife**, **Day & Night**, or **Seeds**, or type a rulestring and click **Apply rule**. See [Rules](simulation.qd#rules) for the notation.
 
+## Theme
+
+Pick **Dark**, **Light**, or **High contrast** to change the colours of the board, the pattern thumbnails, and the toolbar, palette, status bar, and dialogs. **Light** shows dark green cells on a white board. **High contrast** uses black panels, white text, bright green cells, yellow fixed edges, and a yellow focus outline.
+
 ## View and edges
 
 - **Grid** shows or hides cell lines.
@@ -31,6 +35,7 @@ These settings are saved whenever they change, and restored on the next launch:
 | Palette shown  | `palette`                            |
 | Board size     | `board_cols`, `board_rows`           |
 | Grid           | `grid`                               |
+| Theme          | `theme`                              |
 | Rule           | `rule`                               |
 | Edge mode      | `boundary_mode`                      |
 | Speed          | `tick_rate_ms`, `max_speed`          |
@@ -56,6 +61,7 @@ palette = true
 board_cols = 256
 board_rows = 256
 grid = false
+theme = "dark"
 rule = "B3/S23"
 boundary_mode = "wrap"
 tick_rate_ms = 25
@@ -67,6 +73,7 @@ max_speed = false
 | `palette`       | `true` or `false`                                         |
 | `board_cols`, `board_rows` | Whole numbers, clamped to 8–2048. Both must be present |
 | `grid`          | `true` or `false`                                         |
+| `theme`         | `"dark"`, `"light"`, or `"high-contrast"`                 |
 | `rule`          | A [rulestring](simulation.qd#rulestring-formats)          |
 | `boundary_mode` | `"wrap"` or `"fixed"`                                     |
 | `tick_rate_ms`  | Milliseconds between generations, clamped to 25–1000      |

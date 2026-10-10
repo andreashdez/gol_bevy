@@ -71,9 +71,10 @@ remain available for the current session.
 
 The rule is chosen in Settings as well: pick Life, HighLife, Day & Night, or Seeds, or
 type any rulestring in B/S notation (`B36/S23`, or the older `23/36`). Changing the
-rule is an undoable edit.
+rule is an undoable edit. Settings also switches between the Dark, Light, and High contrast
+themes, which recolour both the board and the interface.
 
-Palette visibility, board size, rule, boundary mode, speed, and the grid are saved between runs
+Palette visibility, board size, rule, boundary mode, speed, the grid, and the theme are saved between runs
 in `settings.toml`, in a `gol-bevy` folder in the platform's settings location:
 
 - Linux: `$XDG_CONFIG_HOME`, or `~/.config` if that is unset

@@ -49,13 +49,13 @@ pub(super) fn spawn(commands: &mut Commands) {
                 border: UiRect::bottom(px(1)),
                 ..default()
             },
-            BackgroundColor(PANEL),
-            BorderColor::all(LINE),
+            ThemedBackground(Token::Panel),
+            ThemedBorder(Token::Line),
             GlobalZIndex(10),
         ))
         .with_children(|p| {
             p.spawn((Group::Brand, row())).with_children(|p| {
-                p.spawn(label("LIFE", 21.0, ACCENT));
+                p.spawn(label("LIFE", 21.0, Token::Accent));
             });
             for (group, name) in [
                 (Group::Playback, "Playback"),
@@ -71,7 +71,7 @@ pub(super) fn spawn(commands: &mut Commands) {
                         min_width: px(0),
                         ..default()
                     },
-                    BorderColor::all(LINE),
+                    ThemedBorder(Token::Line),
                     accessibility::named_node(accesskit::Role::Toolbar, name),
                 ))
                 .with_children(|p| match group {

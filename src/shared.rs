@@ -4,13 +4,7 @@ use crate::app::{App as GolApp, PatternKind};
 use bevy::{ecs::schedule::SystemSet, prelude::*, window::Window};
 
 pub const CELL_SIZE: f32 = 12.0;
-pub const DEAD_COLOR: Color = Color::srgb(0.08, 0.09, 0.11);
-pub const LIVE_COLOR: Color = Color::srgb(0.22, 0.85, 0.56);
-pub const GHOST_LIVE_COLOR: Color = Color::srgba(0.22, 0.85, 0.56, 0.30);
 pub const BG_COLOR: Color = Color::srgb(0.02, 0.02, 0.03);
-pub const WALL_COLOR: Color = Color::srgba(0.96, 0.92, 0.70, 0.55);
-pub const WALL_BRIGHT_COLOR: Color = Color::srgba(1.0, 0.98, 0.82, 0.92);
-pub const GRID_LINE_COLOR: Color = Color::srgba(0.02, 0.02, 0.03, 0.8);
 pub const CAMERA_ZOOM_STEP: f32 = 0.10;
 pub const CAMERA_ZOOM_MIN: f32 = 0.25;
 // Fit the largest board even in the native canvas at the minimum window size.
@@ -389,6 +383,81 @@ pub struct DiagnosticsOverlay {
 pub struct GridOverlay {
     pub enabled: bool,
 }
+
+/// Colour scheme for the interface and the board.
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Theme {
+    #[default]
+    Dark,
+    Light,
+    HighContrast,
+}
+
+impl Theme {
+    pub const ALL: [Theme; 3] = [Theme::Dark, Theme::Light, Theme::HighContrast];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Theme::Dark => "Dark",
+            Theme::Light => "Light",
+            Theme::HighContrast => "High contrast",
+        }
+    }
+
+    pub fn board(self) -> &'static BoardColors {
+        match self {
+            Theme::Dark => &DARK_BOARD,
+            Theme::Light => &LIGHT_BOARD,
+            Theme::HighContrast => &HIGH_CONTRAST_BOARD,
+        }
+    }
+}
+
+pub struct BoardColors {
+    pub live: Color,
+    pub dead: Color,
+    /// Cells of the stamp under the pointer, before it is placed.
+    pub ghost: Color,
+    pub wall: Color,
+    /// Peak of the pulse when the edges switch to fixed.
+    pub wall_bright: Color,
+    pub grid_line: Color,
+    pub hover: Color,
+    pub hover_erase: Color,
+}
+
+const DARK_BOARD: BoardColors = BoardColors {
+    live: Color::srgb(0.22, 0.85, 0.56),
+    dead: Color::srgb(0.08, 0.09, 0.11),
+    ghost: Color::srgba(0.22, 0.85, 0.56, 0.30),
+    wall: Color::srgba(0.96, 0.92, 0.70, 0.55),
+    wall_bright: Color::srgba(1.0, 0.98, 0.82, 0.92),
+    grid_line: Color::srgba(0.02, 0.02, 0.03, 0.8),
+    hover: Color::srgb(0.75, 0.95, 0.85),
+    hover_erase: Color::srgb(1.0, 0.60, 0.55),
+};
+
+const LIGHT_BOARD: BoardColors = BoardColors {
+    live: Color::srgb(0.04, 0.50, 0.31),
+    dead: Color::srgb(0.985, 0.99, 0.99),
+    ghost: Color::srgba(0.04, 0.50, 0.31, 0.35),
+    wall: Color::srgba(0.75, 0.45, 0.0, 0.65),
+    wall_bright: Color::srgba(0.90, 0.55, 0.0, 0.95),
+    grid_line: Color::srgba(0.70, 0.75, 0.78, 0.8),
+    hover: Color::srgb(0.02, 0.30, 0.18),
+    hover_erase: Color::srgb(0.75, 0.12, 0.10),
+};
+
+const HIGH_CONTRAST_BOARD: BoardColors = BoardColors {
+    live: Color::srgb(0.35, 1.0, 0.65),
+    dead: Color::srgb(0.10, 0.10, 0.10),
+    ghost: Color::srgba(0.35, 1.0, 0.65, 0.45),
+    wall: Color::srgba(1.0, 0.85, 0.0, 0.85),
+    wall_bright: Color::srgb(1.0, 0.95, 0.55),
+    grid_line: Color::srgba(0.45, 0.45, 0.45, 0.9),
+    hover: Color::WHITE,
+    hover_erase: Color::srgb(1.0, 0.45, 0.40),
+};
 
 pub const BOARD_SIZE_MIN: usize = 8;
 pub const BOARD_SIZE_MAX: usize = 2048;
