@@ -148,7 +148,9 @@ fn sync_accessibility(
             if input.allow_newlines {
                 node.set_role(Role::MultilineTextInput);
             }
-            if let Some(mut border) = border {
+            if let Some(mut border) = border
+                && border.0 != Token::Error
+            {
                 border.set_if_neq(ThemedBorder(if focus.get() == Some(entity) {
                     Token::Accent
                 } else {

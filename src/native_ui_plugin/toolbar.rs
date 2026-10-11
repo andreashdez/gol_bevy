@@ -1,7 +1,7 @@
 //! One row when there is room; the same controls reflow without losing focus.
 use super::*;
 
-const SINGLE_ROW_MIN_WIDTH: f32 = 1200.0;
+pub(super) const SINGLE_ROW_MIN_WIDTH: f32 = 950.0;
 
 pub(super) fn height(width: f32) -> f32 {
     if width >= SINGLE_ROW_MIN_WIDTH {
@@ -78,7 +78,8 @@ pub(super) fn spawn(commands: &mut Commands) {
                     Group::Playback => {
                         button(p, "Play", Action::Play);
                         button(p, "Step", Action::Step);
-                        controls::speed_slider(p);
+                        button(p, "Max", Action::MaxSpeed);
+                        speed::spawn(p);
                     }
                     Group::Editing => {
                         button(p, "Randomize", Action::Randomize);
@@ -87,11 +88,9 @@ pub(super) fn spawn(commands: &mut Commands) {
                         button(p, "Redo", Action::Redo);
                     }
                     Group::Workspace => {
-                        button(p, "Grid", Action::Grid);
-                        button(p, "Palette", Action::Sidebar);
+                        menus::spawn(p, "View", Action::ViewMenu);
                         button(p, "Import / Export", Action::Import);
-                        button(p, "Settings", Action::Settings);
-                        button(p, "Help", Action::Help);
+                        menus::spawn(p, "More", Action::MoreMenu);
                     }
                     Group::Brand => unreachable!(),
                 });
@@ -106,33 +105,34 @@ type LayoutNode<'a> = (
     Option<&'a mut TabGroup>,
     Has<ToolbarButton>,
     Option<&'a Action>,
-    Has<controls::SpeedSlider>,
     Has<Sidebar>,
+    Has<ToolStrip>,
 );
 
 pub(super) fn sync_layout(
     windows: Query<&Window, With<PrimaryWindow>>,
+    layout: Res<UiLayout>,
     mut nodes: Query<LayoutNode>,
-    mut previous_width: Local<Option<f32>>,
+    mut previous_layout: Local<Option<(f32, bool)>>,
 ) {
     let Ok(window) = windows.single() else {
         return;
     };
-    if *previous_width == Some(window.width()) {
+    let current = (window.width(), layout.control_deck_visible);
+    if *previous_layout == Some(current) {
         return;
     }
-    *previous_width = Some(window.width());
+    *previous_layout = Some(current);
     let single = window.width() >= SINGLE_ROW_MIN_WIDTH;
-    for (mut node, toolbar, group, tabs, button, action, slider, sidebar) in &mut nodes {
+    for (mut node, toolbar, group, tabs, button, action, sidebar, tools) in &mut nodes {
         if toolbar {
             node.display = Display::Grid;
             node.height = px(height(window.width()));
             let columns = if single {
-                // Explicit group budgets keep the flexible speed slider from
-                // consuming space needed by the edit and workspace buttons.
+                // Explicit group budgets leave space for all toolbar controls.
                 vec![
                     GridTrack::px(44.0),
-                    GridTrack::px(368.0),
+                    GridTrack::px(300.0),
                     GridTrack::px(272.0),
                     GridTrack::flex(1.0),
                 ]
@@ -183,12 +183,27 @@ pub(super) fn sync_layout(
                 node.min_width = px(64);
             }
         }
-        if slider {
-            node.width = px(if single { 100.0 } else { 150.0 });
-            node.max_width = px(if single { 120.0 } else { 200.0 });
-        }
         if sidebar {
+            node.top = px(height(window.width()) + 16.0 + TOOL_STRIP_SPACE);
+        }
+        if tools {
             node.top = px(height(window.width()) + 16.0);
+            node.width = px(if layout.control_deck_visible {
+                SIDE
+            } else {
+                TOOL_RAIL_WIDTH
+            });
+            node.height = px(if layout.control_deck_visible {
+                TOOL_STRIP_HEIGHT
+            } else {
+                TOOL_RAIL_HEIGHT
+            });
+            node.flex_direction = if layout.control_deck_visible {
+                FlexDirection::Row
+            } else {
+                FlexDirection::Column
+            };
+            node.row_gap = px(6);
         }
     }
 }

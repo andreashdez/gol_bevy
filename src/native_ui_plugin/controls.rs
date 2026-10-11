@@ -1,14 +1,7 @@
 //! Everyday controls, shortcut hints, and first-use guidance.
 use super::*;
 use crate::shared::{CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, MainCamera, PATTERN_SHORTCUTS};
-use bevy::{
-    a11y::AccessibilityNode,
-    text::FontFeatureTag,
-    ui_widgets::{
-        Slider, SliderPrecision, SliderRange, SliderStep, SliderThumb, SliderValue, TrackClick,
-        ValueChange,
-    },
-};
+use bevy::{a11y::AccessibilityNode, text::FontFeatureTag};
 
 #[derive(Component)]
 pub(super) struct Tooltip(pub String);
@@ -19,10 +12,6 @@ pub(super) struct TallLabel {
     pub always_show: bool,
 }
 #[derive(Component)]
-pub(super) struct SpeedSlider;
-#[derive(Component)]
-pub(super) struct SpeedThumb;
-#[derive(Component)]
 pub(super) struct SpeedLabel;
 #[derive(Component)]
 pub(super) struct ZoomLabel;
@@ -30,6 +19,10 @@ pub(super) struct ZoomLabel;
 pub(super) struct FeedbackOverlay;
 #[derive(Component)]
 pub(super) struct FeedbackText;
+#[derive(Component)]
+pub(super) struct CanvasToolHint;
+#[derive(Component)]
+pub(super) struct CanvasToolHintText;
 
 pub(super) fn numeric_font(size: f32) -> TextFont {
     TextFont {
@@ -85,7 +78,11 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::ZoomIn => "Zoom in · scroll over the canvas to zoom · middle-drag to pan",
         Action::ZoomOut => "Zoom out · scroll over the canvas to zoom · middle-drag to pan",
         Action::MaxSpeed => "Toggle maximum speed · switch off to restore your selected rate",
+        Action::SpeedAdjust(step) if step < 0 => "Decrease speed by 1 gen/s · leaves Max mode",
+        Action::SpeedAdjust(_) => "Increase speed by 1 gen/s · leaves Max mode",
         Action::Sidebar => "Show / hide the palette · H",
+        Action::ViewMenu => "View options · grid and pattern palette",
+        Action::MoreMenu => "Workspace settings and help",
         Action::Help => "Controls and tips · /",
         Action::Diagnostics => "Simulation diagnostics · F3",
         Action::Rotate => "Rotate stamp 90° clockwise · Z",
@@ -147,176 +144,63 @@ pub(super) fn navigate(
     }
 }
 
-/// Maximum speed is a separate toggle; the slider always selects a fixed rate.
-const SLIDER_FASTEST_RATE: f32 = 40.0;
+/// Maximum speed is a separate toggle; the field selects a fixed rate.
+const MAX_FIXED_RATE: f32 = 40.0;
 
-fn rate_to_ms(rate: f32) -> u64 {
-    (1000.0 / rate.clamp(1.0, SLIDER_FASTEST_RATE)).round() as u64
+pub(super) fn rate_to_ms(rate: f32) -> u64 {
+    (1000.0 / rate.clamp(1.0, MAX_FIXED_RATE)).round() as u64
 }
 
-fn apply_slider_value(app: &mut GolApp, value: f32) {
-    app.set_tick_rate_ms(rate_to_ms(value));
-}
-
-fn slider_value(app: &GolApp) -> f32 {
+pub(super) fn fixed_rate(app: &GolApp) -> f32 {
     1000.0 / app.tick_rate_ms() as f32
 }
 
-pub(super) fn speed_slider(p: &mut ChildSpawnerCommands) {
-    p.spawn((
-        SpeedSlider,
-        Slider {
-            track_click: TrackClick::Snap,
-            ..default()
-        },
-        SliderValue(SLIDER_FASTEST_RATE),
-        SliderRange::new(1.0, SLIDER_FASTEST_RATE),
-        SliderStep(1.0),
-        SliderPrecision(0),
-        TabIndex(0),
-        Hovered::default(),
-        Tooltip(
-            "Fixed speed · Left/Right adjusts · Home 1 gen/s · End 40 gen/s · adjusting leaves Max"
-                .into(),
-        ),
-        accessibility::named_node(
-            accesskit::Role::Slider,
-            "Simulation speed (generations per second)",
-        ),
-        Node {
-            height: px(34),
-            width: px(150),
-            min_width: px(64),
-            max_width: px(200),
-            flex_grow: 1.0,
-            border: UiRect::all(px(1)),
-            border_radius: BorderRadius::all(px(6)),
-            align_items: AlignItems::Center,
-            ..default()
-        },
-        ThemedBorder(Token::Line),
-        ThemedBackground(Token::Panel),
-    ))
-    .with_children(|p| {
-        p.spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(8),
-                right: px(8),
-                height: px(4),
-                border_radius: BorderRadius::all(px(2)),
-                ..default()
-            },
-            ThemedBackground(Token::Line),
-            Pickable::IGNORE,
-        ));
-        p.spawn((
-            SpeedThumb,
-            SliderThumb,
-            Node {
-                position_type: PositionType::Absolute,
-                width: px(16),
-                height: px(22),
-                border_radius: BorderRadius::all(px(5)),
-                ..default()
-            },
-            ThemedBackground(Token::Accent),
-            Pickable::IGNORE,
-        ));
-    });
-    toolbar::button(p, "Max", Action::MaxSpeed);
-    p.spawn(Node {
-        width: px(84),
-        height: px(34),
-        align_items: AlignItems::Center,
-        flex_shrink: 0.0,
-        ..default()
-    })
-    .with_children(|p| {
-        p.spawn((SpeedLabel, label("40.0 gen/s", 13.0, Token::Ink)))
-            .insert(numeric_font(13.0));
-    });
-}
-
-pub(super) fn speed_changed(
-    event: On<ValueChange<f32>>,
-    sliders: Query<(), With<SpeedSlider>>,
-    mut sim: ResMut<Simulation>,
-    mode: Res<NativeUi>,
-) {
-    if mode.dialog.is_none() && sliders.contains(event.source) && event.value.is_finite() {
-        apply_slider_value(&mut sim.app, event.value);
-    }
-}
-
 pub(super) fn sync_speed(
-    mut commands: Commands,
     sim: Res<Simulation>,
-    focus: Res<InputFocus>,
-    mut sliders: Query<
-        (
-            Entity,
-            &ComputedNode,
-            &SliderValue,
-            &mut AccessibilityNode,
-            &mut ThemedBorder,
-        ),
-        With<SpeedSlider>,
-    >,
-    mut thumbs: Query<&mut Node, With<SpeedThumb>>,
-    mut labels: Query<&mut Text, With<SpeedLabel>>,
+    mut labels: Query<(&mut Text, &mut Node), With<SpeedLabel>>,
 ) {
-    let position = slider_value(&sim.app);
-    let Ok((entity, computed, value, mut accessible, mut border)) = sliders.single_mut() else {
-        return;
-    };
-    if value.0 != position {
-        commands.entity(entity).insert(SliderValue(position));
-    }
     let measured = sim.rate.per_second();
-    let (spoken, shown) = if sim.app.is_max_speed() && sim.app.is_running() && measured > 0.0 {
-        (
-            format!("Maximum speed, {measured:.0} generations per second"),
-            format!("{measured:.0}/s"),
-        )
-    } else if sim.app.is_max_speed() {
-        // Paused, or running for less than one measuring window.
-        ("Maximum speed".to_owned(), "— gen/s".to_owned())
+    let shown = if sim.app.is_running() && measured > 0.0 {
+        format!("{measured:.0}/s")
     } else {
-        (
-            format!("{position:.1} generations per second"),
-            format!("{position:.1} gen/s"),
-        )
+        "— gen/s".to_owned()
     };
-    accessible.set_numeric_value(position as f64);
-    accessible.set_value(if sim.app.is_max_speed() {
-        format!("{position:.1} generations per second selected; {spoken}")
-    } else {
-        spoken
-    });
-    accessible.add_action(accesskit::Action::SetValue);
-    accessible.add_action(accesskit::Action::Increment);
-    accessible.add_action(accesskit::Action::Decrement);
-    border.set_if_neq(ThemedBorder(if focus.get() == Some(entity) {
-        Token::Focus
-    } else {
-        Token::Line
-    }));
-    if let Ok(mut thumb) = thumbs.single_mut() {
-        let travel = (computed.size().x * computed.inverse_scale_factor - 16.0).max(0.0);
+    if let Ok((mut label, mut node)) = labels.single_mut() {
+        set_if_neq!(label.0, shown);
         set_if_neq!(
-            thumb.left,
-            px(travel * (position - 1.0) / (SLIDER_FASTEST_RATE - 1.0))
+            node.display,
+            if sim.app.is_max_speed() {
+                Display::Flex
+            } else {
+                Display::None
+            }
         );
-    }
-    if let Ok(mut label) = labels.single_mut()
-        && label.0 != shown
-    {
-        label.0 = shown;
     }
 }
 
 pub(super) fn overlays(commands: &mut Commands) {
+    commands
+        .spawn((
+            NativeRoot,
+            CanvasToolHint,
+            Node {
+                position_type: PositionType::Absolute,
+                padding: UiRect::axes(px(10), px(7)),
+                border_radius: BorderRadius::all(px(6)),
+                ..default()
+            },
+            ThemedBackground(Token::Panel),
+            GlobalZIndex(1),
+            Pickable::IGNORE,
+            accessibility::named_node(accesskit::Role::GenericContainer, "Canvas editing guidance"),
+        ))
+        .with_children(|p| {
+            p.spawn((
+                CanvasToolHintText,
+                label("", 12.0, Token::Muted),
+                accessibility::named_node(accesskit::Role::Label, ""),
+            ));
+        });
     for hint in [false, true] {
         commands
             .spawn((
@@ -345,6 +229,59 @@ pub(super) fn overlays(commands: &mut Commands) {
             .with_children(|p| {
                 p.spawn((OverlayText(hint), label("", 13.0, Token::Muted)));
             });
+    }
+}
+
+fn tool_hint(app: &GolApp) -> String {
+    match app.tool() {
+        EditTool::Draw => "Draw · drag to paint · right-drag to erase".into(),
+        EditTool::Erase => "Erase · drag to erase cells".into(),
+        EditTool::Stamp => {
+            let Some(name) = app.selected_pattern_name() else {
+                return "Stamp · choose a pattern from the palette · H shows the palette".into();
+            };
+            let (rotation, flipped) = app.stamp_orientation();
+            format!(
+                "Stamp: {name} · {}°{}\nClick to place · Z rotate · F flip",
+                rotation as u32 * 90,
+                if flipped { " · flipped" } else { "" }
+            )
+        }
+    }
+}
+
+/// Passive guidance stays inside the canvas and lets pointer input pass through.
+pub(super) fn sync_tool_hint(
+    sim: Res<Simulation>,
+    view: ViewState,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut nodes: Query<&mut Node, With<CanvasToolHint>>,
+    mut texts: Query<&mut Text, With<CanvasToolHintText>>,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let canvas = canvas_rect(window.size(), &view.layout);
+    let menu_open = view
+        .menus
+        .iter()
+        .any(|state| *state != bevy::ui_widgets::MenuFocusState::Closed);
+    for mut node in &mut nodes {
+        set_if_neq!(
+            node.display,
+            if view.mode.dialog.is_none() && !menu_open {
+                Display::Flex
+            } else {
+                Display::None
+            }
+        );
+        set_if_neq!(node.left, px(canvas.min.x + 12.0));
+        set_if_neq!(node.bottom, px(window.height() - canvas.max.y + 8.0));
+        set_if_neq!(node.max_width, px((canvas.width() - 24.0).max(1.0)));
+    }
+    let hint = tool_hint(&sim.app);
+    for mut text in &mut texts {
+        set_if_neq!(text.0, hint.clone());
     }
 }
 
@@ -393,6 +330,10 @@ pub(super) fn sync_overlays(
         }
     }
     let candidate = hovered.or(focused);
+    let menu_open = view
+        .menus
+        .iter()
+        .any(|state| *state != bevy::ui_widgets::MenuFocusState::Closed);
     let canvas = canvas_rect(window.size(), &view.layout);
     for (mut node, overlay, wide, tall) in &mut nodes {
         if wide {
@@ -468,7 +409,7 @@ pub(super) fn sync_overlays(
         };
         set_if_neq!(
             node.display,
-            if show && view.mode.dialog.is_none() {
+            if show && view.mode.dialog.is_none() && (!hint || !menu_open) {
                 Display::Flex
             } else {
                 Display::None
@@ -545,7 +486,7 @@ pub(super) fn sync_footer(
         }
         if let Some(action) = action
             && !toolbar_button
-            && !matches!(action, Action::Pattern(_))
+            && !matches!(action, Action::Pattern(_) | Action::SpeedAdjust(_))
         {
             set_if_neq!(
                 node.padding,
@@ -661,7 +602,7 @@ mod tests {
         assert_eq!(projection.scale, 2.5);
     }
     #[test]
-    fn speed_slider_maps_to_simulation_limits_and_monotonic_rates() {
+    fn fixed_rates_map_to_simulation_limits_and_monotonic_rates() {
         assert_eq!(rate_to_ms(1.0), GolApp::tick_rate_bounds().1);
         assert_eq!(rate_to_ms(40.0), GolApp::tick_rate_bounds().0);
         for rate in 1..40 {
@@ -670,28 +611,44 @@ mod tests {
     }
 
     #[test]
-    fn max_toggle_restores_rate_and_slider_always_chooses_a_fixed_rate() {
+    fn max_toggle_restores_rate_and_field_rates_leave_max() {
         let mut app = GolApp::new(8, 8);
-        apply_slider_value(&mut app, 10.0);
+        app.set_tick_rate_ms(rate_to_ms(10.0));
         apply_action(Action::MaxSpeed, &mut app);
         assert!(app.is_max_speed());
-        assert_eq!(slider_value(&app), 10.0);
+        assert_eq!(fixed_rate(&app), 10.0);
         assert!(!app.speed_up());
-        assert_eq!(slider_value(&app), 10.0);
+        assert_eq!(fixed_rate(&app), 10.0);
         apply_action(Action::MaxSpeed, &mut app);
         assert!(!app.is_max_speed());
         assert_eq!(app.tick_rate_ms(), 100);
 
         apply_action(Action::MaxSpeed, &mut app);
-        apply_slider_value(&mut app, SLIDER_FASTEST_RATE);
+        app.set_tick_rate_ms(rate_to_ms(MAX_FIXED_RATE));
         assert!(!app.is_max_speed());
-        assert_eq!(slider_value(&app), SLIDER_FASTEST_RATE);
+        assert_eq!(fixed_rate(&app), MAX_FIXED_RATE);
 
         // Keyboard shortcuts retain their existing Max behavior.
         app.speed_up();
         assert!(app.is_max_speed());
-        assert_eq!(slider_value(&app), SLIDER_FASTEST_RATE);
-        apply_slider_value(&mut app, SLIDER_FASTEST_RATE + 1.0);
+        assert_eq!(fixed_rate(&app), MAX_FIXED_RATE);
+        app.set_tick_rate_ms(rate_to_ms(MAX_FIXED_RATE + 1.0));
         assert!(!app.is_max_speed());
+    }
+
+    #[test]
+    fn canvas_guidance_follows_the_tool_and_actual_stamp_orientation() {
+        let mut app = GolApp::new(8, 8);
+        assert!(tool_hint(&app).starts_with("Draw ·"));
+        app.select_pattern(crate::app::PatternKind::Glider);
+        assert!(tool_hint(&app).contains("Stamp: Glider · 0°"));
+        app.rotate_stamp_clockwise();
+        app.toggle_stamp_flip();
+        assert!(tool_hint(&app).contains("90° · flipped"));
+        assert!(tool_hint(&app).contains("Z rotate · F flip"));
+        app.set_tool(EditTool::Erase);
+        assert_eq!(tool_hint(&app), "Erase · drag to erase cells");
+        app.set_tool(EditTool::Draw);
+        assert!(tool_hint(&app).starts_with("Draw ·"));
     }
 }

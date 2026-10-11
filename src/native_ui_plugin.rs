@@ -14,7 +14,9 @@ macro_rules! set_if_neq {
 mod accessibility;
 mod controls;
 mod dialogs;
+mod menus;
 mod palette;
+mod speed;
 mod theme;
 mod toolbar;
 use crate::{
@@ -44,6 +46,10 @@ fn bottom_height(size: Vec2) -> f32 {
     if size.x < 1000.0 { 88.0 } else { 48.0 }
 }
 const SIDE: f32 = 256.0;
+const TOOL_STRIP_HEIGHT: f32 = 48.0;
+const TOOL_STRIP_SPACE: f32 = TOOL_STRIP_HEIGHT + 8.0;
+const TOOL_RAIL_WIDTH: f32 = 80.0;
+const TOOL_RAIL_HEIGHT: f32 = 144.0;
 const UI_FONT: Handle<Font> = bevy::asset::uuid_handle!("67dfd7f0-b829-4a23-a5ae-3e416c5aba2d");
 
 #[derive(Resource, Default)]
@@ -60,9 +66,11 @@ impl Plugin for NativeUiPlugin {
         app.init_resource::<NativeUi>()
             .init_resource::<EditFeedback>()
             .init_resource::<Theme>()
-            .add_plugins(TabNavigationPlugin)
+            .add_plugins((TabNavigationPlugin, bevy::picking::cursor::CursorIconPlugin))
             .add_observer(activate)
-            .add_observer(controls::speed_changed)
+            .add_observer(menus::menu_event)
+            .add_observer(menus::item_activated)
+            .add_observer(speed::handle_key)
             .add_observer(controls::navigate)
             .add_plugins(dialogs::NativeDialogsPlugin)
             .add_plugins(accessibility::NativeAccessibilityPlugin)
@@ -71,6 +79,9 @@ impl Plugin for NativeUiPlugin {
                 (
                     palette::sync_scrollbar.after(bevy::ui::UiSystems::Layout),
                     theme::apply.after(bevy::a11y::AccessibilitySystems::Update),
+                    speed::edit
+                        .after(bevy::text::EditableTextSystems)
+                        .before(bevy::ui::UiSystems::PostLayout),
                 ),
             )
             .add_systems(Startup, setup.after(StartupSet::BuildWorld))
@@ -78,12 +89,17 @@ impl Plugin for NativeUiPlugin {
                 Update,
                 (
                     dialogs::update_dialogs,
+                    menus::dismiss,
                     sync,
                     sync_palette,
                     palette::filter,
                     palette::sync_preview,
                     controls::sync_speed,
+                    speed::capture_scrub,
+                    speed::sync_scrubber,
+                    speed::sync_chevrons,
                     controls::sync_overlays,
+                    controls::sync_tool_hint,
                     controls::sync_footer,
                     toolbar::sync_layout,
                     controls::sync_feedback,
@@ -101,6 +117,8 @@ impl Plugin for NativeUiPlugin {
 struct NativeRoot;
 #[derive(Component)]
 struct Sidebar;
+#[derive(Component)]
+struct ToolStrip;
 #[derive(Component)]
 struct Palette;
 #[derive(Component)]
@@ -128,10 +146,13 @@ enum Action {
     ZoomIn,
     ZoomOut,
     MaxSpeed,
+    SpeedAdjust(i8),
     Sidebar,
     Import,
     Help,
     Settings,
+    ViewMenu,
+    MoreMenu,
     Diagnostics,
     CloseDialog,
     ImportSubmit,
@@ -182,6 +203,11 @@ fn button(parent: &mut ChildSpawnerCommands, text: &str, action: Action) -> Enti
         .spawn((
             Node {
                 padding: UiRect::axes(px(12), px(9)),
+                width: if matches!(action, Action::Tool(_)) {
+                    px(68)
+                } else {
+                    Val::Auto
+                },
                 min_width: if action == Action::Play {
                     px(72)
                 } else {
@@ -221,12 +247,44 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
     commands
         .spawn((
             NativeRoot,
+            ToolStrip,
+            TabGroup {
+                order: 1,
+                ..default()
+            },
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(16),
+                top: px(toolbar::height(1200.0) + 16.0),
+                width: px(SIDE),
+                height: px(TOOL_STRIP_HEIGHT),
+                padding: UiRect::all(px(4)),
+                column_gap: px(6),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(8)),
+                ..default()
+            },
+            ThemedBackground(Token::Panel),
+            ThemedBorder(Token::Line),
+            accessibility::named_node(accesskit::Role::Toolbar, "Drawing tools"),
+            GlobalZIndex(10),
+        ))
+        .with_children(|p| {
+            button(p, "Draw", Action::Tool(EditTool::Draw));
+            button(p, "Erase", Action::Tool(EditTool::Erase));
+            button(p, "Stamp", Action::Tool(EditTool::Stamp));
+        });
+    commands
+        .spawn((
+            NativeRoot,
             Sidebar,
             TabGroup::default(),
             Node {
                 position_type: PositionType::Absolute,
                 left: px(16),
-                top: px(toolbar::height(1200.0) + 16.0),
+                top: px(toolbar::height(1200.0) + 16.0 + TOOL_STRIP_SPACE),
                 bottom: px(64),
                 width: px(SIDE),
                 padding: UiRect::all(px(10)),
@@ -242,11 +300,6 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
             GlobalZIndex(10),
         ))
         .with_children(|p| {
-            p.spawn(row()).with_children(|p| {
-                button(p, "Draw", Action::Tool(EditTool::Draw));
-                button(p, "Erase", Action::Tool(EditTool::Erase));
-                button(p, "Stamp", Action::Tool(EditTool::Stamp));
-            });
             palette::preview(p);
             palette::search(p);
             palette::library(p);
@@ -333,11 +386,26 @@ pub fn panel_rects(size: Vec2, layout: &UiLayout) -> Vec<Rect> {
     let mut rects = vec![
         Rect::new(0.0, 0.0, size.x, top),
         Rect::new(0.0, (size.y - bottom).max(0.0), size.x, size.y),
+        Rect::new(
+            16.0,
+            top + 16.0,
+            16.0 + if layout.control_deck_visible {
+                SIDE
+            } else {
+                TOOL_RAIL_WIDTH
+            },
+            top + 16.0
+                + if layout.control_deck_visible {
+                    TOOL_STRIP_HEIGHT
+                } else {
+                    TOOL_RAIL_HEIGHT
+                },
+        ),
     ];
     if layout.control_deck_visible && size.y > top + bottom + 32.0 {
         rects.push(Rect::new(
             16.0,
-            top + 16.0,
+            top + 16.0 + TOOL_STRIP_SPACE,
             SIDE + 16.0,
             size.y - bottom - 16.0,
         ));
@@ -350,7 +418,7 @@ pub fn canvas_rect(size: Vec2, layout: &UiLayout) -> Rect {
     let left = if layout.control_deck_visible {
         SIDE + 32.0
     } else {
-        16.0
+        TOOL_RAIL_WIDTH + 32.0
     };
     let max = (size - Vec2::new(16.0, bottom_height(size) + 16.0)).max(Vec2::ONE);
     let min = Vec2::new(left, toolbar::height(size.x) + 16.0)
@@ -363,9 +431,11 @@ fn publish_input_regions(
     windows: Query<&Window, With<PrimaryWindow>>,
     layout: Res<UiLayout>,
     state: Res<NativeUi>,
+    menus: Query<&Node, With<menus::WorkspacePopup>>,
     mut regions: ResMut<UiInputRegions>,
 ) {
-    regions.modal = state.dialog.is_some();
+    regions.modal =
+        state.dialog.is_some() || menus.iter().any(|node| node.display != Display::None);
     regions.panels = windows
         .single()
         .map(|window| panel_rects(window.size(), &layout))
@@ -423,6 +493,10 @@ fn apply_action(action: Action, app: &mut GolApp) {
                 app.set_max_speed();
             }
         }
+        Action::SpeedAdjust(step) => {
+            let rate = (controls::fixed_rate(app) * 10.0).round() / 10.0;
+            app.set_tick_rate_ms(controls::rate_to_ms(rate + f32::from(step)));
+        }
         Action::Step => app.increment_epoch(),
         Action::Undo => {
             app.undo();
@@ -457,13 +531,14 @@ type ButtonState<'a> = (
 );
 
 #[derive(SystemParam)]
-struct ViewState<'w> {
+struct ViewState<'w, 's> {
     mode: Res<'w, NativeUi>,
     layout: Res<'w, UiLayout>,
     grid: Res<'w, GridOverlay>,
     focus: Res<'w, InputFocus>,
     focus_visible: Res<'w, InputFocusVisible>,
     theme: Res<'w, Theme>,
+    menus: Query<'w, 's, &'static bevy::ui_widgets::MenuFocusState, With<menus::WorkspacePopup>>,
 }
 
 type RootNode<'a> = (&'a mut Node, Has<Sidebar>, Has<toolbar::Toolbar>);
@@ -483,6 +558,7 @@ fn sync(
         focus,
         focus_visible: _,
         theme,
+        menus: _,
     } = view;
     for (mut node, sidebar, toolbar) in &mut roots {
         let display = if sidebar && !layout.control_deck_visible {
@@ -519,6 +595,8 @@ fn sync(
             Action::Undo => !sim.app.can_undo(),
             Action::Redo => !sim.app.can_redo(),
             Action::Rotate | Action::Flip => sim.app.tool() != EditTool::Stamp,
+            Action::SpeedAdjust(step) if *step < 0 => sim.app.tick_rate_ms() >= 1000,
+            Action::SpeedAdjust(_) => sim.app.tick_rate_ms() <= 25,
             _ => false,
         };
         if disabled {
@@ -571,6 +649,8 @@ fn sync(
             Token::Hover
         } else if selected {
             Token::Selected
+        } else if matches!(action, Action::SpeedAdjust(_)) {
+            Token::Field
         } else {
             Token::Surface
         }));
@@ -788,7 +868,7 @@ mod tests {
         );
         assert_eq!(
             world
-                .query_filtered::<Entity, With<controls::SpeedSlider>>()
+                .query_filtered::<Entity, With<speed::SpeedEditor>>()
                 .iter(&world)
                 .count(),
             1
@@ -840,6 +920,50 @@ mod tests {
     }
 
     #[test]
+    fn hiding_the_palette_keeps_tools_visible_and_reflows_without_a_resize() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Assets<Font>>();
+        world.insert_resource(Simulation::new(GolApp::new(8, 8)));
+        world.init_resource::<NativeUi>();
+        world.init_resource::<UiLayout>();
+        world.insert_resource(GridOverlay { enabled: false });
+        world.init_resource::<InputFocus>();
+        world.init_resource::<InputFocusVisible>();
+        world.init_resource::<Theme>();
+        world.spawn((Window::default(), PrimaryWindow));
+        world.run_system_once(setup).unwrap();
+        let mut schedule = Schedule::default();
+        schedule.add_systems((sync, toolbar::sync_layout).chain());
+        schedule.run(&mut world);
+        world.resource_mut::<UiLayout>().control_deck_visible = false;
+        schedule.run(&mut world);
+        let (_, tools) = world
+            .query_filtered::<(&Children, &Node), With<ToolStrip>>()
+            .single(&world)
+            .unwrap();
+        assert_eq!(tools.display, Display::Flex);
+        assert_eq!(tools.flex_direction, FlexDirection::Column);
+        assert_eq!(tools.width, px(TOOL_RAIL_WIDTH));
+        assert_eq!(
+            world
+                .query_filtered::<&Node, With<Sidebar>>()
+                .single(&world)
+                .unwrap()
+                .display,
+            Display::None
+        );
+        world.resource_mut::<UiLayout>().control_deck_visible = true;
+        schedule.run(&mut world);
+        let tools = world
+            .query_filtered::<&Node, With<ToolStrip>>()
+            .single(&world)
+            .unwrap();
+        assert_eq!(tools.flex_direction, FlexDirection::Row);
+        assert_eq!(tools.width, px(SIDE));
+    }
+
+    #[test]
     fn native_actions_share_edit_history_and_playback() {
         let mut app = GolApp::new(30, 30);
         let glider = crate::app::PatternKind::Glider.builtin_index().unwrap();
@@ -855,10 +979,32 @@ mod tests {
     }
 
     #[test]
+    fn speed_buttons_step_the_displayed_rate_with_limits_and_leave_max_mode() {
+        let mut app = GolApp::new(8, 8);
+        app.set_tick_rate_ms(100);
+        app.set_max_speed();
+        apply_action(Action::SpeedAdjust(1), &mut app);
+        assert!(!app.is_max_speed());
+        assert_eq!(app.tick_rate_ms(), controls::rate_to_ms(11.0));
+        apply_action(Action::SpeedAdjust(-1), &mut app);
+        assert_eq!(app.tick_rate_ms(), 100);
+        app.set_tick_rate_ms(80);
+        apply_action(Action::SpeedAdjust(1), &mut app);
+        assert_eq!(app.tick_rate_ms(), controls::rate_to_ms(13.5));
+        app.set_tick_rate_ms(1000);
+        apply_action(Action::SpeedAdjust(-1), &mut app);
+        assert_eq!(app.tick_rate_ms(), 1000);
+        app.set_tick_rate_ms(25);
+        apply_action(Action::SpeedAdjust(1), &mut app);
+        assert_eq!(app.tick_rate_ms(), 25);
+        assert_eq!(app.board.live_cells_count(), 0);
+    }
+
+    #[test]
     fn compact_toolbar_returns_space_to_the_canvas_and_input_regions_follow_it() {
         let layout = UiLayout::default();
-        let narrow = Vec2::new(1199.0, 800.0);
-        let wide = Vec2::new(1200.0, 800.0);
+        let narrow = Vec2::new(toolbar::SINGLE_ROW_MIN_WIDTH - 1.0, 800.0);
+        let wide = Vec2::new(toolbar::SINGLE_ROW_MIN_WIDTH, 800.0);
         assert_eq!(
             canvas_rect(narrow, &layout).min.y - canvas_rect(wide, &layout).min.y,
             48.0
@@ -875,7 +1021,7 @@ mod tests {
                 .any(|r| r.contains(returned_space))
         );
         assert!(canvas_rect(wide, &layout).contains(returned_space));
-        for width in [680.0, 999.0, 1000.0, 1199.0, 1200.0, 1600.0] {
+        for width in [680.0, 999.0, 1000.0, 1039.0, 1040.0, 1200.0, 1600.0] {
             for visible in [true, false] {
                 let size = Vec2::new(width, 420.0);
                 let layout = UiLayout {
@@ -903,9 +1049,12 @@ mod tests {
             .any(|r| r.contains(pos))
         };
         assert!(contains(true, Vec2::new(300.0, 80.0)));
-        assert!(contains(true, Vec2::new(40.0, 180.0)));
+        assert!(contains(true, Vec2::new(40.0, 150.0)));
+        assert!(contains(false, Vec2::new(40.0, 150.0)));
+        assert!(contains(true, Vec2::new(40.0, 210.0)));
         assert!(contains(true, Vec2::new(500.0, 590.0)));
         assert!(!contains(true, Vec2::new(400.0, 300.0)));
-        assert!(!contains(false, Vec2::new(40.0, 180.0)));
+        assert!(contains(false, Vec2::new(40.0, 210.0)));
+        assert!(!contains(false, Vec2::new(40.0, 300.0)));
     }
 }

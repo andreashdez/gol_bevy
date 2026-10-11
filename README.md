@@ -29,13 +29,21 @@ cargo run
 The interface uses native Bevy UI throughout: playback controls, a searchable pattern
 palette, editing tools, live status, and import/settings/help/diagnostics dialogs.
 
-At 1200 pixels wide and above, the toolbar uses a single 64-pixel row, grouped into
+At 950 pixels wide and above, the toolbar uses a single 64-pixel row, grouped into
 playback, board edits, and workspace controls. Narrower windows use two rows.
 Resizing preserves keyboard focus and the camera view relative to the fitted board.
+**View** groups the grid and pattern palette toggles; **More** opens Settings and Help.
+The menus support arrow-key navigation, Enter/Space to activate, and Escape to close.
+Clicking the canvas dismisses an open menu without editing the board.
 
-The pattern library scrolls with the mouse wheel or its scrollbar; editing tools, the
+The pattern library scrolls with the mouse wheel or its scrollbar; the
 stamp preview with its rotate/flip controls, and search stay visible while browsing. Scrolling
 over the canvas zooms it. Randomize and Clear are always available in the toolbar.
+Draw, Erase, and Stamp live in a separate tool strip above the palette. Hiding the
+palette turns that strip into a narrow vertical rail, so editing tools remain available.
+A quiet hint at the bottom of the canvas describes the active tool. Stamp hints show
+the selected pattern, its rotation and flip state, and the Z/F shortcuts, even with
+the palette hidden. The hint lets drawing and stamp clicks pass through.
 The board has its own canvas beside the palette and between the toolbar and status
 bar. Startup, board-size changes, **Fit board**, and **V** fit the entire board into that space.
 Use **− / +** next to **Fit board** to zoom; 100% means the whole-board fit.
@@ -47,13 +55,20 @@ Search patterns by name; builtin and imported patterns have separate groups. The
 stamp preview shows the orientation that will be placed, including rotation and
 horizontal flip. Filtering the library keeps the current stamp selected.
 
-Drag the native speed slider or focus it and use Left/Right (Home/End for the
-limits). A separate **Max** toggle runs as many generations as fit in about 8 ms per frame,
-and the adjacent readout shows the achieved rate while running. Switching Max off
-restores the previously selected fixed rate; adjusting the slider leaves Max.
-The slider and its Home/End keys stay within 1–40 gen/s. **+** at 40 gen/s also
-selects Max, and **-** returns to 40 gen/s. Hover or focus buttons for shortcut hints. Empty boards show guidance
-that disappears after the first cells are placed. Search and slider focus block
+The chevrons beside the number decrease or increase speed by 1 gen/s.
+Drag sideways on the numeric speed field to scrub within 1–40 gen/s;
+hold Shift for finer adjustments. Escape during a drag restores the previous rate
+and Max setting. Click the field to enter a rate from 1–40 gen/s, including
+decimals: Enter applies it, Escape cancels, and leaving the field applies a valid
+edited value. Invalid values leave the simulation speed unchanged. Fixed speeds
+use millisecond intervals, so the field shows the closest achievable rate.
+A separate **Max** toggle runs as many generations as fit in about 8 ms per frame.
+The numeric field retains the selected fixed rate, with a small readout underneath
+showing the achieved rate while Max is running. Switching Max off restores the
+previously selected fixed rate; the field and chevrons leave Max when applied.
+**+** at 40 gen/s also selects Max, and **-** returns to 40 gen/s.
+Hover or focus buttons for shortcut hints. Empty boards show guidance
+that disappears after the first cells are placed. Search and speed field focus block
 board shortcuts; Escape returns keyboard control to the canvas.
 
 Tab moves between visible, enabled native controls and Enter/Space activates the focused button;
@@ -138,7 +153,7 @@ Pattern palette:
 
 Board size is set in Settings: pick a preset (128², 256², 512², 1024²) or type exact dimensions, from 8 up to 2048 per side. The choice is saved between runs. Resizing the board clears undo history, because old snapshots no longer fit; resizing the window does not.
 
-The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools share a visual pattern palette; rotate and flip controls appear for stamps. Use Palette to show or hide the editing tools and library. Grid is available in the toolbar and Settings; boundary mode is in Settings. The status bar shows the generation, population, and rule, plus board dimensions and boundary mode when space allows. Generation and population use fixed-width readouts with tabular digits. The footer
+The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools stay available independently of the pattern palette; rotate and flip controls appear in the palette for stamps. Use View → Pattern palette to show or hide the library. Grid is available in View and Settings; boundary mode is in Settings. The status bar shows the generation, population, and rule, plus board dimensions and boundary mode when space allows. Generation and population use fixed-width readouts with tabular digits. The footer
 stacks into two rows in narrower windows. The active rule preset is highlighted in
 Settings. Clear, randomize, undo, and redo show brief feedback, including the undo
 shortcut where applicable. Diagnostics open from Settings or F3 and start hidden.

@@ -144,6 +144,8 @@ fn close(state: &mut DialogState) {
 fn dialog_action(
     event: On<Activate>,
     actions: Query<&Action>,
+    parents: Query<&ChildOf>,
+    menus: Query<&super::menus::WorkspacePopup>,
     mut state: DialogState,
     mut fields: Query<(&Field, &mut EditableText)>,
 ) {
@@ -157,7 +159,12 @@ fn dialog_action(
             Action::Import | Action::Settings | Action::Help | Action::Diagnostics
         )
     {
-        state.drafts.return_focus = Some(event.entity);
+        state.drafts.return_focus = Some(
+            parents
+                .iter_ancestors(event.entity)
+                .find_map(|ancestor| menus.get(ancestor).ok().map(|popup| popup.0))
+                .unwrap_or(event.entity),
+        );
     }
     match action {
         Action::Import => {
@@ -551,6 +558,21 @@ mod tests {
         });
         world.run_system_once(update_dialogs).unwrap();
         assert_eq!(world.resource::<InputFocus>().get(), Some(opener));
+    }
+
+    #[test]
+    fn a_dialog_opened_from_more_returns_focus_to_the_menu_button() {
+        let mut world = test_world(DialogKind::Settings);
+        world.resource_mut::<NativeUi>().dialog = None;
+        let owner = world.spawn(Action::MoreMenu).id();
+        let popup = world
+            .spawn((super::super::menus::WorkspacePopup(owner), ChildOf(owner)))
+            .id();
+        let item = world.spawn((Action::Settings, ChildOf(popup))).id();
+        world.trigger(Activate { entity: item });
+        let close = world.spawn(Action::CloseDialog).id();
+        world.trigger(Activate { entity: close });
+        assert_eq!(world.resource::<InputFocus>().get(), Some(owner));
     }
 
     #[test]
