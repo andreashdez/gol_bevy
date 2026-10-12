@@ -85,25 +85,25 @@ pub(super) fn library(parent: &mut ChildSpawnerCommands) {
 
 pub(super) fn sync_scrollbar(
     library: Query<&ComputedNode, With<LibraryScroll>>,
-    mut bars: Query<&mut Visibility, With<LibraryScrollbar>>,
+    mut bars: Query<&mut Node, With<LibraryScrollbar>>,
 ) {
-    let Ok(node) = library.single() else {
+    let Ok(library) = library.single() else {
         return;
     };
-    for mut visibility in &mut bars {
-        *visibility = if node.content_size().y > node.size().y + 1.0 {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
+    // Removed from the layout rather than hidden, so cards use its width when
+    // everything fits.
+    let display = if library.content_size().y > library.size().y + 1.0 {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    for mut node in &mut bars {
+        set_if_neq!(node.display, display);
     }
 }
 
+/// A slim field; its placeholder says what it is, so it needs no label above it.
 pub(super) fn search(parent: &mut ChildSpawnerCommands) {
-    parent.spawn((
-        controls::TallLabel::default(),
-        label("Search patterns", 12.0, Token::Muted),
-    ));
     let mut input = EditableText::new("");
     input.visible_lines = Some(1.0);
     parent
@@ -115,9 +115,9 @@ pub(super) fn search(parent: &mut ChildSpawnerCommands) {
             accessibility::named_node(accesskit::Role::TextInput, "Search patterns"),
             Node {
                 width: percent(100),
-                height: px(40),
+                height: px(32),
                 overflow: Overflow::clip(),
-                padding: UiRect::all(px(9)),
+                padding: UiRect::axes(px(10), px(6)),
                 border: UiRect::all(px(1)),
                 border_radius: BorderRadius::all(px(6)),
                 flex_shrink: 0.0,
@@ -125,7 +125,7 @@ pub(super) fn search(parent: &mut ChildSpawnerCommands) {
             },
             TextFont {
                 font: UI_FONT.into(),
-                font_size: FontSize::Px(15.0),
+                font_size: FontSize::Px(14.0),
                 ..default()
             },
             ThemedText(Token::Ink),
@@ -136,11 +136,11 @@ pub(super) fn search(parent: &mut ChildSpawnerCommands) {
         .with_children(|p| {
             p.spawn((
                 SearchPlaceholder,
-                label("Find a pattern…", 15.0, Token::Muted),
+                label("Search patterns…", 14.0, Token::Muted),
                 Node {
                     position_type: PositionType::Absolute,
-                    left: px(9),
-                    top: px(9),
+                    left: px(10),
+                    top: px(6),
                     ..default()
                 },
             ));

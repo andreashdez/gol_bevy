@@ -1,0 +1,5 @@
+#N Pentadecathlon
+#O John Conway
+#C An oscillator with period 15.
+x = 10, y = 3, rule = B3/S23
+2bo4bo$2ob4ob2o$2bo4bo!

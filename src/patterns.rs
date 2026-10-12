@@ -403,6 +403,8 @@ mod tests {
             ("Glider", 4, (1, 1)),
             ("LWSS", 4, (-2, 0)),
             ("Blinker", 2, (0, 0)),
+            ("Pulsar", 3, (0, 0)),
+            ("Pentadecathlon", 15, (0, 0)),
         ];
         let builtins = Pattern::builtins();
         for (name, period, displacement) in expected {
@@ -418,6 +420,22 @@ mod tests {
             );
             assert_eq!(moved, displacement, "{name} moved the wrong way");
         }
+    }
+
+    #[test]
+    fn the_gun_fires_a_glider_every_30_generations_and_diehard_vanishes_at_130() {
+        let builtins = Pattern::builtins();
+        let named = |name: &str| builtins.iter().find(|p| p.name == name).unwrap();
+
+        // Each period the gun returns to its shape plus one more glider.
+        let gun = named("Gosper glider gun");
+        let population = |generations| evolve(gun, generations).0.len();
+        assert_eq!(population(30), gun.cells.len() + 5);
+        assert_eq!(population(60), gun.cells.len() + 10);
+
+        let diehard = named("Diehard");
+        assert!(!evolve(diehard, 129).0.is_empty());
+        assert!(evolve(diehard, 130).0.is_empty());
     }
 
     #[test]

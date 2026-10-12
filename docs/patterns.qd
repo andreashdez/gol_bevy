@@ -94,21 +94,39 @@ x = 8, y = 4
 
 ## Built-in patterns
 
-Built-in patterns are the RLE files in `assets/patterns/` of the repository:
+The palette comes with these patterns:
+
+| Pattern            | What it does                                                    |
+|--------------------|-----------------------------------------------------------------|
+| Acorn              | Seven cells that take 5206 generations to settle                |
+| Blinker            | The smallest oscillator, with period 2                          |
+| Diehard            | Seven cells that vanish completely after 130 generations        |
+| Glider             | The smallest spaceship, moving diagonally                       |
+| Gosper glider gun  | The first known gun, firing a glider every 30 generations       |
+| LWSS               | The lightweight spaceship, moving orthogonally                  |
+| Pentadecathlon     | An oscillator with period 15                                    |
+| Pulsar             | The most common period 3 oscillator                             |
+| R-pentomino        | Five cells that take 1103 generations to settle                 |
+| RLE 8x4            | A solid 8 × 4 block, showing run lengths that span whole rows    |
+
+Acorn and the R-pentomino grow far beyond their starting size and send gliders off in all directions, so they work best on a large board with plenty of empty space. The Gosper glider gun needs room in front of it for its stream of gliders.
+
+Built-in patterns are the RLE files in `assets/patterns/` of the repository, one per pattern, such as:
 
 .filetree
     - assets
       - patterns
+        - acorn.rle
         - blinker.rle
         - glider.rle
-        - lwss.rle
-        - rle-8x4.rle
+        - gosper-glider-gun.rle
+        - …
 
 `build.rs` embeds every `.rle` file in that folder into the binary at build time, so nothing is read from disk when the app runs.
 
 ### Adding a built-in pattern
 
-1. Save the pattern as an `.rle` file in `assets/patterns/`, for example `pulsar.rle`.
+1. Save the pattern as an `.rle` file in `assets/patterns/`, for example `beehive.rle`.
 2. Give it a `#N` line with the name to show in the palette.
 3. Rebuild with `cargo build` or `cargo run`.
 

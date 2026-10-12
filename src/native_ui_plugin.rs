@@ -870,7 +870,7 @@ fn sync_palette(
                     p.spawn((
                         palette::PatternGroup(index >= builtin_count),
                         label(
-                            if index == 0 { "BUILTIN" } else { "IMPORTED" },
+                            if index == 0 { "Built-in" } else { "Imported" },
                             11.0,
                             Token::Muted,
                         ),
@@ -966,14 +966,20 @@ fn thumbnail(
     );
     image.sampler = ImageSampler::nearest();
     let scale = (52.0 / width.max(height).max(1) as f32).min(10.0);
+    // Leave a one-pixel gap between cells only where cells are big enough to spare it.
+    let cell = if scale >= 3.0 {
+        (scale - 1.0) as usize
+    } else {
+        scale.ceil() as usize
+    };
     let x_pad = (64.0 - width as f32 * scale) / 2.0;
     let y_pad = (64.0 - height as f32 * scale) / 2.0;
     if let Some(data) = &mut image.data {
         for &(x, y) in cells {
             let left = (x_pad + x as f32 * scale) as usize;
             let top = (y_pad + height.saturating_sub(y + 1) as f32 * scale) as usize;
-            for py in top..(top + (scale - 1.0).max(1.0) as usize).min(64) {
-                for px in left..(left + (scale - 1.0).max(1.0) as usize).min(64) {
+            for py in top..(top + cell).min(64) {
+                for px in left..(left + cell).min(64) {
                     data[(py * 64 + px) * 4..(py * 64 + px) * 4 + 4].copy_from_slice(&live);
                 }
             }

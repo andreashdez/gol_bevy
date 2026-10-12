@@ -51,7 +51,9 @@ Use **− / +** next to **Fit board** to zoom; 100% means the whole-board fit.
 board when empty. Middle-button dragging pans without editing cells.
 Window and layout changes retain the pan position and zoom relative to the fitted
 view. Drawing and stamp previews stay inside the canvas, including on Retina displays.
-Search patterns by name; builtin and imported patterns have separate groups. The
+The built-in library covers spaceships, oscillators (blinker, pulsar, pentadecathlon), the
+Gosper glider gun, and long-lived starters (R-pentomino, acorn, diehard).
+Search patterns by name; built-in and imported patterns have separate groups. The
 stamp preview shows the orientation that will be placed, including rotation and
 horizontal flip. Filtering the library keeps the current stamp selected.
 

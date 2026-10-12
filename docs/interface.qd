@@ -25,7 +25,7 @@ The palette holds the editing tools and the pattern library, from top to bottom:
 
 - the **Draw**, **Erase**, and **Stamp** tools
 - a **stamp preview** of the selected pattern in its current orientation, with **Rotate** and **Flip** buttons, shown while a stamp is active
-- a **search field** that filters patterns by name, ignoring case
+- a slim **search field** that filters patterns by name, ignoring case
 - pattern **thumbnails**, with built-in and imported patterns in separate groups
 
 Only the thumbnails scroll, with the mouse wheel or the scrollbar; the tools, stamp preview, and search stay in place. Filtering the library keeps the current stamp selected, even if the filter hides it, and scrolls back to the first match.

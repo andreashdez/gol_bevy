@@ -250,8 +250,11 @@ fn handle_actions(
 }
 
 fn reveal_focus(event: On<FocusGained>, tree: NativeTree, mut commands: Commands) {
+    // The event bubbles to every ancestor, retargeted at each. Revealing those
+    // too would scroll a list taller than its view to the end, moving the
+    // clicked card away from the pointer before the click completes.
     let entity = event.event_target();
-    if tree.visible(entity) == Some(true) {
+    if entity == event.original_event_target() && tree.visible(entity) == Some(true) {
         commands.trigger(ScrollIntoView { entity });
     }
 }
@@ -273,6 +276,29 @@ mod tests {
         world.init_resource::<InputFocusVisible>();
         world.init_resource::<Messages<ActionRequest>>();
         world
+    }
+
+    #[test]
+    fn focus_reveals_only_the_focused_control_not_its_ancestors() {
+        #[derive(Resource, Default)]
+        struct Revealed(Vec<Entity>);
+        let mut world = world();
+        world.init_resource::<Revealed>();
+        world.add_observer(reveal_focus);
+        world.add_observer(
+            |event: On<ScrollIntoView>, mut revealed: ResMut<Revealed>| {
+                revealed.0.push(event.entity);
+            },
+        );
+        let root = world.spawn((NativeRoot, Node::default())).id();
+        let list = world.spawn((Node::default(), ChildOf(root))).id();
+        let card = world.spawn((Node::default(), ChildOf(list))).id();
+        world.trigger(FocusGained {
+            entity: card,
+            cause: FocusCause::Navigated,
+        });
+        world.flush();
+        assert_eq!(world.resource::<Revealed>().0, [card]);
     }
 
     #[test]

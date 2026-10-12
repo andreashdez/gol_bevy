@@ -72,4 +72,4 @@ At a fixed speed, a frame runs at most 8 generations to catch up, then drops any
 - banded scans against a single band
 - the live count and the dirty and frontier bookkeeping after every kind of change
 
-`patterns.rs` evolves the built-in oscillators and spaceships and checks that they behave as named.
+`patterns.rs` evolves the built-in oscillators and spaceships and checks that they behave as named. It also checks that the Gosper glider gun fires one glider every 30 generations, and that Diehard vanishes after exactly 130.
