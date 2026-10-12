@@ -61,7 +61,7 @@ pub(super) fn pattern_hint(name: &str, index: usize) -> String {
 pub(super) fn hint(action: Action) -> &'static str {
     match action {
         Action::Play => "Play / pause · Space",
-        Action::Step => "One generation · J",
+        Action::Step => "Step one generation · J",
         Action::Undo => "Undo the last edit · U",
         Action::Redo => {
             if cfg!(target_os = "macos") {
@@ -83,7 +83,7 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::SpeedAdjust(_) => "Increase speed by 1 gen/s · leaves Max mode",
         Action::Sidebar => "Show / hide the palette · H",
         Action::ViewMenu => "View options · grid, cell age, and pattern palette",
-        Action::MoreMenu => "Workspace settings and help",
+        Action::MoreMenu => "Settings and help",
         Action::Help => "Controls and tips · /",
         Action::Diagnostics => "Simulation diagnostics · F3",
         Action::Rotate => "Rotate stamp 90° clockwise · Z",

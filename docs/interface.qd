@@ -5,19 +5,19 @@ The window has four parts: the toolbar at the top, the pattern palette on the le
 
 ## Toolbar
 
-At 1200 pixels wide and above, the toolbar fits in a single 64-pixel row,
+At 880 pixels wide and above, the toolbar fits in a single 64-pixel row,
 giving the canvas 48 more pixels of height. Subtle dividers separate three groups:
 
 - **Playback:** Play / Pause, Step, the speed slider, Max, and the rate readout (see [Playback and rules](simulation.qd#speed))
 - **Board edits:** Randomize, Clear, Undo, and Redo; history buttons are disabled when unavailable
-- **Workspace:** Grid, Palette, Import / Export, Settings, and Help
+- **Workspace:** the **View** menu (Grid, Cell age, and Pattern palette), Import / Export, and the gear menu (Settings and Help)
 
 In narrower windows, workspace controls sit on the first row, with playback and
 board edits on the second. Every control remains available, including at the
 minimum window size. Tab order follows the visible groups, and resizing retains
 the focused control, camera pan, and zoom relative to the fitted board.
 
-Hover over or focus a button to see its shortcut.
+Play / Pause, Step, Undo, Redo, and the gear menu show icons instead of words. Play turns into a pause icon while the simulation runs. Hover over or focus a button to see its name and shortcut. Screen readers announce icon buttons by name.
 
 ## Pattern palette
 

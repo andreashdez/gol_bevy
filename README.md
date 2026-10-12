@@ -29,10 +29,10 @@ cargo run
 The interface uses native Bevy UI throughout: playback controls, a searchable pattern
 palette, editing tools, live status, and import/settings/help/diagnostics dialogs.
 
-At 950 pixels wide and above, the toolbar uses a single 64-pixel row, grouped into
+At 880 pixels wide and above, the toolbar uses a single 64-pixel row, grouped into
 playback, board edits, and workspace controls. Narrower windows use two rows.
 Resizing preserves keyboard focus and the camera view relative to the fitted board.
-**View** groups the grid, cell age, and pattern palette toggles; **More** opens Settings and Help.
+**View** groups the grid, cell age, and pattern palette toggles; the gear menu opens Settings and Help. Play / Pause, Step, Undo, and Redo are icon buttons whose tooltips give their names and shortcuts.
 The menus support arrow-key navigation, Enter/Space to activate, and Escape to close.
 Clicking the canvas dismisses an open menu without editing the board.
 

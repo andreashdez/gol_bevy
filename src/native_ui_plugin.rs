@@ -14,6 +14,7 @@ macro_rules! set_if_neq {
 mod accessibility;
 mod controls;
 mod dialogs;
+mod icons;
 mod menus;
 mod palette;
 mod speed;
@@ -42,7 +43,8 @@ use bevy::{
     window::PrimaryWindow,
 };
 use dialogs::DialogKind;
-use theme::{ThemedBackground, ThemedBorder, ThemedText, Token};
+use icons::Icon;
+use theme::{ThemedBackground, ThemedBorder, ThemedImage, ThemedText, Token};
 
 fn bottom_height(size: Vec2) -> f32 {
     if size.x < 1000.0 { 88.0 } else { 48.0 }
@@ -238,13 +240,23 @@ fn button(parent: &mut ChildSpawnerCommands, text: &str, action: Action) -> Enti
             Name::new(text.to_owned()),
             controls::Tooltip(controls::hint(action).to_owned()),
         ))
-        .with_children(|p| {
-            p.spawn(label(text, 14.0, Token::Ink));
+        .with_children(|p| match Icon::of(action) {
+            // The name still labels the button for tooltips and screen readers.
+            Some(icon) => {
+                p.spawn(icons::node(icon));
+            }
+            None => {
+                p.spawn(label(text, 14.0, Token::Ink));
+            }
         })
         .id()
 }
 
-fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
+fn setup(
+    mut commands: Commands,
+    mut fonts: ResMut<Assets<Font>>,
+    mut images: ResMut<Assets<Image>>,
+) {
     // Embed the licensed font so launching a desktop bundle works from any directory.
     fonts
         .insert(
@@ -252,6 +264,7 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
             Font::from_bytes(include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf").to_vec()),
         )
         .expect("static UI font handle is valid");
+    icons::insert_all(&mut images);
     toolbar::spawn(&mut commands);
     commands
         .spawn((
@@ -654,6 +667,7 @@ fn sync(
     mut roots: Query<RootNode, With<NativeRoot>>,
     mut buttons: Query<ButtonState>,
     mut texts: Query<(&mut Text, &mut ThemedText, Option<&Readout>)>,
+    mut icons: Query<(&mut ImageNode, &mut ThemedImage)>,
 ) {
     let ViewState {
         mode: _,
@@ -768,15 +782,27 @@ fn sync(
         } else {
             Token::Line
         }));
+        let ink = if disabled {
+            Token::Muted
+        } else if *action == Action::Play {
+            Token::OnAccent
+        } else {
+            Token::Ink
+        };
         for child in children.iter() {
+            if let Ok((mut image, mut color)) = icons.get_mut(child) {
+                color.set_if_neq(ThemedImage(ink));
+                if *action == Action::Play {
+                    let icon = if sim.app.is_running() {
+                        Icon::Pause
+                    } else {
+                        Icon::Play
+                    };
+                    set_if_neq!(image.image, icon.handle());
+                }
+            }
             if let Ok((mut text, mut color, _)) = texts.get_mut(child) {
-                color.set_if_neq(ThemedText(if disabled {
-                    Token::Muted
-                } else if *action == Action::Play {
-                    Token::OnAccent
-                } else {
-                    Token::Ink
-                }));
+                color.set_if_neq(ThemedText(ink));
                 let replacement = match action {
                     Action::Play => Some(if sim.app.is_running() {
                         "Pause".to_string()
@@ -995,6 +1021,7 @@ mod tests {
         };
         let mut world = World::new();
         world.init_resource::<Assets<Font>>();
+        world.init_resource::<Assets<Image>>();
         world.init_resource::<UiLayout>();
         world.init_resource::<InputFocus>();
         world.init_resource::<InputFocusVisible>();
@@ -1059,6 +1086,7 @@ mod tests {
         use bevy::ecs::system::RunSystemOnce;
         let mut world = World::new();
         world.init_resource::<Assets<Font>>();
+        world.init_resource::<Assets<Image>>();
         world.run_system_once(setup).unwrap();
         assert_eq!(
             world
@@ -1081,6 +1109,7 @@ mod tests {
         use bevy::ecs::system::RunSystemOnce;
         let mut world = World::new();
         world.init_resource::<Assets<Font>>();
+        world.init_resource::<Assets<Image>>();
         world.insert_resource(Simulation::new(GolApp::new(8, 8)));
         world.init_resource::<NativeUi>();
         world.init_resource::<UiLayout>();
@@ -1126,6 +1155,7 @@ mod tests {
         use bevy::ecs::system::RunSystemOnce;
         let mut world = World::new();
         world.init_resource::<Assets<Font>>();
+        world.init_resource::<Assets<Image>>();
         world.insert_resource(Simulation::new(GolApp::new(8, 8)));
         world.init_resource::<NativeUi>();
         world.init_resource::<UiLayout>();

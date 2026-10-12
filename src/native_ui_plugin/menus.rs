@@ -226,6 +226,7 @@ mod tests {
     fn keyboard_menu_navigation_toggles_once_and_escape_restores_focus() {
         let mut app = App::new();
         app.init_resource::<Assets<Font>>()
+            .init_resource::<Assets<Image>>()
             .init_resource::<InputFocus>()
             .init_resource::<InputFocusVisible>()
             .init_resource::<NativeUi>()

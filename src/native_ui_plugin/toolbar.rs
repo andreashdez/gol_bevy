@@ -1,7 +1,12 @@
 //! One row when there is room; the same controls reflow without losing focus.
 use super::*;
 
-pub(super) const SINGLE_ROW_MIN_WIDTH: f32 = 950.0;
+pub(super) const SINGLE_ROW_MIN_WIDTH: f32 = 880.0;
+
+/// Column budgets for the playback and board edit groups, with a little slack.
+/// Icon buttons keep both narrow enough for one row from 880 px.
+const PLAYBACK_WIDTH: f32 = 280.0;
+const EDITING_WIDTH: f32 = 252.0;
 
 pub(super) fn height(width: f32) -> f32 {
     if width >= SINGLE_ROW_MIN_WIDTH {
@@ -132,15 +137,15 @@ pub(super) fn sync_layout(
                 // Explicit group budgets leave space for all toolbar controls.
                 vec![
                     GridTrack::px(44.0),
-                    GridTrack::px(300.0),
-                    GridTrack::px(272.0),
+                    GridTrack::px(PLAYBACK_WIDTH),
+                    GridTrack::px(EDITING_WIDTH),
                     GridTrack::flex(1.0),
                 ]
             } else {
                 vec![
                     GridTrack::px(44.0),
                     GridTrack::flex(1.0),
-                    GridTrack::px(272.0),
+                    GridTrack::px(EDITING_WIDTH),
                 ]
             };
             let rows = vec![GridTrack::flex(1.0); if single { 1 } else { 2 }];

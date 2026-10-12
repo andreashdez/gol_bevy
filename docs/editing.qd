@@ -53,7 +53,7 @@ Both are edits, so you can undo them.
 | .keybinding {U} or .keybinding {Mod+Z}           | Undo the last edit and pause   |
 | .keybinding {Mod+Shift+Z}                        | Redo the last undone edit      |
 
-The toolbar has **Undo** and **Redo** buttons as well.
+The toolbar has **Undo** and **Redo** buttons as well, shown as arrows curving left and right.
 
 These are edits, and can be undone:
 

@@ -38,6 +38,11 @@ pub(super) struct ThemedBorder(pub Token);
 #[require(TextColor)]
 pub(super) struct ThemedText(pub Token);
 
+/// Tints an icon mask, so icons follow the theme like text.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+#[require(ImageNode)]
+pub(super) struct ThemedImage(pub Token);
+
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 #[require(TextCursorStyle)]
 pub(super) struct ThemedCursor(pub Token);
@@ -152,6 +157,7 @@ pub(super) fn apply(
     mut borders: Query<(Ref<ThemedBorder>, &mut BorderColor)>,
     mut texts: Query<(Ref<ThemedText>, &mut TextColor)>,
     mut cursors: Query<(Ref<ThemedCursor>, &mut TextCursorStyle)>,
+    mut images: Query<(Ref<ThemedImage>, &mut ImageNode)>,
 ) {
     let colors = Colors::of(*theme);
     let all = theme.is_changed();
@@ -176,6 +182,11 @@ pub(super) fn apply(
     for (token, mut style) in &mut cursors {
         if all || token.is_changed() {
             set_if_neq!(style.color, colors.get(token.0));
+        }
+    }
+    for (token, mut image) in &mut images {
+        if all || token.is_changed() {
+            set_if_neq!(image.color, colors.get(token.0));
         }
     }
 }
