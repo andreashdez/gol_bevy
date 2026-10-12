@@ -384,6 +384,18 @@ pub struct GridOverlay {
     pub enabled: bool,
 }
 
+/// Shades live cells by age and leaves a fading trail where cells died.
+#[derive(Resource)]
+pub struct CellAge {
+    pub enabled: bool,
+}
+
+impl Default for CellAge {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 /// Colour scheme for the interface and the board.
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Theme {
@@ -416,6 +428,12 @@ impl Theme {
 pub struct BoardColors {
     pub live: Color,
     pub dead: Color,
+    /// Cells born in the latest generation; they settle into `live`.
+    pub newborn: Color,
+    /// Cells that have lived a long time.
+    pub aged: Color,
+    /// Cells that just died, fading into `dead`.
+    pub trail: Color,
     /// Cells of the stamp under the pointer, before it is placed.
     pub ghost: Color,
     pub wall: Color,
@@ -429,6 +447,9 @@ pub struct BoardColors {
 const DARK_BOARD: BoardColors = BoardColors {
     live: Color::srgb(0.22, 0.85, 0.56),
     dead: Color::srgb(0.08, 0.09, 0.11),
+    newborn: Color::srgb(0.78, 1.0, 0.86),
+    aged: Color::srgb(0.12, 0.58, 0.56),
+    trail: Color::srgb(0.13, 0.24, 0.22),
     ghost: Color::srgba(0.22, 0.85, 0.56, 0.30),
     wall: Color::srgba(0.96, 0.92, 0.70, 0.55),
     wall_bright: Color::srgba(1.0, 0.98, 0.82, 0.92),
@@ -440,6 +461,9 @@ const DARK_BOARD: BoardColors = BoardColors {
 const LIGHT_BOARD: BoardColors = BoardColors {
     live: Color::srgb(0.04, 0.50, 0.31),
     dead: Color::srgb(0.985, 0.99, 0.99),
+    newborn: Color::srgb(0.08, 0.62, 0.30),
+    aged: Color::srgb(0.02, 0.30, 0.30),
+    trail: Color::srgb(0.80, 0.91, 0.86),
     ghost: Color::srgba(0.04, 0.50, 0.31, 0.35),
     wall: Color::srgba(0.75, 0.45, 0.0, 0.65),
     wall_bright: Color::srgba(0.90, 0.55, 0.0, 0.95),
@@ -451,6 +475,9 @@ const LIGHT_BOARD: BoardColors = BoardColors {
 const HIGH_CONTRAST_BOARD: BoardColors = BoardColors {
     live: Color::srgb(0.35, 1.0, 0.65),
     dead: Color::srgb(0.10, 0.10, 0.10),
+    newborn: Color::srgb(0.90, 1.0, 0.92),
+    aged: Color::srgb(0.20, 0.78, 0.82),
+    trail: Color::srgb(0.20, 0.30, 0.26),
     ghost: Color::srgba(0.35, 1.0, 0.65, 0.45),
     wall: Color::srgba(1.0, 0.85, 0.0, 0.85),
     wall_bright: Color::srgb(1.0, 0.95, 0.55),

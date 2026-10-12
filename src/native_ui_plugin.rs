@@ -21,8 +21,10 @@ mod theme;
 mod toolbar;
 use crate::{
     app::{App as GolApp, EditTool},
-    shared::{EditFeedback, GridOverlay, Simulation, StartupSet, Theme, UiLayout, UpdateSet},
-    ui_input::{UiInputRegions, UiInputSet},
+    shared::{
+        CellAge, EditFeedback, GridOverlay, Simulation, StartupSet, Theme, UiLayout, UpdateSet,
+    },
+    ui_input::{BoardFocus, KeyboardFocus, UiInputRegions, UiInputSet},
 };
 use bevy::{
     asset::RenderAssetUsages,
@@ -104,6 +106,8 @@ impl Plugin for NativeUiPlugin {
                     toolbar::sync_layout,
                     controls::sync_feedback,
                     publish_input_regions,
+                    release_pointer_focus,
+                    sync_board_focus,
                 )
                     .chain()
                     .in_set(NativeLayout)
@@ -126,6 +130,10 @@ struct Footer;
 #[derive(Component)]
 struct FooterStatus;
 #[derive(Component)]
+struct BoardArea;
+#[derive(Component)]
+struct BoardFocusRing;
+#[derive(Component)]
 enum Readout {
     Status,
     Generation,
@@ -141,6 +149,7 @@ enum Action {
     Undo,
     Redo,
     Grid,
+    CellAge,
     FitBoard,
     FitLiveCells,
     ZoomIn,
@@ -375,8 +384,94 @@ fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
                 button(p, "Fit live cells", Action::FitLiveCells);
             });
         });
+    // Last in the tab order, so Tab and Shift+Tab can return to the board.
+    // Bevy only tabs to entities inside a group, and skips invisible ones,
+    // so the group, the focus target, and the ring are separate nodes.
+    commands
+        .spawn((
+            NativeRoot,
+            BoardArea,
+            TabGroup {
+                order: 2,
+                ..default()
+            },
+            Node {
+                position_type: PositionType::Absolute,
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .with_children(|p| {
+            p.spawn((
+                BoardFocus,
+                TabIndex(0),
+                Node {
+                    width: percent(100),
+                    height: percent(100),
+                    ..default()
+                },
+                Pickable::IGNORE,
+                accessibility::named_node(accesskit::Role::Canvas, "Board"),
+            ))
+            .with_child((
+                BoardFocusRing,
+                Node {
+                    width: percent(100),
+                    height: percent(100),
+                    border: UiRect::all(px(2)),
+                    border_radius: BorderRadius::all(px(4)),
+                    ..default()
+                },
+                ThemedBorder(Token::Focus),
+                Visibility::Hidden,
+                Pickable::IGNORE,
+            ));
+        });
     controls::overlays(&mut commands);
     controls::feedback_overlay(&mut commands);
+}
+
+/// A clicked button gives the keyboard back to the board, so Space keeps
+/// meaning play/pause. Tab still focuses buttons, with a visible outline.
+fn release_pointer_focus(
+    mut focus: ResMut<InputFocus>,
+    focus_visible: Res<InputFocusVisible>,
+    regions: Res<UiInputRegions>,
+    buttons: Query<(), With<Action>>,
+) {
+    if !focus_visible.0 && !regions.modal && focus.get().is_some_and(|e| buttons.contains(e)) {
+        focus.clear();
+    }
+}
+
+/// Outlines the canvas while keyboard navigation leaves the keyboard on the board.
+fn sync_board_focus(
+    windows: Query<&Window, With<PrimaryWindow>>,
+    layout: Res<UiLayout>,
+    keyboard: KeyboardFocus,
+    focus_visible: Res<InputFocusVisible>,
+    regions: Res<UiInputRegions>,
+    mut areas: Query<&mut Node, With<BoardArea>>,
+    mut rings: Query<&mut Visibility, With<BoardFocusRing>>,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let rect = canvas_rect(window.size(), &layout);
+    for mut node in &mut areas {
+        set_if_neq!(node.left, px(rect.min.x));
+        set_if_neq!(node.top, px(rect.min.y));
+        set_if_neq!(node.width, px(rect.width()));
+        set_if_neq!(node.height, px(rect.height()));
+    }
+    let ring = if focus_visible.0 && keyboard.on_board() && !regions.modal {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    for mut visibility in &mut rings {
+        visibility.set_if_neq(ring);
+    }
 }
 
 /// Logical rectangles shared by layout and input routing; gaps remain canvas.
@@ -442,11 +537,18 @@ fn publish_input_regions(
         .unwrap_or_default();
 }
 
+/// Board display options that buttons switch on and off.
+#[derive(SystemParam)]
+struct ViewToggles<'w> {
+    grid: ResMut<'w, GridOverlay>,
+    cell_age: ResMut<'w, CellAge>,
+}
+
 fn activate(
     event: On<Activate>,
     actions: Query<&Action>,
     mut sim: ResMut<Simulation>,
-    mut grid: ResMut<GridOverlay>,
+    mut view: ViewToggles,
     mut layout: ResMut<UiLayout>,
     mut feedback: ResMut<EditFeedback>,
     mut theme: ResMut<Theme>,
@@ -470,7 +572,8 @@ fn activate(
         | Action::RulePreset(_)
         | Action::ApplyRule
         | Action::ExportRle => {}
-        Action::Grid => grid.enabled = !grid.enabled,
+        Action::Grid => view.grid.enabled = !view.grid.enabled,
+        Action::CellAge => view.cell_age.enabled = !view.cell_age.enabled,
         Action::Sidebar => layout.toggle_control_deck(),
         Action::Theme(choice) => {
             theme.set_if_neq(*choice);
@@ -535,6 +638,7 @@ struct ViewState<'w, 's> {
     mode: Res<'w, NativeUi>,
     layout: Res<'w, UiLayout>,
     grid: Res<'w, GridOverlay>,
+    cell_age: Res<'w, CellAge>,
     focus: Res<'w, InputFocus>,
     focus_visible: Res<'w, InputFocusVisible>,
     theme: Res<'w, Theme>,
@@ -555,6 +659,7 @@ fn sync(
         mode: _,
         layout,
         grid,
+        cell_age,
         focus,
         focus_visible: _,
         theme,
@@ -613,6 +718,7 @@ fn sync(
                     && sim.app.selected_pattern_index() == Some(*index)
             }
             Action::Grid => grid.enabled,
+            Action::CellAge => cell_age.enabled,
             Action::Sidebar => layout.control_deck_visible,
             Action::MaxSpeed => sim.app.is_max_speed(),
             Action::Theme(choice) => *theme == *choice,
@@ -626,6 +732,7 @@ fn sync(
             Action::Tool(_)
                 | Action::Pattern(_)
                 | Action::Grid
+                | Action::CellAge
                 | Action::Sidebar
                 | Action::MaxSpeed
                 | Action::RulePreset(_)
@@ -854,6 +961,100 @@ mod tests {
     use super::*;
 
     #[test]
+    fn clicked_buttons_release_focus_but_keyboard_and_modal_focus_stay() {
+        use bevy::{ecs::system::RunSystemOnce, input_focus::FocusCause};
+        let mut world = World::new();
+        world.init_resource::<InputFocus>();
+        world.init_resource::<InputFocusVisible>();
+        world.init_resource::<UiInputRegions>();
+        let button = world.spawn(Action::Randomize).id();
+        let field = world.spawn_empty().id();
+        let focused = |world: &mut World, entity, visible, modal| {
+            world
+                .resource_mut::<InputFocus>()
+                .set(entity, FocusCause::Navigated);
+            world.resource_mut::<InputFocusVisible>().0 = visible;
+            world.resource_mut::<UiInputRegions>().modal = modal;
+            world.run_system_once(release_pointer_focus).unwrap();
+            world.resource::<InputFocus>().get()
+        };
+        assert_eq!(focused(&mut world, button, false, false), None);
+        assert_eq!(focused(&mut world, button, true, false), Some(button));
+        assert_eq!(focused(&mut world, button, false, true), Some(button));
+        assert_eq!(focused(&mut world, field, false, false), Some(field));
+    }
+
+    #[test]
+    fn board_outline_follows_keyboard_focus_on_the_board() {
+        use bevy::{
+            ecs::system::RunSystemOnce,
+            input_focus::{
+                FocusCause,
+                tab_navigation::{NavAction, TabNavigation},
+            },
+        };
+        let mut world = World::new();
+        world.init_resource::<Assets<Font>>();
+        world.init_resource::<UiLayout>();
+        world.init_resource::<InputFocus>();
+        world.init_resource::<InputFocusVisible>();
+        world.init_resource::<UiInputRegions>();
+        let window = world.spawn((Window::default(), PrimaryWindow)).id();
+        world.run_system_once(setup).unwrap();
+        let board = world
+            .query_filtered::<Entity, With<BoardFocus>>()
+            .single(&world)
+            .unwrap();
+        let button = world
+            .query::<(Entity, &Action)>()
+            .iter(&world)
+            .find_map(|(e, a)| (*a == Action::Play).then_some(e))
+            .unwrap();
+        let outlined = |world: &mut World, focus: Option<Entity>, visible, modal| {
+            match focus {
+                Some(e) => world
+                    .resource_mut::<InputFocus>()
+                    .set(e, FocusCause::Navigated),
+                None => world.resource_mut::<InputFocus>().clear(),
+            }
+            world.resource_mut::<InputFocusVisible>().0 = visible;
+            world.resource_mut::<UiInputRegions>().modal = modal;
+            world.run_system_once(sync_board_focus).unwrap();
+            let mut rings = world.query_filtered::<&Visibility, With<BoardFocusRing>>();
+            *rings.single(world).unwrap() == Visibility::Inherited
+        };
+        // Visibility propagation does not run here; Bevy's tab walker skips hidden nodes.
+        for mut visibility in world
+            .query::<&mut InheritedVisibility>()
+            .iter_mut(&mut world)
+        {
+            *visibility = InheritedVisibility::VISIBLE;
+        }
+        let last = world
+            .run_system_once(|nav: TabNavigation, focus: Res<InputFocus>| {
+                nav.navigate(&focus, NavAction::Previous).unwrap()
+            })
+            .unwrap();
+        assert_eq!(
+            last, board,
+            "Shift+Tab from the board's start reaches the board"
+        );
+        assert!(outlined(&mut world, Some(board), true, false));
+        assert!(outlined(&mut world, Some(window), true, false));
+        assert!(outlined(&mut world, None, true, false));
+        assert!(!outlined(&mut world, Some(board), false, false));
+        assert!(!outlined(&mut world, Some(board), true, true));
+        assert!(!outlined(&mut world, Some(button), true, false));
+        let rect = canvas_rect(
+            world.get::<Window>(window).unwrap().size(),
+            &UiLayout::default(),
+        );
+        let mut areas = world.query_filtered::<&Node, With<BoardArea>>();
+        let node = areas.single(&world).unwrap();
+        assert_eq!((node.left, node.width), (px(rect.min.x), px(rect.width())));
+    }
+
+    #[test]
     fn native_widget_bundles_spawn_together() {
         use bevy::ecs::system::RunSystemOnce;
         let mut world = World::new();
@@ -884,6 +1085,7 @@ mod tests {
         world.init_resource::<NativeUi>();
         world.init_resource::<UiLayout>();
         world.insert_resource(GridOverlay { enabled: false });
+        world.init_resource::<CellAge>();
         world.init_resource::<InputFocus>();
         world.init_resource::<InputFocusVisible>();
         world.init_resource::<Theme>();
@@ -928,6 +1130,7 @@ mod tests {
         world.init_resource::<NativeUi>();
         world.init_resource::<UiLayout>();
         world.insert_resource(GridOverlay { enabled: false });
+        world.init_resource::<CellAge>();
         world.init_resource::<InputFocus>();
         world.init_resource::<InputFocusVisible>();
         world.init_resource::<Theme>();

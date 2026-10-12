@@ -22,6 +22,10 @@ impl UiInputRegions {
     }
 }
 
+/// A focusable stand-in for the board: while it has focus, board shortcuts apply.
+#[derive(Component)]
+pub struct BoardFocus;
+
 #[derive(Resource, Default)]
 pub struct UiInputCapture {
     pub pointer: bool,
@@ -41,6 +45,7 @@ pub enum UiInputSet {
 }
 
 type Editors = Or<(With<EditableText>, With<Slider>)>;
+type BoardTargets = Or<(With<PrimaryWindow>, With<BoardFocus>)>;
 
 pub struct UiInputPlugin;
 impl Plugin for UiInputPlugin {
@@ -121,14 +126,28 @@ fn capture_input(
     }
 }
 
+/// Whether keyboard focus rests on the board rather than on a control.
+#[derive(SystemParam)]
+pub struct KeyboardFocus<'w, 's> {
+    focus: Res<'w, InputFocus>,
+    boards: Query<'w, 's, (), BoardTargets>,
+}
+
+impl KeyboardFocus<'_, '_> {
+    /// Bevy focuses the window at startup; that is the board, not a control.
+    pub fn on_board(&self) -> bool {
+        self.focus.get().is_none_or(|e| self.boards.contains(e))
+    }
+}
+
 pub fn canvas_keyboard_available(
     capture: Res<UiInputCapture>,
-    focus: Res<InputFocus>,
+    keyboard: KeyboardFocus,
     keys: Res<ButtonInput<KeyCode>>,
 ) -> bool {
     !capture.keyboard
-        && !(focus.get().is_some()
-            && (keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter)))
+        && (keyboard.on_board()
+            || !(keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter)))
 }
 
 #[cfg(test)]
@@ -202,6 +221,26 @@ mod tests {
         world.run_system_once(capture_input).unwrap();
         assert!(!world.resource::<UiInputCapture>().pointer);
         assert!(world.run_system_once(canvas_keyboard_available).unwrap());
+    }
+
+    #[test]
+    fn space_reaches_board_while_window_or_board_has_focus() {
+        let (mut world, window) = world();
+        let board = world.spawn(BoardFocus).id();
+        let button = world.spawn_empty().id();
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Space);
+        for entity in [window, board] {
+            world
+                .resource_mut::<InputFocus>()
+                .set(entity, FocusCause::Navigated);
+            assert!(world.run_system_once(canvas_keyboard_available).unwrap());
+        }
+        world
+            .resource_mut::<InputFocus>()
+            .set(button, FocusCause::Navigated);
+        assert!(!world.run_system_once(canvas_keyboard_available).unwrap());
     }
 
     #[test]

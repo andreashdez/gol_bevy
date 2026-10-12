@@ -165,13 +165,27 @@ fn sync_accessibility(
     }
 }
 
+/// Assistive focus behaves like keyboard focus: outlined, and kept after activation.
+#[derive(SystemParam)]
+struct AssistiveFocus<'w> {
+    focus: ResMut<'w, InputFocus>,
+    visible: ResMut<'w, InputFocusVisible>,
+}
+
+impl AssistiveFocus<'_> {
+    fn set(&mut self, entity: Entity) {
+        self.focus.set(entity, FocusCause::Navigated);
+        self.visible.0 = true;
+    }
+}
+
 fn handle_actions(
     mut requests: MessageReader<ActionRequest>,
     tree: NativeTree,
     targets: Query<(Option<&Action>, Has<InteractionDisabled>)>,
     mut fields: Query<&mut EditableText>,
     sliders: Query<&bevy::ui_widgets::SliderValue>,
-    mut focus: ResMut<InputFocus>,
+    mut focus: AssistiveFocus,
     mut commands: Commands,
 ) {
     for request in requests.read() {
@@ -189,17 +203,17 @@ fn handle_actions(
         }
         match request.action {
             AccessibleAction::Click if action.is_some() => {
-                focus.set(entity, FocusCause::Navigated);
+                focus.set(entity);
                 commands.trigger(Activate { entity });
             }
-            AccessibleAction::Focus => focus.set(entity, FocusCause::Navigated),
+            AccessibleAction::Focus => focus.set(entity),
             AccessibleAction::SetValue => {
                 if let Some(ActionData::Value(value)) = &request.data
                     && let Ok(mut input) = fields.get_mut(entity)
                 {
                     input.queue_edit(TextEdit::SelectAll);
                     input.queue_edit(TextEdit::Insert(value.as_ref().into()));
-                    focus.set(entity, FocusCause::Navigated);
+                    focus.set(entity);
                 } else if sliders.contains(entity) {
                     let value = match &request.data {
                         Some(ActionData::NumericValue(value)) => Some(*value as f32),
@@ -211,7 +225,7 @@ fn handle_actions(
                             entity,
                             change: bevy::ui_widgets::SliderValueChange::Absolute(value),
                         });
-                        focus.set(entity, FocusCause::Navigated);
+                        focus.set(entity);
                     }
                 }
             }
@@ -228,7 +242,7 @@ fn handle_actions(
                         },
                     ),
                 });
-                focus.set(entity, FocusCause::Navigated);
+                focus.set(entity);
             }
             _ => {}
         }
@@ -256,6 +270,7 @@ mod tests {
         let mut world = World::new();
         world.insert_resource(NativeUi { dialog: None });
         world.insert_resource(InputFocus::default());
+        world.init_resource::<InputFocusVisible>();
         world.init_resource::<Messages<ActionRequest>>();
         world
     }

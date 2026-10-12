@@ -68,7 +68,11 @@ pub(super) fn spawn(parent: &mut ChildSpawnerCommands, title: &str, action: Acti
             .with_children(|p| {
                 let entries = match action {
                     Action::ViewMenu => {
-                        vec![("Grid", Action::Grid), ("Pattern palette", Action::Sidebar)]
+                        vec![
+                            ("Grid", Action::Grid),
+                            ("Cell age", Action::CellAge),
+                            ("Pattern palette", Action::Sidebar),
+                        ]
                     }
                     Action::MoreMenu => {
                         vec![("Settings", Action::Settings), ("Help", Action::Help)]
@@ -230,6 +234,7 @@ mod tests {
             .init_resource::<EditFeedback>()
             .init_resource::<crate::ui_input::UiInputCapture>()
             .insert_resource(GridOverlay { enabled: false })
+            .init_resource::<crate::shared::CellAge>()
             .insert_resource(Simulation::new(GolApp::new(8, 8)))
             .add_plugins((
                 bevy::input::InputPlugin,
@@ -288,6 +293,9 @@ mod tests {
         app.world_mut().run_schedule(PostUpdate);
         let focused = app.world().resource::<InputFocus>().get().unwrap();
         assert_eq!(app.world().get::<Action>(focused), Some(&Action::Grid));
+        send(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
+        let focused = app.world().resource::<InputFocus>().get().unwrap();
+        assert_eq!(app.world().get::<Action>(focused), Some(&Action::CellAge));
         send(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
         let focused = app.world().resource::<InputFocus>().get().unwrap();
         assert_eq!(app.world().get::<Action>(focused), Some(&Action::Sidebar));

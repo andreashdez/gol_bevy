@@ -498,6 +498,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         });
                         p.spawn(row()).with_children(|p| {
                             button(p, "Grid", Action::Grid);
+                            button(p, "Cell age", Action::CellAge);
                             button(p, "Edges", Action::Boundary);
                             button(p, "Diagnostics", Action::Diagnostics);
                         });

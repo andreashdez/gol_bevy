@@ -71,6 +71,7 @@ pub(super) fn hint(action: Action) -> &'static str {
             }
         }
         Action::Grid => "Show / hide the grid · T",
+        Action::CellAge => "Brighten newborn cells, deepen old ones, and fade where cells died",
         Action::FitBoard => "Fit the whole board in the canvas · V",
         Action::FitLiveCells => {
             "Fit live cells with a small margin · empty boards fit the whole board"
@@ -81,7 +82,7 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::SpeedAdjust(step) if step < 0 => "Decrease speed by 1 gen/s · leaves Max mode",
         Action::SpeedAdjust(_) => "Increase speed by 1 gen/s · leaves Max mode",
         Action::Sidebar => "Show / hide the palette · H",
-        Action::ViewMenu => "View options · grid and pattern palette",
+        Action::ViewMenu => "View options · grid, cell age, and pattern palette",
         Action::MoreMenu => "Workspace settings and help",
         Action::Help => "Controls and tips · /",
         Action::Diagnostics => "Simulation diagnostics · F3",
@@ -94,7 +95,7 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::Tool(EditTool::Erase) => "Erase cells · right-click also erases",
         Action::Tool(EditTool::Stamp) => "Place the selected pattern on the board",
         Action::Import => "Import RLE into your library, or copy the board as RLE",
-        Action::Settings => "Board size, rule, theme, grid, and edges",
+        Action::Settings => "Board size, rule, theme, grid, cell age, and edges",
         Action::RulePreset(_) => "Switch the board to this rule · undo with U",
         Action::Theme(_) => "Switch the colours of the board and interface · saved automatically",
         Action::ApplyRule => "Use the rulestring above, written in B/S notation",

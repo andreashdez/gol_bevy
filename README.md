@@ -32,7 +32,7 @@ palette, editing tools, live status, and import/settings/help/diagnostics dialog
 At 950 pixels wide and above, the toolbar uses a single 64-pixel row, grouped into
 playback, board edits, and workspace controls. Narrower windows use two rows.
 Resizing preserves keyboard focus and the camera view relative to the fitted board.
-**View** groups the grid and pattern palette toggles; **More** opens Settings and Help.
+**View** groups the grid, cell age, and pattern palette toggles; **More** opens Settings and Help.
 The menus support arrow-key navigation, Enter/Space to activate, and Escape to close.
 Clicking the canvas dismisses an open menu without editing the board.
 
@@ -89,7 +89,7 @@ type any rulestring in B/S notation (`B36/S23`, or the older `23/36`). Changing 
 rule is an undoable edit. Settings also switches between the Dark, Light, and High contrast
 themes, which recolour both the board and the interface.
 
-Palette visibility, board size, rule, boundary mode, speed, the grid, and the theme are saved between runs
+Palette visibility, board size, rule, boundary mode, speed, the grid, cell age, and the theme are saved between runs
 in `settings.toml`, in a `gol-bevy` folder in the platform's settings location:
 
 - Linux: `$XDG_CONFIG_HOME`, or `~/.config` if that is unset
@@ -153,7 +153,7 @@ Pattern palette:
 
 Board size is set in Settings: pick a preset (128², 256², 512², 1024²) or type exact dimensions, from 8 up to 2048 per side. The choice is saved between runs. Resizing the board clears undo history, because old snapshots no longer fit; resizing the window does not.
 
-The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools stay available independently of the pattern palette; rotate and flip controls appear in the palette for stamps. Use View → Pattern palette to show or hide the library. Grid is available in View and Settings; boundary mode is in Settings. The status bar shows the generation, population, and rule, plus board dimensions and boundary mode when space allows. Generation and population use fixed-width readouts with tabular digits. The footer
+The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools stay available independently of the pattern palette; rotate and flip controls appear in the palette for stamps. Use View → Pattern palette to show or hide the library. Grid and Cell age are available in View and Settings. Cell age, on by default, brightens newborn cells, deepens long-lived ones, and leaves fading trails where cells died; boundary mode is in Settings. The status bar shows the generation, population, and rule, plus board dimensions and boundary mode when space allows. Generation and population use fixed-width readouts with tabular digits. The footer
 stacks into two rows in narrower windows. The active rule preset is highlighted in
 Settings. Clear, randomize, undo, and redo show brief feedback, including the undo
 shortcut where applicable. Diagnostics open from Settings or F3 and start hidden.
@@ -181,6 +181,7 @@ Shared resources:
   RedrawRequested
   DiagnosticsOverlay
   GridOverlay
+  CellAge
   UiInputRegions / UiInputCapture
 
 Core domain:

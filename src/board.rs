@@ -593,6 +593,11 @@ impl Board {
         false
     }
 
+    /// Liveness of every cell, in index order (`row * cols + col`).
+    pub fn alive_cells(&self) -> impl Iterator<Item = bool> + '_ {
+        self.current.iter().map(|&cell| cell == CELL_ALIVE)
+    }
+
     pub fn live_cells_count(&self) -> usize {
         self.live_count
     }

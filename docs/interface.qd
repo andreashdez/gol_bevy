@@ -55,6 +55,16 @@ With **fixed** edges, a pale wall outlines the board and pulses briefly when you
 
 Press .keybinding {T} or click **Grid** to draw lines between cells. The grid is drawn only where it is visible, and is skipped when cells are only a few pixels wide, so it costs nothing when zoomed out.
 
+### Cell age
+
+With **Cell age** on, which is the default, the board shows how cells change:
+
+- A cell born in the latest generation is brightest, and settles into the usual live colour over a few generations.
+- A cell that has stayed alive for a long time darkens to a deeper shade, so still lifes stand out from busy regions.
+- A cell that just died leaves a faint trail that fades over about a dozen generations, so you can see where gliders and other spaceships have been.
+
+Cells you draw, stamp, or restore with undo show the plain live colour, and erased cells leave no trail. Switch it off in the **View** menu or in [Settings](settings.qd#view-and-edges) to see plain live and dead cells.
+
 ## Status bar
 
 The status bar reads, for example:

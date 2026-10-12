@@ -15,7 +15,7 @@
 - **Boards up to 2048 × 2048**, independent of the window size, with zoom and pan.
 - **RLE import and export**, compatible with other Life tools such as [Golly](https://golly.sourceforge.io).
 - **Keyboard and screen reader friendly**: Tab navigation, focus handling, and accessible names on every control.
-- **Settings that persist**: palette visibility, board size, rule, edges, speed, and grid are restored on the next launch.
+- **Settings that persist**: palette visibility, board size, rule, edges, speed, grid, cell age, and theme are restored on the next launch.
 
 !(100%)[gol-bevy demo](media/demo.gif)
 

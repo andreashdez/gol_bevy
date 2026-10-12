@@ -96,6 +96,7 @@ Keyboard shortcuts and mouse editing run later, in the `Input` set of `PostUpdat
 | `UiLayout`                          | Whether the palette is shown                                  |
 | `RedrawRequested`                   | Whether this frame needs a redraw                             |
 | `DiagnosticsOverlay`, `GridOverlay` | Whether diagnostics and the grid are on                       |
+| `CellAge`                           | Whether cells are shaded by age, with trails                  |
 | `UiInputRegions`, `UiInputCapture`  | Where the UI is, and whether it has the pointer or keyboard   |
 
 ## Input routing

@@ -240,6 +240,14 @@ mod tests {
             // Cells and the pointer outline are graphics, which need 3:1.
             let board = theme.board();
             assert!(contrast(board.live, board.dead) >= 3.0, "{theme:?} cells");
+            // Every age keeps cells visible, and trails stay faint enough to
+            // never pass for live cells.
+            for age in 0..=u8::MAX {
+                let live = crate::render_plugin::live_shade(board, age);
+                let trail = crate::render_plugin::dead_shade(board, age);
+                assert!(contrast(live, board.dead) >= 3.0, "{theme:?} age {age}");
+                assert!(contrast(trail, board.dead) < 2.0, "{theme:?} trail {age}");
+            }
             assert!(contrast(board.hover, board.dead) >= 3.0, "{theme:?} hover");
             assert!(
                 contrast(board.hover_erase, board.dead) >= 3.0,

@@ -22,6 +22,7 @@ Pick **Dark**, **Light**, or **High contrast** to change the colours of the boar
 ## View and edges
 
 - **Grid** shows or hides cell lines.
+- **Cell age** shades cells by age and leaves fading trails where cells died. See [Cell age](interface.qd#cell-age).
 - **Edges** switches between [wrapping and fixed edges](simulation.qd#edges).
 - **Diagnostics** opens the [diagnostics view](interface.qd#diagnostics).
 - **Reset generation counter** sets the generation back to 0 without touching the cells.
@@ -35,6 +36,7 @@ These settings are saved whenever they change, and restored on the next launch:
 | Palette shown  | `palette`                            |
 | Board size     | `board_cols`, `board_rows`           |
 | Grid           | `grid`                               |
+| Cell age       | `cell_age`                           |
 | Theme          | `theme`                              |
 | Rule           | `rule`                               |
 | Edge mode      | `boundary_mode`                      |
@@ -61,6 +63,7 @@ palette = true
 board_cols = 256
 board_rows = 256
 grid = false
+cell_age = true
 theme = "dark"
 rule = "B3/S23"
 boundary_mode = "wrap"
@@ -73,6 +76,7 @@ max_speed = false
 | `palette`       | `true` or `false`                                         |
 | `board_cols`, `board_rows` | Whole numbers, clamped to 8–2048. Both must be present |
 | `grid`          | `true` or `false`                                         |
+| `cell_age`      | `true` or `false`; `true` if missing                      |
 | `theme`         | `"dark"`, `"light"`, or `"high-contrast"`                 |
 | `rule`          | A [rulestring](simulation.qd#rulestring-formats)          |
 | `boundary_mode` | `"wrap"` or `"fixed"`                                     |

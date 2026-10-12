@@ -4,8 +4,8 @@ use crate::app::{App as GolApp, EditTool};
 use crate::board::{BoundaryMode, DirtyCells};
 use crate::canvas_view::cursor_world;
 use crate::shared::{
-    BoardSettings, CELL_SIZE, GridOverlay, MainCamera, RedrawRequested, Simulation, StartupSet,
-    Theme, UpdateSet, board_size_for_window, cell_to_world, world_to_cell,
+    BoardColors, BoardSettings, CELL_SIZE, CellAge, GridOverlay, MainCamera, RedrawRequested,
+    Simulation, StartupSet, Theme, UpdateSet, board_size_for_window, cell_to_world, world_to_cell,
 };
 use crate::ui_input::UiInputCapture;
 use bevy::{
@@ -40,6 +40,86 @@ struct BoardTexture {
 
 #[derive(Component)]
 struct BoardSprite;
+
+/// Generations since each cell last changed state. The renderer keeps these so
+/// the engine's step loop pays nothing for them. A cell stops ageing once its
+/// colour has settled.
+#[derive(Resource, Default)]
+struct CellAges {
+    ages: Vec<u8>,
+    /// The generation counter at the last sync, to tell how many generations ran since.
+    epoch: usize,
+}
+
+/// Generations a newborn cell takes to settle into the live colour.
+const MATURE_AGE: u8 = 6;
+/// Generations after which a cell has the aged colour.
+const OLD_AGE: u8 = 60;
+/// Generations a trail takes to fade.
+const TRAIL_LENGTH: u8 = 12;
+/// Trails fade sooner than cells grow old, so past this age no colour changes.
+const SETTLED_AGE: u8 = OLD_AGE;
+const _: () = assert!(TRAIL_LENGTH <= SETTLED_AGE);
+
+/// Cells that were edited, loaded, or restored rather than stepped: the plain
+/// live colour, and no trail.
+fn settled_age(alive: bool) -> u8 {
+    if alive { MATURE_AGE } else { u8::MAX }
+}
+
+pub(crate) fn live_shade(colors: &BoardColors, age: u8) -> Color {
+    if age < MATURE_AGE {
+        blend_color(
+            colors.newborn,
+            colors.live,
+            f32::from(age) / f32::from(MATURE_AGE),
+        )
+    } else {
+        blend_color(
+            colors.live,
+            colors.aged,
+            f32::from(age - MATURE_AGE) / f32::from(OLD_AGE - MATURE_AGE),
+        )
+    }
+}
+
+pub(crate) fn dead_shade(colors: &BoardColors, age: u8) -> Color {
+    blend_color(
+        colors.trail,
+        colors.dead,
+        f32::from(age) / f32::from(TRAIL_LENGTH),
+    )
+}
+
+/// Texels for every state and age, so painting a cell is a table lookup.
+struct CellPalette {
+    live: [[u8; 4]; 256],
+    dead: [[u8; 4]; 256],
+}
+
+impl CellPalette {
+    fn new(colors: &BoardColors, by_age: bool) -> Self {
+        let mut palette = Self {
+            live: [[0; 4]; 256],
+            dead: [[0; 4]; 256],
+        };
+        for age in 0..=u8::MAX {
+            let (live, dead) = if by_age {
+                (live_shade(colors, age), dead_shade(colors, age))
+            } else {
+                (colors.live, colors.dead)
+            };
+            palette.live[usize::from(age)] = color_to_texel(live);
+            palette.dead[usize::from(age)] = color_to_texel(dead);
+        }
+        palette
+    }
+
+    fn paint(&self, data: &mut [u8], offset: usize, alive: bool, age: u8) {
+        let texel = if alive { &self.live } else { &self.dead };
+        data[offset..offset + 4].copy_from_slice(&texel[usize::from(age)]);
+    }
+}
 
 pub(crate) fn color_to_texel(color: Color) -> [u8; 4] {
     let srgba = color.to_srgba();
@@ -136,8 +216,10 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HoveredCell>()
             .init_resource::<Theme>()
+            .init_resource::<CellAge>()
             .insert_resource(BoundaryWallPulse::default())
             .insert_resource(BoardTexture::default())
+            .init_resource::<CellAges>()
             .insert_resource(PatternPreviewPool::default())
             .add_systems(Startup, setup_world.in_set(StartupSet::BuildWorld))
             .add_systems(
@@ -368,15 +450,23 @@ fn line_index(offset_from_edge: f32, cells: usize) -> usize {
     ((offset_from_edge / CELL_SIZE).floor().max(0.0) as usize).min(cells)
 }
 
+/// What decides a cell's colour besides its state.
+#[derive(SystemParam)]
+struct CellStyle<'w> {
+    theme: Res<'w, Theme>,
+    cell_age: Res<'w, CellAge>,
+    ages: ResMut<'w, CellAges>,
+}
+
 fn sync_cells(
     redraw_requested: Res<RedrawRequested>,
-    theme: Res<Theme>,
+    mut style: CellStyle,
     mut sim: ResMut<Simulation>,
     board_texture: Res<BoardTexture>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    // A new theme recolours every cell, not just the ones that changed.
-    let recolor = theme.is_changed();
+    // A new theme or cell style recolours every cell, not just the ones that changed.
+    let recolor = style.theme.is_changed() || style.cell_age.is_changed();
     if !redraw_requested.0 && !recolor {
         return;
     }
@@ -395,26 +485,57 @@ fn sync_cells(
     };
 
     let dirty = sim.app.board.take_dirty_cells();
-    let indices: Box<dyn Iterator<Item = usize>> = match dirty {
-        _ if recolor => Box::new(0..cols * rows),
-        DirtyCells::None => return,
-        DirtyCells::Full => Box::new(0..cols * rows),
-        DirtyCells::Cells(cells) => Box::new(cells.into_iter()),
-    };
+    let epoch = sim.app.epoch;
+    // Undo and resetting the counter move it backwards; neither is a generation.
+    let steps = u8::try_from(epoch.saturating_sub(style.ages.epoch)).unwrap_or(u8::MAX);
+    style.ages.epoch = epoch;
+    let board = &sim.app.board;
+    let by_age = style.cell_age.enabled;
+    let palette = CellPalette::new(style.theme.board(), by_age);
+    let len = cols * rows;
+    let ages = &mut style.ages.ages;
 
-    let live = color_to_texel(theme.board().live);
-    let dead = color_to_texel(theme.board().dead);
-    for idx in indices {
-        if idx >= cols * rows {
-            continue;
-        }
-        let texel = if sim.app.board.is_alive(idx % cols, idx / cols) {
-            &live
-        } else {
-            &dead
+    if !by_age {
+        let indices: Box<dyn Iterator<Item = usize>> = match dirty {
+            _ if recolor => Box::new(0..len),
+            DirtyCells::None => return,
+            DirtyCells::Full => Box::new(0..len),
+            DirtyCells::Cells(cells) => Box::new(cells.into_iter()),
         };
-        let offset = texel_offset(idx, cols, rows);
-        data[offset..offset + 4].copy_from_slice(texel);
+        for idx in indices.filter(|&idx| idx < len) {
+            let alive = board.is_alive(idx % cols, idx / cols);
+            palette.paint(data, texel_offset(idx, cols, rows), alive, 0);
+        }
+        return;
+    }
+
+    // Switching the style on starts from a calm board: nobody knows the ages yet.
+    let reset = style.cell_age.is_changed() || ages.len() != len || dirty == DirtyCells::Full;
+    if reset {
+        ages.clear();
+        ages.extend(board.alive_cells().map(settled_age));
+    } else {
+        if steps > 0 {
+            for (idx, (alive, age)) in board.alive_cells().zip(ages.iter_mut()).enumerate() {
+                if *age < SETTLED_AGE {
+                    *age = age.saturating_add(steps);
+                    palette.paint(data, texel_offset(idx, cols, rows), alive, *age);
+                }
+            }
+        }
+        if let DirtyCells::Cells(cells) = dirty {
+            for idx in cells.into_iter().filter(|&idx| idx < len) {
+                let alive = board.is_alive(idx % cols, idx / cols);
+                // A generation gives births and deaths age 0; hand edits look settled.
+                ages[idx] = if steps > 0 { 0 } else { settled_age(alive) };
+                palette.paint(data, texel_offset(idx, cols, rows), alive, ages[idx]);
+            }
+        }
+    }
+    if reset || recolor {
+        for (idx, (alive, &age)) in board.alive_cells().zip(ages.iter()).enumerate() {
+            palette.paint(data, texel_offset(idx, cols, rows), alive, age);
+        }
     }
 }
 
@@ -652,6 +773,8 @@ mod tests {
         world.insert_resource(Simulation::new(app));
         world.insert_resource(RedrawRequested(true));
         world.insert_resource(Theme::Dark);
+        world.insert_resource(CellAge { enabled: false });
+        world.init_resource::<CellAges>();
         let mut images = Assets::<Image>::default();
         let handle = create_board_image(&mut images, 4, 3, Theme::Dark.board().dead);
         world.insert_resource(images);
@@ -678,5 +801,68 @@ mod tests {
             let offset = texel_offset(idx, 4, 3);
             assert_eq!(data[offset..offset + 4], color_to_texel(expected), "{idx}");
         }
+    }
+
+    #[test]
+    fn generations_shade_births_deaths_and_survivors_but_edits_look_settled() {
+        let mut world = World::new();
+        // A horizontal blinker in the middle row.
+        let mut app = GolApp::new(5, 5);
+        for col in 1..=3 {
+            app.board.populate(col, 2);
+        }
+        world.insert_resource(Simulation::new(app));
+        world.insert_resource(RedrawRequested(true));
+        world.insert_resource(Theme::Dark);
+        world.insert_resource(CellAge { enabled: true });
+        world.init_resource::<CellAges>();
+        let mut images = Assets::<Image>::default();
+        let handle = create_board_image(&mut images, 5, 5, Theme::Dark.board().dead);
+        world.insert_resource(images);
+        world.insert_resource(BoardTexture {
+            handle: handle.clone(),
+            cols: 5,
+            rows: 5,
+        });
+        // A registered system remembers what it has seen, unlike `run_system_once`.
+        let sync = world.register_system(sync_cells);
+        let texel = |world: &World, col: usize, row: usize| {
+            let images = world.resource::<Assets<Image>>();
+            let data = images.get(&handle).unwrap().data.as_ref().unwrap();
+            let offset = texel_offset(row * 5 + col, 5, 5);
+            <[u8; 4]>::try_from(&data[offset..offset + 4]).unwrap()
+        };
+        let colors = Theme::Dark.board();
+
+        // Cells that were drawn rather than born start out plain.
+        world.run_system(sync).unwrap();
+        assert_eq!(texel(&world, 1, 2), color_to_texel(colors.live));
+        assert_eq!(texel(&world, 1, 1), color_to_texel(colors.dead));
+
+        world.resource_mut::<Simulation>().app.increment_epoch();
+        world.run_system(sync).unwrap();
+        assert_eq!(texel(&world, 2, 1), color_to_texel(colors.newborn));
+        assert_eq!(texel(&world, 1, 2), color_to_texel(colors.trail));
+        let survivor = color_to_texel(live_shade(colors, MATURE_AGE + 1));
+        assert_eq!(texel(&world, 2, 2), survivor);
+
+        // Trails fade and newborns settle as generations pass.
+        for _ in 0..TRAIL_LENGTH {
+            world.resource_mut::<Simulation>().app.increment_epoch();
+        }
+        world.run_system(sync).unwrap();
+        assert_eq!(texel(&world, 0, 0), color_to_texel(colors.dead));
+        assert_ne!(texel(&world, 2, 2), survivor, "the centre keeps ageing");
+
+        // A cell drawn while paused looks like any live cell, not a birth.
+        world.resource_mut::<Simulation>().app.populate_board(0, 0);
+        world.run_system(sync).unwrap();
+        assert_eq!(texel(&world, 0, 0), color_to_texel(colors.live));
+
+        // Switching the style off paints plain colours again.
+        world.resource_mut::<CellAge>().enabled = false;
+        world.resource_mut::<RedrawRequested>().0 = false;
+        world.run_system(sync).unwrap();
+        assert_eq!(texel(&world, 2, 2), color_to_texel(colors.live));
     }
 }

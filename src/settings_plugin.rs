@@ -1,7 +1,7 @@
 //! Persisted workspace settings, independent of the UI implementation.
 use crate::{
     board::{BoundaryMode, Rule},
-    shared::{BoardSettings, GridOverlay, Simulation, StartupSet, Theme, UiLayout},
+    shared::{BoardSettings, CellAge, GridOverlay, Simulation, StartupSet, Theme, UiLayout},
 };
 use bevy::prelude::*;
 use std::path::PathBuf;
@@ -12,6 +12,7 @@ impl Plugin for SettingsPlugin {
         app.init_resource::<UiLayout>()
             .init_resource::<BoardSettings>()
             .init_resource::<Theme>()
+            .init_resource::<CellAge>()
             .add_systems(
                 Startup,
                 (
@@ -35,6 +36,7 @@ struct PersistedSettings {
     board: (usize, usize),
     simulation: SimulationSettings,
     grid: bool,
+    cell_age: bool,
     theme: Theme,
 }
 
@@ -81,6 +83,7 @@ struct ParsedSettings {
     board: Option<(usize, usize)>,
     simulation: SimulationSettings,
     grid: Option<bool>,
+    cell_age: Option<bool>,
     theme: Option<Theme>,
 }
 
@@ -89,6 +92,7 @@ fn setup_settings_persistence(
     mut ui_layout: ResMut<UiLayout>,
     mut board_settings: ResMut<BoardSettings>,
     mut grid: ResMut<GridOverlay>,
+    mut cell_age: ResMut<CellAge>,
     mut theme: ResMut<Theme>,
 ) {
     let path = settings_path();
@@ -110,6 +114,7 @@ fn setup_settings_persistence(
         &mut ui_layout,
         &mut board_settings,
         &mut grid,
+        &mut cell_age,
         &mut theme,
     );
 
@@ -134,6 +139,7 @@ fn load_settings(
     ui_layout: &mut UiLayout,
     board_settings: &mut BoardSettings,
     grid: &mut GridOverlay,
+    cell_age: &mut CellAge,
     theme: &mut Theme,
 ) -> SimulationSettings {
     match std::fs::read_to_string(path) {
@@ -148,6 +154,9 @@ fn load_settings(
             }
             if let Some(enabled) = settings.grid {
                 grid.enabled = enabled;
+            }
+            if let Some(enabled) = settings.cell_age {
+                cell_age.enabled = enabled;
             }
             if let Some(saved) = settings.theme {
                 *theme = saved;
@@ -171,6 +180,7 @@ fn persist_settings(
     ui_layout: Res<UiLayout>,
     board_settings: Res<BoardSettings>,
     grid: Res<GridOverlay>,
+    cell_age: Res<CellAge>,
     theme: Res<Theme>,
     sim: Option<Res<Simulation>>,
     mut persistence: ResMut<SettingsPersistence>,
@@ -187,6 +197,7 @@ fn persist_settings(
         board: (board_settings.cols, board_settings.rows),
         simulation: SimulationSettings::of(&sim),
         grid: grid.enabled,
+        cell_age: cell_age.enabled,
         theme: *theme,
     };
     if persistence.last_saved == Some(current) {
@@ -206,11 +217,12 @@ fn persist_settings(
 
     let simulation = current.simulation;
     let mut contents = format!(
-        "palette = {}\nboard_cols = {}\nboard_rows = {}\ngrid = {}\ntheme = \"{}\"\n",
+        "palette = {}\nboard_cols = {}\nboard_rows = {}\ngrid = {}\ncell_age = {}\ntheme = \"{}\"\n",
         current.palette,
         current.board.0,
         current.board.1,
         current.grid,
+        current.cell_age,
         theme_storage_str(current.theme),
     );
     if let Some(rule) = simulation.rule {
@@ -270,6 +282,7 @@ fn parse_settings_from_toml(contents: &str) -> ParsedSettings {
             "board_cols" => cols = value.parse::<usize>().ok(),
             "board_rows" => rows = value.parse::<usize>().ok(),
             "grid" => parsed.grid = value.parse::<bool>().ok(),
+            "cell_age" => parsed.cell_age = value.parse::<bool>().ok(),
             "theme" => parsed.theme = theme_from_storage_str(value),
             "rule" => parsed.simulation.rule = Rule::parse(value).ok(),
             "boundary_mode" => parsed.simulation.boundary = boundary_from_storage_str(value),
@@ -407,13 +420,22 @@ mod persistence_tests {
         let mut layout = UiLayout::default();
         let mut board = BoardSettings::default();
         let mut grid = GridOverlay { enabled: false };
+        let mut cell_age = CellAge::default();
         let mut theme = Theme::default();
         // A file from before the simulation settings were saved leaves them alone.
-        let legacy = load_settings(&path, &mut layout, &mut board, &mut grid, &mut theme);
+        let legacy = load_settings(
+            &path,
+            &mut layout,
+            &mut board,
+            &mut grid,
+            &mut cell_age,
+            &mut theme,
+        );
         assert!(!layout.control_deck_visible);
         assert_eq!((board.cols, board.rows), (512, 256));
         assert_eq!(legacy, SimulationSettings::default());
         assert!(!grid.enabled);
+        assert!(cell_age.enabled);
         assert_eq!(theme, Theme::Dark);
 
         let mut app = crate::app::App::new(128, 64);
@@ -428,6 +450,7 @@ mod persistence_tests {
         world.insert_resource(layout);
         world.insert_resource(board);
         world.insert_resource(GridOverlay { enabled: true });
+        world.insert_resource(CellAge { enabled: false });
         world.insert_resource(Theme::HighContrast);
         world.insert_resource(Simulation::new(app));
         world.insert_resource(SettingsPersistence {
@@ -441,17 +464,20 @@ mod persistence_tests {
         };
         let mut loaded_board = BoardSettings::default();
         let mut loaded_grid = GridOverlay { enabled: false };
+        let mut loaded_cell_age = CellAge::default();
         let mut loaded_theme = Theme::default();
         let simulation = load_settings(
             &path,
             &mut loaded_layout,
             &mut loaded_board,
             &mut loaded_grid,
+            &mut loaded_cell_age,
             &mut loaded_theme,
         );
         assert!(loaded_layout.control_deck_visible);
         assert_eq!((loaded_board.cols, loaded_board.rows), (128, 64));
         assert!(loaded_grid.enabled);
+        assert!(!loaded_cell_age.enabled);
         assert_eq!(loaded_theme, Theme::HighContrast);
 
         let mut restored = Simulation::new(crate::app::App::new(128, 64));
@@ -496,12 +522,13 @@ mod persistence_tests {
 
         let junk = parse_settings_from_toml(
             "layout_preset = \"nope\"\npalette = maybe\nboard_cols = wide\nrule = \"B9\"\nboundary_mode = \"round\"\n\
-             tick_rate_ms = fast\nmax_speed = yes\ngrid = 1\ntheme = \"neon\"\n",
+             tick_rate_ms = fast\nmax_speed = yes\ngrid = 1\ncell_age = on\ntheme = \"neon\"\n",
         );
         assert_eq!(junk.palette, None);
         assert_eq!(junk.board, None);
         assert_eq!(junk.simulation, super::SimulationSettings::default());
         assert_eq!(junk.grid, None);
+        assert_eq!(junk.cell_age, None);
         assert_eq!(junk.theme, None);
 
         assert_eq!(parse_settings_from_toml("").board, None);
