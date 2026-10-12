@@ -2,6 +2,8 @@
 
 Conway's Game of Life with a native desktop GUI built on Bevy.
 
+The full documentation is at <https://andreashdez.github.io/gol_bevy/>.
+
 ## Demo
 
 ![Game of Life screenshot](docs/media/screenshot.png)
