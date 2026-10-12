@@ -14,7 +14,7 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 | .keybinding {R}         | Randomize the board          |
 | .keybinding {X}         | Clear the board              |
 | .keybinding {0}         | Reset the generation counter |
-| .keybinding {plus}      | Speed up (past 40 gen/s: Max) |
+| .keybinding {plus}      | Speed up (past 40 gen/s: ∞)   |
 | .keybinding {minus}     | Slow down                    |
 | .keybinding {M}         | Toggle wrapping or fixed edges |
 
@@ -46,9 +46,8 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 |------------------------------------------------|---------------------------------|
 | Mouse wheel over the board, or **− / +** in the status bar | Zoom                    |
 | Middle-button drag over the board             | Pan without editing cells       |
-| **Fit live cells** in the status bar          | Frame the living cells          |
 | .keybinding {W} .keybinding {A} .keybinding {S} .keybinding {D} or arrow keys | Pan          |
-| .keybinding {V}                                | Fit the whole board in view     |
+| .keybinding {V}, or **Fit board** in the status bar | Fit the whole board in view |
 | .keybinding {T}                                | Toggle the grid                 |
 | .keybinding {H}                                | Hide or show the pattern palette |
 | .keybinding {F3}                               | Toggle diagnostics              |

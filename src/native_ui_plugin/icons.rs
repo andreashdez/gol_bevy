@@ -12,30 +12,28 @@ pub(super) enum Icon {
     Step,
     Undo,
     Redo,
+    Grid,
+    CellAge,
+    Palette,
     Gear,
+    Help,
+    Fit,
 }
 
 impl Icon {
-    const ALL: [Icon; 6] = [
+    const ALL: [Icon; 11] = [
         Icon::Play,
         Icon::Pause,
         Icon::Step,
         Icon::Undo,
         Icon::Redo,
+        Icon::Grid,
+        Icon::CellAge,
+        Icon::Palette,
         Icon::Gear,
+        Icon::Help,
+        Icon::Fit,
     ];
-
-    /// Buttons that show an icon in place of their name.
-    pub(super) fn of(action: Action) -> Option<Icon> {
-        match action {
-            Action::Play => Some(Icon::Play),
-            Action::Step => Some(Icon::Step),
-            Action::Undo => Some(Icon::Undo),
-            Action::Redo => Some(Icon::Redo),
-            Action::MoreMenu => Some(Icon::Gear),
-            _ => None,
-        }
-    }
 
     /// Stable handles, so icons can be spawned before or without the asset.
     pub(super) fn handle(self) -> Handle<Image> {
@@ -61,7 +59,31 @@ impl Icon {
             // Lucide's undo-2: a chevron, a line, and a half turn back.
             Icon::Undo => undo(p) - HALF_STROKE,
             Icon::Redo => undo(vec2(24.0 - p.x, p.y)) - HALF_STROKE,
+            Icon::Grid => grid(p) - HALF_STROKE,
+            Icon::CellAge => cell_age(p),
+            // Lucide's panel-left: a window with a sidebar.
+            Icon::Palette => {
+                rounded_box(p, vec2(12.0, 12.0), vec2(9.0, 8.0), 2.0)
+                    .abs()
+                    .min(segment(p, vec2(9.0, 4.0), vec2(9.0, 20.0)))
+                    - HALF_STROKE
+            }
             Icon::Gear => gear(p),
+            Icon::Help => help(p),
+            Icon::Fit => fit(p) - HALF_STROKE,
+        }
+    }
+
+    /// How opaque the shape is at `p`, so parts of an icon can be fainter.
+    fn opacity(self, p: Vec2) -> f32 {
+        match self {
+            // The trail fades from the newest cell, top right, to the oldest.
+            Icon::CellAge => match p.x - p.y {
+                d if d > 6.5 => 1.0,
+                d if d > -6.5 => 0.65,
+                _ => 0.4,
+            },
+            _ => 1.0,
         }
     }
 }
@@ -74,7 +96,7 @@ fn rasterize(icon: Icon, size: u32) -> Image {
         for x in 0..size {
             let p = (vec2(x as f32, y as f32) + 0.5) * scale;
             // Distance in pixels; one pixel of falloff anti-aliases the edge.
-            let coverage = (0.5 - icon.distance(p) / scale).clamp(0.0, 1.0);
+            let coverage = (0.5 - icon.distance(p) / scale).clamp(0.0, 1.0) * icon.opacity(p);
             data.extend_from_slice(&[255, 255, 255, (coverage * 255.0).round() as u8]);
         }
     }
@@ -153,6 +175,54 @@ fn undo(p: Vec2) -> f32 {
         .min(arc)
 }
 
+/// Distance to the centre lines of a 3×3 grid of cells.
+fn grid(p: Vec2) -> f32 {
+    let (a, b) = (4.0 + 16.0 / 3.0, 20.0 - 16.0 / 3.0);
+    rounded_box(p, vec2(12.0, 12.0), vec2(8.0, 8.0), 2.0)
+        .abs()
+        .min(segment(p, vec2(a, 4.0), vec2(a, 20.0)))
+        .min(segment(p, vec2(b, 4.0), vec2(b, 20.0)))
+        .min(segment(p, vec2(4.0, a), vec2(20.0, a)))
+        .min(segment(p, vec2(4.0, b), vec2(20.0, b)))
+}
+
+/// Three cells in a diagonal trail, like a glider leaving faded cells behind.
+fn cell_age(p: Vec2) -> f32 {
+    [vec2(18.5, 5.5), vec2(12.0, 12.0), vec2(5.5, 18.5)]
+        .into_iter()
+        .map(|center| rounded_box(p, center, vec2(2.9, 2.9), 0.9))
+        .fold(f32::INFINITY, f32::min)
+}
+
+/// A question mark: a hook over a short stem, and a dot.
+fn help(p: Vec2) -> f32 {
+    let center = vec2(12.0, 8.5);
+    let radius = 3.5;
+    let q = p - center;
+    // The hook runs from the left, over the top, to just past the right side.
+    let angle = q.y.atan2(q.x);
+    let end = center + Vec2::from_angle(std::f32::consts::FRAC_PI_4) * radius;
+    // atan2 never goes below -π, so only the far end needs a bound.
+    let hook = if angle <= std::f32::consts::FRAC_PI_4 {
+        (q.length() - radius).abs()
+    } else {
+        p.distance(center - vec2(radius, 0.0))
+    };
+    let stem = hook.min(segment(p, end, vec2(12.0, 13.0))).min(segment(
+        p,
+        vec2(12.0, 13.0),
+        vec2(12.0, 14.5),
+    ));
+    (stem - 1.0).min(p.distance(vec2(12.0, 18.5)) - 1.4)
+}
+
+/// Four corner brackets, as on a camera viewfinder: the whole board in view.
+fn fit(p: Vec2) -> f32 {
+    // Folding into one quadrant draws all four corners from one bracket.
+    let q = vec2(12.0 - (p.x - 12.0).abs(), 12.0 - (p.y - 12.0).abs());
+    segment(q, vec2(4.0, 9.0), vec2(4.0, 4.0)).min(segment(q, vec2(4.0, 4.0), vec2(9.0, 4.0)))
+}
+
 /// Eight teeth around a wheel with a hole in the middle.
 fn gear(p: Vec2) -> f32 {
     let q = p - vec2(12.0, 12.0);
@@ -177,7 +247,12 @@ mod tests {
             (Icon::Step, vec2(17.5, 12.0)),
             (Icon::Undo, vec2(10.0, 9.0)),
             (Icon::Redo, vec2(14.0, 9.0)),
+            (Icon::Grid, vec2(4.0 + 16.0 / 3.0, 12.0)),
+            (Icon::CellAge, vec2(18.5, 5.5)),
+            (Icon::Palette, vec2(9.0, 12.0)),
             (Icon::Gear, vec2(12.0, 6.5)),
+            (Icon::Help, vec2(12.0, 18.5)),
+            (Icon::Fit, vec2(20.0, 6.0)),
         ];
         for (icon, point) in inside {
             assert!(icon.distance(point) < -0.5, "{icon:?} at {point}");
@@ -202,5 +277,14 @@ mod tests {
             |x: u32, y: u32| image.data.as_ref().unwrap()[((y * RASTER_SIZE + x) * 4 + 3) as usize];
         assert_eq!(alpha(RASTER_SIZE / 3, RASTER_SIZE / 2), 255);
         assert_eq!(alpha(RASTER_SIZE / 2, RASTER_SIZE / 2), 0);
+
+        // The cell age trail fades: newest cell opaque, oldest faint.
+        let image = rasterize(Icon::CellAge, RASTER_SIZE);
+        let alpha = |p: Vec2| {
+            let (x, y) = ((p * RASTER_SIZE as f32 / 24.0).as_uvec2()).into();
+            image.data.as_ref().unwrap()[((y * RASTER_SIZE + x) * 4 + 3) as usize]
+        };
+        assert_eq!(alpha(vec2(18.5, 5.5)), 255);
+        assert_eq!(alpha(vec2(5.5, 18.5)), 102);
     }
 }

@@ -7,12 +7,12 @@
 
 ## Features
 
-- **Play, pause, and step** through generations, from 1 to 40 per second, or at *Max* speed: as many generations as fit in each frame.
+- **Play, pause, and step** through generations, from 1 to 40 per second, or at ∞, maximum speed: as many generations as fit in each frame.
 - **Draw, erase, and stamp** cells with the mouse. Stamps can be rotated and flipped before you place them.
 - **Undo and redo** every edit, including rule changes and imports.
 - **Any Life-like rule**: Life, HighLife, Day & Night, Seeds, or any rulestring in `B/S` notation.
 - **Wrapping or fixed edges.** A wrapping board joins its opposite edges; a fixed board treats everything outside it as dead.
-- **Boards up to 2048 × 2048**, independent of the window size, with zoom and pan.
+- **Boards up to 2048 × 2048**, independent of the window size or sized to fill it, with zoom and pan.
 - **RLE import and export**, compatible with other Life tools such as [Golly](https://golly.sourceforge.io).
 - **Keyboard and screen reader friendly**: Tab navigation, focus handling, and accessible names on every control.
 - **Settings that persist**: palette visibility, board size, rule, edges, speed, grid, cell age, and theme are restored on the next launch.

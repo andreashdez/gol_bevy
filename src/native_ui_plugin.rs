@@ -15,7 +15,6 @@ mod accessibility;
 mod controls;
 mod dialogs;
 mod icons;
-mod menus;
 mod palette;
 mod speed;
 mod theme;
@@ -46,9 +45,8 @@ use dialogs::DialogKind;
 use icons::Icon;
 use theme::{ThemedBackground, ThemedBorder, ThemedImage, ThemedText, Token};
 
-fn bottom_height(size: Vec2) -> f32 {
-    if size.x < 1000.0 { 88.0 } else { 48.0 }
-}
+/// The status bar fits on one row at every window width the app allows.
+const STATUS_BAR_HEIGHT: f32 = 48.0;
 const SIDE: f32 = 256.0;
 const TOOL_STRIP_HEIGHT: f32 = 48.0;
 const TOOL_STRIP_SPACE: f32 = TOOL_STRIP_HEIGHT + 8.0;
@@ -72,8 +70,6 @@ impl Plugin for NativeUiPlugin {
             .init_resource::<Theme>()
             .add_plugins((TabNavigationPlugin, bevy::picking::cursor::CursorIconPlugin))
             .add_observer(activate)
-            .add_observer(menus::menu_event)
-            .add_observer(menus::item_activated)
             .add_observer(speed::handle_key)
             .add_observer(controls::navigate)
             .add_plugins(dialogs::NativeDialogsPlugin)
@@ -82,6 +78,7 @@ impl Plugin for NativeUiPlugin {
                 PostUpdate,
                 (
                     palette::sync_scrollbar.after(bevy::ui::UiSystems::Layout),
+                    controls::keep_widest.after(bevy::ui::UiSystems::Layout),
                     theme::apply.after(bevy::a11y::AccessibilitySystems::Update),
                     speed::edit
                         .after(bevy::text::EditableTextSystems)
@@ -93,7 +90,6 @@ impl Plugin for NativeUiPlugin {
                 Update,
                 (
                     dialogs::update_dialogs,
-                    menus::dismiss,
                     sync,
                     sync_palette,
                     palette::filter,
@@ -105,6 +101,7 @@ impl Plugin for NativeUiPlugin {
                     controls::sync_overlays,
                     controls::sync_tool_hint,
                     controls::sync_footer,
+                    controls::sync_status,
                     toolbar::sync_layout,
                     controls::sync_feedback,
                     publish_input_regions,
@@ -135,14 +132,20 @@ struct FooterStatus;
 struct BoardArea;
 #[derive(Component)]
 struct BoardFocusRing;
-#[derive(Component)]
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum Readout {
     Status,
     Generation,
     Population,
-    Rule,
+    /// How the latest generation changed the population.
+    Change,
+    /// The cell under the pointer.
+    Pointer,
     Board,
 }
+/// Green while running, neutral while paused.
+#[derive(Component)]
+struct StatusPill;
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 enum Action {
@@ -153,26 +156,26 @@ enum Action {
     Grid,
     CellAge,
     FitBoard,
-    FitLiveCells,
     ZoomIn,
     ZoomOut,
-    MaxSpeed,
     SpeedAdjust(i8),
     Sidebar,
     Import,
     Help,
     Settings,
-    ViewMenu,
-    MoreMenu,
     Diagnostics,
     CloseDialog,
     ImportSubmit,
     ResizeBoard,
     BoardPreset(usize),
+    /// Keep the board size matched to the canvas.
+    FillCanvas,
     /// Index into the rule presets of the settings dialog.
     RulePreset(usize),
     Theme(Theme),
     ApplyRule,
+    /// Opens Settings with the rulestring field focused.
+    EditRule,
     ExportRle,
     ResetEpoch,
     Tool(EditTool),
@@ -210,6 +213,30 @@ fn row() -> impl Bundle {
 }
 
 fn button(parent: &mut ChildSpawnerCommands, text: &str, action: Action) -> Entity {
+    let entity = button_frame(parent, text, action);
+    parent
+        .commands()
+        .entity(entity)
+        .with_child(label(text, 14.0, Token::Ink));
+    entity
+}
+
+/// A button that shows an icon; `name` still labels it for tooltips and screen readers.
+fn icon_button(
+    parent: &mut ChildSpawnerCommands,
+    name: &str,
+    icon: Icon,
+    action: Action,
+) -> Entity {
+    let entity = button_frame(parent, name, action);
+    parent
+        .commands()
+        .entity(entity)
+        .with_child(icons::node(icon));
+    entity
+}
+
+fn button_frame(parent: &mut ChildSpawnerCommands, name: &str, action: Action) -> Entity {
     parent
         .spawn((
             Node {
@@ -237,18 +264,9 @@ fn button(parent: &mut ChildSpawnerCommands, text: &str, action: Action) -> Enti
             TabIndex(0),
             ThemedBackground(Token::Surface),
             ThemedBorder(Token::Line),
-            Name::new(text.to_owned()),
+            Name::new(name.to_owned()),
             controls::Tooltip(controls::hint(action).to_owned()),
         ))
-        .with_children(|p| match Icon::of(action) {
-            // The name still labels the button for tooltips and screen readers.
-            Some(icon) => {
-                p.spawn(icons::node(icon));
-            }
-            None => {
-                p.spawn(label(text, 14.0, Token::Ink));
-            }
-        })
         .id()
 }
 
@@ -336,7 +354,7 @@ fn setup(
                 left: px(0),
                 right: px(0),
                 bottom: px(0),
-                height: px(48),
+                height: px(STATUS_BAR_HEIGHT),
                 padding: UiRect::axes(px(16), px(4)),
                 align_items: AlignItems::Center,
                 column_gap: px(16),
@@ -353,7 +371,7 @@ fn setup(
                 FooterStatus,
                 Node {
                     align_items: AlignItems::Center,
-                    column_gap: px(8),
+                    column_gap: px(14),
                     height: px(34),
                     flex_grow: 1.0,
                     flex_shrink: 0.0,
@@ -361,40 +379,40 @@ fn setup(
                 },
             ))
             .with_children(|p| {
-                for (kind, width) in [
-                    (Readout::Status, 68.0),
-                    (Readout::Generation, 176.0),
-                    (Readout::Population, 104.0),
-                    (Readout::Rule, 150.0),
-                ] {
-                    p.spawn(Node {
-                        width: px(width),
-                        flex_shrink: 0.0,
-                        ..default()
-                    })
-                    .with_children(|p| {
-                        p.spawn((label("", 13.0, Token::Ink), kind))
-                            .insert(controls::numeric_font(13.0));
-                    });
-                }
-                p.spawn((label("", 12.0, Token::Muted), Readout::Board));
-            });
-            p.spawn(row()).with_children(|p| {
-                button(p, "−", Action::ZoomOut);
                 p.spawn((
-                    controls::ZoomLabel,
-                    label("100%", 13.0, Token::Ink),
-                    controls::Tooltip("Zoom relative to Fit board (100%)".into()),
-                    Hovered::default(),
+                    StatusPill,
+                    // Wide enough for either word, so Play never shifts the readouts.
                     Node {
-                        width: px(56),
+                        min_width: px(76),
+                        justify_content: JustifyContent::Center,
+                        padding: UiRect::axes(px(10), px(3)),
+                        border: UiRect::all(px(1)),
+                        border_radius: BorderRadius::all(px(10)),
                         flex_shrink: 0.0,
                         ..default()
                     },
-                ));
-                button(p, "+", Action::ZoomIn);
-                button(p, "Fit board", Action::FitBoard);
-                button(p, "Fit live cells", Action::FitLiveCells);
+                    ThemedBackground(Token::Surface),
+                    ThemedBorder(Token::Line),
+                ))
+                .with_child((label("", 12.0, Token::Muted), Readout::Status));
+                // Muted words around ink numbers. Numbers keep the widest size
+                // they have reached, so their neighbours do not shift as they tick.
+                p.spawn(controls::readout_group()).with_children(|p| {
+                    p.spawn(label("Gen", 13.0, Token::Muted));
+                    p.spawn(controls::number(Readout::Generation, 13.0, Token::Ink));
+                });
+                p.spawn(controls::readout_group()).with_children(|p| {
+                    p.spawn(controls::number(Readout::Population, 13.0, Token::Ink));
+                    p.spawn(label("alive", 13.0, Token::Muted));
+                    p.spawn(controls::number(Readout::Change, 12.0, Token::Muted));
+                });
+                button(p, "Rule", Action::EditRule);
+                p.spawn(controls::number(Readout::Pointer, 12.0, Token::Muted));
+                p.spawn((label("", 12.0, Token::Muted), Readout::Board));
+            });
+            p.spawn(row()).with_children(|p| {
+                controls::zoom_stepper(p);
+                icon_button(p, "Fit board", Icon::Fit, Action::FitBoard);
             });
         });
     // Last in the tab order, so Tab and Shift+Tab can return to the board.
@@ -490,7 +508,7 @@ fn sync_board_focus(
 /// Logical rectangles shared by layout and input routing; gaps remain canvas.
 pub fn panel_rects(size: Vec2, layout: &UiLayout) -> Vec<Rect> {
     let top = toolbar::height(size.x);
-    let bottom = bottom_height(size);
+    let bottom = STATUS_BAR_HEIGHT;
     let mut rects = vec![
         Rect::new(0.0, 0.0, size.x, top),
         Rect::new(0.0, (size.y - bottom).max(0.0), size.x, size.y),
@@ -523,13 +541,18 @@ pub fn panel_rects(size: Vec2, layout: &UiLayout) -> Vec<Rect> {
 
 /// The board is clipped to this workspace; the UI camera still covers the window.
 pub fn canvas_rect(size: Vec2, layout: &UiLayout) -> Rect {
-    let left = if layout.control_deck_visible {
-        SIDE + 32.0
-    } else {
-        TOOL_RAIL_WIDTH + 32.0
-    };
-    let max = (size - Vec2::new(16.0, bottom_height(size) + 16.0)).max(Vec2::ONE);
-    let min = Vec2::new(left, toolbar::height(size.x) + 16.0)
+    // The palette keeps its 16 px window margin; the canvas only needs a thin
+    // gap, so the board gets as much of the window as possible.
+    const GAP: f32 = 8.0;
+    let left = 16.0
+        + GAP
+        + if layout.control_deck_visible {
+            SIDE
+        } else {
+            TOOL_RAIL_WIDTH
+        };
+    let max = (size - Vec2::new(GAP, STATUS_BAR_HEIGHT + GAP)).max(Vec2::ONE);
+    let min = Vec2::new(left, toolbar::height(size.x) + GAP)
         .min(max - Vec2::ONE)
         .max(Vec2::ZERO);
     Rect::from_corners(min, max)
@@ -539,11 +562,9 @@ fn publish_input_regions(
     windows: Query<&Window, With<PrimaryWindow>>,
     layout: Res<UiLayout>,
     state: Res<NativeUi>,
-    menus: Query<&Node, With<menus::WorkspacePopup>>,
     mut regions: ResMut<UiInputRegions>,
 ) {
-    regions.modal =
-        state.dialog.is_some() || menus.iter().any(|node| node.display != Display::None);
+    regions.modal = state.dialog.is_some();
     regions.panels = windows
         .single()
         .map(|window| panel_rects(window.size(), &layout))
@@ -572,7 +593,6 @@ fn activate(
     match action {
         Action::Import
         | Action::FitBoard
-        | Action::FitLiveCells
         | Action::ZoomIn
         | Action::ZoomOut
         | Action::Settings
@@ -582,8 +602,10 @@ fn activate(
         | Action::ImportSubmit
         | Action::ResizeBoard
         | Action::BoardPreset(_)
+        | Action::FillCanvas
         | Action::RulePreset(_)
         | Action::ApplyRule
+        | Action::EditRule
         | Action::ExportRle => {}
         Action::Grid => view.grid.enabled = !view.grid.enabled,
         Action::CellAge => view.cell_age.enabled = !view.cell_age.enabled,
@@ -602,17 +624,7 @@ fn activate(
 fn apply_action(action: Action, app: &mut GolApp) {
     match action {
         Action::Play => app.toggle_running(),
-        Action::MaxSpeed => {
-            if app.is_max_speed() {
-                app.set_tick_rate_ms(app.tick_rate_ms());
-            } else {
-                app.set_max_speed();
-            }
-        }
-        Action::SpeedAdjust(step) => {
-            let rate = (controls::fixed_rate(app) * 10.0).round() / 10.0;
-            app.set_tick_rate_ms(controls::rate_to_ms(rate + f32::from(step)));
-        }
+        Action::SpeedAdjust(step) => controls::step_speed(app, step),
         Action::Step => app.increment_epoch(),
         Action::Undo => {
             app.undo();
@@ -647,15 +659,15 @@ type ButtonState<'a> = (
 );
 
 #[derive(SystemParam)]
-struct ViewState<'w, 's> {
+struct ViewState<'w> {
     mode: Res<'w, NativeUi>,
     layout: Res<'w, UiLayout>,
     grid: Res<'w, GridOverlay>,
     cell_age: Res<'w, CellAge>,
+    board: Res<'w, crate::shared::BoardSettings>,
     focus: Res<'w, InputFocus>,
     focus_visible: Res<'w, InputFocusVisible>,
     theme: Res<'w, Theme>,
-    menus: Query<'w, 's, &'static bevy::ui_widgets::MenuFocusState, With<menus::WorkspacePopup>>,
 }
 
 type RootNode<'a> = (&'a mut Node, Has<Sidebar>, Has<toolbar::Toolbar>);
@@ -666,7 +678,7 @@ fn sync(
     view: ViewState,
     mut roots: Query<RootNode, With<NativeRoot>>,
     mut buttons: Query<ButtonState>,
-    mut texts: Query<(&mut Text, &mut ThemedText, Option<&Readout>)>,
+    mut texts: Query<(&mut Text, &mut ThemedText)>,
     mut icons: Query<(&mut ImageNode, &mut ThemedImage)>,
 ) {
     let ViewState {
@@ -674,10 +686,10 @@ fn sync(
         layout,
         grid,
         cell_age,
+        board,
         focus,
         focus_visible: _,
         theme,
-        menus: _,
     } = view;
     for (mut node, sidebar, toolbar) in &mut roots {
         let display = if sidebar && !layout.control_deck_visible {
@@ -702,10 +714,10 @@ fn sync(
             }
             _ => name.as_str(),
         };
-        let accessible_label = if *action == Action::Boundary {
-            format!("Edges: {}", sim.app.boundary_mode_label())
-        } else {
-            accessible_label.to_owned()
+        let accessible_label = match action {
+            Action::Boundary => format!("Edges: {}", sim.app.boundary_mode_label()),
+            Action::EditRule => format!("Rule: {}", sim.app.rule_label()),
+            _ => accessible_label.to_owned(),
         };
         if accessible.label() != Some(accessible_label.as_str()) {
             accessible.set_label(accessible_label);
@@ -714,8 +726,10 @@ fn sync(
             Action::Undo => !sim.app.can_undo(),
             Action::Redo => !sim.app.can_redo(),
             Action::Rotate | Action::Flip => sim.app.tool() != EditTool::Stamp,
-            Action::SpeedAdjust(step) if *step < 0 => sim.app.tick_rate_ms() >= 1000,
-            Action::SpeedAdjust(_) => sim.app.tick_rate_ms() <= 25,
+            Action::SpeedAdjust(step) if *step < 0 => {
+                !sim.app.is_max_speed() && sim.app.tick_rate_ms() >= 1000
+            }
+            Action::SpeedAdjust(_) => sim.app.is_max_speed(),
             _ => false,
         };
         if disabled {
@@ -733,8 +747,8 @@ fn sync(
             }
             Action::Grid => grid.enabled,
             Action::CellAge => cell_age.enabled,
+            Action::FillCanvas => board.fill_canvas,
             Action::Sidebar => layout.control_deck_visible,
-            Action::MaxSpeed => sim.app.is_max_speed(),
             Action::Theme(choice) => *theme == *choice,
             Action::RulePreset(index) => dialogs::RULE_PRESETS
                 .get(*index)
@@ -747,8 +761,8 @@ fn sync(
                 | Action::Pattern(_)
                 | Action::Grid
                 | Action::CellAge
+                | Action::FillCanvas
                 | Action::Sidebar
-                | Action::MaxSpeed
                 | Action::RulePreset(_)
                 | Action::Theme(_)
         ) {
@@ -770,7 +784,10 @@ fn sync(
             Token::Hover
         } else if selected {
             Token::Selected
-        } else if matches!(action, Action::SpeedAdjust(_)) {
+        } else if matches!(
+            action,
+            Action::SpeedAdjust(_) | Action::ZoomIn | Action::ZoomOut
+        ) {
             Token::Field
         } else {
             Token::Surface
@@ -801,7 +818,7 @@ fn sync(
                     set_if_neq!(image.image, icon.handle());
                 }
             }
-            if let Ok((mut text, mut color, _)) = texts.get_mut(child) {
+            if let Ok((mut text, mut color)) = texts.get_mut(child) {
                 color.set_if_neq(ThemedText(ink));
                 let replacement = match action {
                     Action::Play => Some(if sim.app.is_running() {
@@ -810,6 +827,7 @@ fn sync(
                         "Play".to_string()
                     }),
                     Action::Boundary => Some(format!("Edges: {}", sim.app.boundary_mode_label())),
+                    Action::EditRule => Some(sim.app.rule_label()),
                     _ => None,
                 };
                 if let Some(value) = replacement
@@ -818,29 +836,6 @@ fn sync(
                     text.0 = value;
                 }
             }
-        }
-    }
-    for (mut text, _, readout) in &mut texts {
-        let value = match readout {
-            Some(Readout::Status) => if sim.app.is_running() {
-                "RUNNING"
-            } else {
-                "PAUSED"
-            }
-            .to_owned(),
-            Some(Readout::Generation) => format!("Gen {}", sim.app.epoch),
-            Some(Readout::Population) => format!("{} alive", sim.app.board.live_cells_count()),
-            Some(Readout::Rule) => sim.app.rule_label(),
-            Some(Readout::Board) => format!(
-                "{} × {} cells   ·   {} edges",
-                sim.app.board.size().0,
-                sim.app.board.size().1,
-                sim.app.boundary_mode_label()
-            ),
-            None => continue,
-        };
-        if text.0 != value {
-            text.0 = value;
         }
     }
 }
@@ -1121,6 +1116,7 @@ mod tests {
         world.init_resource::<UiLayout>();
         world.insert_resource(GridOverlay { enabled: false });
         world.init_resource::<CellAge>();
+        world.init_resource::<crate::shared::BoardSettings>();
         world.init_resource::<InputFocus>();
         world.init_resource::<InputFocusVisible>();
         world.init_resource::<Theme>();
@@ -1167,6 +1163,7 @@ mod tests {
         world.init_resource::<UiLayout>();
         world.insert_resource(GridOverlay { enabled: false });
         world.init_resource::<CellAge>();
+        world.init_resource::<crate::shared::BoardSettings>();
         world.init_resource::<InputFocus>();
         world.init_resource::<InputFocusVisible>();
         world.init_resource::<Theme>();
@@ -1218,12 +1215,10 @@ mod tests {
     }
 
     #[test]
-    fn speed_buttons_step_the_displayed_rate_with_limits_and_leave_max_mode() {
+    fn speed_buttons_step_the_displayed_rate_with_limits_and_infinity_last() {
         let mut app = GolApp::new(8, 8);
         app.set_tick_rate_ms(100);
-        app.set_max_speed();
         apply_action(Action::SpeedAdjust(1), &mut app);
-        assert!(!app.is_max_speed());
         assert_eq!(app.tick_rate_ms(), controls::rate_to_ms(11.0));
         apply_action(Action::SpeedAdjust(-1), &mut app);
         assert_eq!(app.tick_rate_ms(), 100);
@@ -1235,6 +1230,9 @@ mod tests {
         assert_eq!(app.tick_rate_ms(), 1000);
         app.set_tick_rate_ms(25);
         apply_action(Action::SpeedAdjust(1), &mut app);
+        assert!(app.is_max_speed());
+        apply_action(Action::SpeedAdjust(-1), &mut app);
+        assert!(!app.is_max_speed());
         assert_eq!(app.tick_rate_ms(), 25);
         assert_eq!(app.board.live_cells_count(), 0);
     }
@@ -1267,6 +1265,8 @@ mod tests {
                     control_deck_visible: visible,
                 };
                 let canvas = canvas_rect(size, &layout);
+                // One status bar row at every width, down to the minimum window.
+                assert_eq!(canvas.max.y, size.y - STATUS_BAR_HEIGHT - 8.0);
                 for panel in panel_rects(size, &layout) {
                     assert!(canvas.intersect(panel).is_empty());
                 }

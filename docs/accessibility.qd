@@ -29,7 +29,7 @@ Dialogs are modal: .keybinding {Tab} stays inside the open dialog. The Help and 
 ## Screen readers
 
 - Buttons expose their action and, for toggles such as tools, patterns, **Grid**, **Cell age**, and **Palette**, whether they are selected.
-- Icon buttons are announced by name: **Play** as *Play* or *Pause*, then **Step**, **Undo**, **Redo**, and **More** for the gear menu. **Edges** is announced with the current mode.
+- Icon buttons are announced by name: **Play** as *Play* or *Pause*, then **Step**, **Undo**, **Redo**, **Grid**, **Cell age**, **Pattern palette**, **Settings**, and **Help**. **Edges** is announced with the current mode.
 - Text fields expose their name and value.
 - The speed slider exposes its value and supports increment and decrement actions.
 - Validation messages, such as a rejected board size or an import error, are announced politely when they appear.

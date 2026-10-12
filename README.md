@@ -29,12 +29,12 @@ cargo run
 The interface uses native Bevy UI throughout: playback controls, a searchable pattern
 palette, editing tools, live status, and import/settings/help/diagnostics dialogs.
 
-At 880 pixels wide and above, the toolbar uses a single 64-pixel row, grouped into
+At 900 pixels wide and above, the toolbar uses a single 64-pixel row, grouped into
 playback, board edits, and workspace controls. Narrower windows use two rows.
 Resizing preserves keyboard focus and the camera view relative to the fitted board.
-**View** groups the grid, cell age, and pattern palette toggles; the gear menu opens Settings and Help. Play / Pause, Step, Undo, and Redo are icon buttons whose tooltips give their names and shortcuts.
-The menus support arrow-key navigation, Enter/Space to activate, and Escape to close.
-Clicking the canvas dismisses an open menu without editing the board.
+The workspace group has icon toggles for the grid, cell age, and pattern palette, which show
+whether they are on, plus Import / Export, a gear for Settings, and a ? for Help, all one click
+away. Play / Pause, Step, Undo, and Redo are icon buttons too; tooltips give their names and shortcuts.
 
 The pattern library scrolls with the mouse wheel or its scrollbar; the
 stamp preview with its rotate/flip controls, and search stay visible while browsing. Scrolling
@@ -46,9 +46,9 @@ the selected pattern, its rotation and flip state, and the Z/F shortcuts, even w
 the palette hidden. The hint lets drawing and stamp clicks pass through.
 The board has its own canvas beside the palette and between the toolbar and status
 bar. Startup, board-size changes, **Fit board**, and **V** fit the entire board into that space.
-Use **− / +** next to **Fit board** to zoom; 100% means the whole-board fit.
-**Fit live cells** frames the occupied cells with a small margin, or fits the whole
-board when empty. Middle-button dragging pans without editing cells.
+The status bar's zoom stepper (**− 100% +**) zooms in steps; 100% means the whole-board
+fit, and the corner-brackets button beside it is **Fit board**. Middle-button dragging
+pans without editing cells.
 Window and layout changes retain the pan position and zoom relative to the fitted
 view. Drawing and stamp previews stay inside the canvas, including on Retina displays.
 The built-in library covers spaceships, oscillators (blinker, pulsar, pentadecathlon), the
@@ -57,18 +57,16 @@ Search patterns by name; built-in and imported patterns have separate groups. Th
 stamp preview shows the orientation that will be placed, including rotation and
 horizontal flip. Filtering the library keeps the current stamp selected.
 
-The chevrons beside the number decrease or increase speed by 1 gen/s.
-Drag sideways on the numeric speed field to scrub within 1–40 gen/s;
-hold Shift for finer adjustments. Escape during a drag restores the previous rate
-and Max setting. Click the field to enter a rate from 1–40 gen/s, including
-decimals: Enter applies it, Escape cancels, and leaving the field applies a valid
-edited value. Invalid values leave the simulation speed unchanged. Fixed speeds
-use millisecond intervals, so the field shows the closest achievable rate.
-A separate **Max** toggle runs as many generations as fit in about 8 ms per frame.
-The numeric field retains the selected fixed rate, with a small readout underneath
-showing the achieved rate while Max is running. Switching Max off restores the
-previously selected fixed rate; the field and chevrons leave Max when applied.
-**+** at 40 gen/s also selects Max, and **-** returns to 40 gen/s.
+Speed runs from 1 to 40 gen/s, and its last stop is **∞**: as many generations as fit
+in about 8 ms per frame. The chevrons beside the number decrease or increase speed by
+1 gen/s; **›** at 40 goes to ∞ and **‹** at ∞ returns to 40, like **+** and **-** on the
+keyboard. Drag sideways on the numeric speed field to scrub, past 40 to reach ∞;
+hold Shift for finer adjustments. Escape during a drag restores the previous speed.
+Click the field to enter a rate from 1–40 gen/s, including decimals, or `∞` (`max`
+and `inf` work too): Enter applies it, Escape cancels, and leaving the field applies
+a valid edited value. Invalid values leave the simulation speed unchanged. Fixed speeds
+use millisecond intervals, so the field shows the closest achievable rate. At ∞, a
+small readout under the field shows the rate actually achieved while running.
 Hover or focus buttons for shortcut hints. Empty boards show guidance
 that disappears after the first cells are placed. Search and speed field focus block
 board shortcuts; Escape returns keyboard control to the canvas.
@@ -153,10 +151,10 @@ Pattern palette:
 - Select a pattern thumbnail, then click the board to place it
 ```
 
-Board size is set in Settings: pick a preset (128², 256², 512², 1024²) or type exact dimensions, from 8 up to 2048 per side. The choice is saved between runs. Resizing the board clears undo history, because old snapshots no longer fit; resizing the window does not.
+Board size is set in Settings: pick a preset (128², 256², 512², 1024²) or type exact dimensions, from 8 up to 2048 per side. The choice is saved between runs. **Fill canvas** instead sizes the board to the canvas and keeps it matched as the window or palette changes. Resizing the board clears undo history, because old snapshots no longer fit; resizing the window does not, unless Fill canvas is on.
 
-The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools stay available independently of the pattern palette; rotate and flip controls appear in the palette for stamps. Use View → Pattern palette to show or hide the library. Grid and Cell age are available in View and Settings. Cell age, on by default, brightens newborn cells, deepens long-lived ones, and leaves fading trails where cells died; boundary mode is in Settings. The status bar shows the generation, population, and rule, plus board dimensions and boundary mode when space allows. Generation and population use fixed-width readouts with tabular digits. The footer
-stacks into two rows in narrower windows. The active rule preset is highlighted in
+The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools stay available independently of the pattern palette; rotate and flip controls appear in the palette for stamps. Use the Pattern palette toggle to show or hide the library. Grid and Cell age are available in the toolbar and Settings. Cell age, on by default, brightens newborn cells, deepens long-lived ones, and leaves fading trails where cells died; boundary mode is in Settings. The status bar shows a green Running or neutral Paused pill, the generation, the population with its change over the latest generation (for example `842 alive −12`), the rule, which opens Settings at the rulestring when clicked, and the cell under the pointer, plus board dimensions and boundary mode when space allows. Numbers use tabular digits and keep their widest size, so readouts stay close without shifting. The status
+bar stays a single row at every window size. The active rule preset is highlighted in
 Settings. Clear, randomize, undo, and redo show brief feedback, including the undo
 shortcut where applicable. Diagnostics open from Settings or F3 and start hidden.
 
@@ -219,7 +217,7 @@ x = 8, y = 4
 ## Performance notes
 
 - Board state is stored in a flat contiguous buffer for better cache locality.
-- Board size is independent of the window. Resizing the window only changes how much of the board is visible.
+- Board size is independent of the window unless Fill canvas is on. Otherwise resizing the window only changes how much of the board is visible.
 - Stepping is adaptive: sparse generations use a frontier update (changed cells plus neighbors), while dense generations fall back to a full scan.
 - The frontier path applies flipped cells in place instead of staging a full second buffer, so a sparse generation costs time proportional to the frontier rather than to the board area.
 - Cells away from every edge take a neighbour-counting fast path of plain index offsets; only edge cells pay for wrapping or clamping.

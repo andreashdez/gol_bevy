@@ -5,19 +5,19 @@ The window has four parts: the toolbar at the top, the pattern palette on the le
 
 ## Toolbar
 
-At 880 pixels wide and above, the toolbar fits in a single 64-pixel row,
+At 900 pixels wide and above, the toolbar fits in a single 64-pixel row,
 giving the canvas 48 more pixels of height. Subtle dividers separate three groups:
 
-- **Playback:** Play / Pause, Step, the speed slider, Max, and the rate readout (see [Playback and rules](simulation.qd#speed))
+- **Playback:** Play / Pause, Step, and the speed field, whose last stop past 40 gen/s is ∞, maximum speed (see [Playback and rules](simulation.qd#speed))
 - **Board edits:** Randomize, Clear, Undo, and Redo; history buttons are disabled when unavailable
-- **Workspace:** the **View** menu (Grid, Cell age, and Pattern palette), Import / Export, and the gear menu (Settings and Help)
+- **Workspace:** the **Grid**, **Cell age**, and **Pattern palette** toggles, Import / Export, **Settings** (a gear), and **Help** (a question mark). There are no menus, so every control is one click away
 
 In narrower windows, workspace controls sit on the first row, with playback and
 board edits on the second. Every control remains available, including at the
 minimum window size. Tab order follows the visible groups, and resizing retains
 the focused control, camera pan, and zoom relative to the fitted board.
 
-Play / Pause, Step, Undo, Redo, and the gear menu show icons instead of words. Play turns into a pause icon while the simulation runs. Hover over or focus a button to see its name and shortcut. Screen readers announce icon buttons by name.
+Most buttons show icons instead of words. Play turns into a pause icon while the simulation runs. The Grid, Cell age, and Pattern palette toggles have a green outline while they are on. Hover over or focus a button to see its name and shortcut. Screen readers announce icon buttons by name, and the toggles as on or off.
 
 ## Pattern palette
 
@@ -38,14 +38,15 @@ The board has its own canvas beside the palette and between the toolbar and stat
 
 | Action                         | How                                                       |
 |--------------------------------|-----------------------------------------------------------|
-| Zoom                           | Scroll over the canvas, or use **− / +** in the status bar |
+| Zoom                           | Scroll over the canvas, or use **−** and **+** beside the zoom percentage in the status bar |
 | Pan                            | Middle-button drag, or .keybinding {W} .keybinding {A} .keybinding {S} .keybinding {D} or the arrow keys |
-| Fit the whole board            | .keybinding {V} or **Fit board** in the status bar        |
-| Fit the occupied area          | **Fit live cells** in the status bar                     |
+| Fit the whole board            | .keybinding {V}, or **Fit board** (the corner brackets) in the status bar |
+
+The canvas leaves only a thin gap around the board, and a fitted board leaves only 1% of the canvas free on each side in the direction it fills, just enough to keep the fixed-edge walls visible. To get rid of the remaining border on the other axis, turn on [Fill canvas](settings.qd#fill-canvas).
 
 The board is fitted into the canvas on startup, after a board size change, and when you press .keybinding {V} or click **Fit board**. When the window size changes or the palette is shown or hidden, the view keeps its pan position and its zoom relative to the fitted view.
 
-The zoom percentage is relative to **Fit board** (100%). **Fit live cells** adds a small margin around the occupied area and falls back to the whole board when empty. Middle-button panning must start on the canvas and stops when the pointer enters a control or leaves the window.
+The zoom percentage is relative to **Fit board** (100%). Middle-button panning must start on the canvas and stops when the pointer enters a control or leaves the window.
 
 An empty board shows a short hint, which disappears once you place the first cells.
 
@@ -63,17 +64,25 @@ With **Cell age** on, which is the default, the board shows how cells change:
 - A cell that has stayed alive for a long time darkens to a deeper shade, so still lifes stand out from busy regions.
 - A cell that just died leaves a faint trail that fades over about a dozen generations, so you can see where gliders and other spaceships have been.
 
-Cells you draw, stamp, or restore with undo show the plain live colour, and erased cells leave no trail. Switch it off in the **View** menu or in [Settings](settings.qd#view-and-edges) to see plain live and dead cells.
+Cells you draw, stamp, or restore with undo show the plain live colour, and erased cells leave no trail. Switch it off with the **Cell age** toggle in the toolbar, or in [Settings](settings.qd#view-and-edges), to see plain live and dead cells.
 
 ## Status bar
 
 The status bar reads, for example:
 
 ```text
-RUNNING   ·   Gen 1520   ·   842 alive   ·   B3/S23
+Running   Gen 1520   842 alive −12   B3/S23   (40, 29)
 ```
 
-That is: whether playback is running or paused, the generation counter, the number of living cells, and the rule. Generation and population occupy fixed-width fields with tabular digits, so changing numbers do not move nearby controls. In wider windows, the status bar also shows the board size and edge mode. The navigation controls sit alongside the readouts, or on a second row in narrower windows.
+From left to right:
+
+- **Running** or **Paused**, in a pill that turns green while the simulation runs.
+- The generation counter.
+- The number of living cells, and how the latest generation changed it: `+12`, `−12`, or `±0` for a stable population. The change disappears after an edit, undo, or counter reset, since it no longer describes the board.
+- The rule. Click it to open [Settings](settings.qd#rule) with the rulestring ready to edit.
+- The cell under the pointer, as `(x, y)` counted from the top-left cell `(0, 0)`, while the pointer is over the board.
+
+From 1400 pixels wide, the status bar also shows the board size and edge mode. Numbers use tabular digits and keep the widest size they have reached, so the readouts stay close together without shifting as digits change. The zoom controls sit at the right end. The status bar is a single 48-pixel row at every window size.
 
 Clear, randomize, undo, and redo briefly show feedback above the status bar. Undoable actions include the **U** shortcut. These notices do not intercept drawing or panning.
 
@@ -82,7 +91,7 @@ Clear, randomize, undo, and redo briefly show feedback above the status bar. Und
 | Dialog              | Opens with                               | Contains                                                       |
 |---------------------|------------------------------------------|----------------------------------------------------------------|
 | **Import / Export** | the **Import / Export** button           | RLE import, and copying the board as RLE                       |
-| **Settings**        | the **Settings** button                  | board size, rule, theme, grid, edges, diagnostics, generation reset |
+| **Settings**        | the **Settings** button, or the rule in the status bar | board size, rule, theme, grid, cell age, edges, diagnostics, generation reset |
 | **Help**            | .keybinding {/} or the **Help** button   | a summary and the full list of shortcuts                       |
 | **Diagnostics**     | .keybinding {F3} or **Settings**         | live simulation statistics                                     |
 
@@ -94,7 +103,7 @@ The diagnostics dialog shows live statistics while playback continues:
 
 - board size, generation, living cells, and rule
 - average step time, as a moving average
-- tick interval, or *max speed*
+- tick interval, or *max speed* (∞)
 - measured rate, in generations per second
 - the number of timed steps
 - the dense fallback threshold (see [Simulation engine](engine.qd#frontier-and-dense-stepping))

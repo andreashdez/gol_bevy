@@ -111,6 +111,8 @@ pub struct App {
     redo_history: VecDeque<EditSnapshot>,
     stroke_active: bool,
     stroke_saved: bool,
+    /// The latest generation, with the live cells before and after it.
+    last_step: Option<(usize, usize, usize)>,
 
     pub board: board::Board,
 }
@@ -139,6 +141,7 @@ impl App {
             redo_history: VecDeque::new(),
             stroke_active: false,
             stroke_saved: false,
+            last_step: None,
             board,
         }
     }
@@ -257,9 +260,19 @@ impl App {
     pub fn increment_epoch(&mut self) {
         if let Some(res) = self.epoch.checked_add(1) {
             self.epoch = res;
+            let before = self.board.live_cells_count();
             self.board.step();
+            self.last_step = Some((res, before, self.board.live_cells_count()));
             self.needs_redraw = true;
         }
+    }
+
+    /// How the latest generation changed the live cell count. `None` once an
+    /// edit, undo, or counter reset means it no longer describes the board.
+    pub fn population_change(&self) -> Option<isize> {
+        let (epoch, before, after) = self.last_step?;
+        (epoch == self.epoch && after == self.board.live_cells_count())
+            .then(|| after as isize - before as isize)
     }
 
     pub fn reset_epoch(&mut self) {
@@ -937,6 +950,24 @@ mod tests {
         assert!(app.set_tick_rate_ms(25));
         assert!(!app.is_max_speed());
         assert!(!app.set_tick_rate_ms(25));
+    }
+
+    #[test]
+    fn population_change_describes_the_latest_generation_until_an_edit() {
+        let mut app = App::new(8, 8);
+        assert_eq!(app.population_change(), None);
+        // A blinker keeps its three cells; a lone cell dies.
+        for col in 1..=3 {
+            app.populate_board(col, 4);
+        }
+        app.increment_epoch();
+        assert_eq!(app.population_change(), Some(0));
+        app.populate_board(6, 6);
+        assert_eq!(app.population_change(), None, "an edit is not a generation");
+        app.increment_epoch();
+        assert_eq!(app.population_change(), Some(-1));
+        app.reset_epoch();
+        assert_eq!(app.population_change(), None);
     }
 
     #[test]

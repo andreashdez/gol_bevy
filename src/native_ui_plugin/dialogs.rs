@@ -51,6 +51,8 @@ struct Drafts {
     feedback: String,
     error: bool,
     return_focus: Option<Entity>,
+    /// Settings opened from the status bar's rule, so the rulestring gets focus.
+    rule_first: bool,
 }
 
 impl Default for Drafts {
@@ -64,6 +66,7 @@ impl Default for Drafts {
             feedback: String::new(),
             error: false,
             return_focus: None,
+            rule_first: false,
         }
     }
 }
@@ -144,8 +147,6 @@ fn close(state: &mut DialogState) {
 fn dialog_action(
     event: On<Activate>,
     actions: Query<&Action>,
-    parents: Query<&ChildOf>,
-    menus: Query<&super::menus::WorkspacePopup>,
     mut state: DialogState,
     mut fields: Query<(&Field, &mut EditableText)>,
 ) {
@@ -156,22 +157,22 @@ fn dialog_action(
     if state.mode.dialog.is_none()
         && matches!(
             action,
-            Action::Import | Action::Settings | Action::Help | Action::Diagnostics
+            Action::Import
+                | Action::Settings
+                | Action::EditRule
+                | Action::Help
+                | Action::Diagnostics
         )
     {
-        state.drafts.return_focus = Some(
-            parents
-                .iter_ancestors(event.entity)
-                .find_map(|ancestor| menus.get(ancestor).ok().map(|popup| popup.0))
-                .unwrap_or(event.entity),
-        );
+        state.drafts.return_focus = Some(event.entity);
     }
     match action {
         Action::Import => {
             state.mode.dialog = Some(DialogKind::Import);
             state.drafts.feedback.clear();
         }
-        Action::Settings => {
+        Action::Settings | Action::EditRule => {
+            state.drafts.rule_first = *action == Action::EditRule;
             let (width, height) = state.sim.app.board.size();
             state.drafts.width = width.to_string();
             state.drafts.height = height.to_string();
@@ -223,13 +224,27 @@ fn dialog_action(
             }
             state.drafts.feedback.clear();
         }
+        Action::FillCanvas => {
+            state.board.fill_canvas = !state.board.fill_canvas;
+            state.drafts.error = false;
+            state.drafts.feedback = if state.board.fill_canvas {
+                "The board now fills the canvas, and resizes with the window and palette.".into()
+            } else {
+                "The board keeps its current size from now on.".into()
+            };
+        }
         Action::ResizeBoard => match parse_size(&state.drafts.width, &state.drafts.height) {
             Ok((width, height)) => {
+                // An explicit size replaces the canvas-matched one.
+                let was_filling = std::mem::take(&mut state.board.fill_canvas);
                 state.board.set(width, height);
                 state.drafts.error = false;
                 state.drafts.feedback = format!(
                     "Board size set to {width} × {height}. Your choice is saved automatically."
                 );
+                if was_filling {
+                    state.drafts.feedback.push_str(" Fill canvas is now off.");
+                }
             }
             Err(error) => {
                 state.drafts.error = true;
@@ -404,6 +419,7 @@ fn field(
     value: &str,
     field: Field,
     multiline: bool,
+    autofocus: bool,
 ) {
     parent.spawn(label(title, 13.0, Token::Muted));
     let mut input = EditableText::new(value);
@@ -436,7 +452,7 @@ fn field(
     if !multiline {
         entity.insert(SelectAllOnFocus);
     }
-    if matches!(field, Field::Name | Field::Width) {
+    if autofocus {
         entity.insert(AutoFocus);
     }
 }
@@ -464,8 +480,8 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                 match kind {
                     DialogKind::Import => {
                         p.spawn(label("Paste RLE to add a stamp to your palette. A rule in the header also updates the board rule.", 14.0, Token::Muted));
-                        field(p, "Pattern name", &drafts.name, Field::Name, false);
-                        field(p, "RLE source", &drafts.source, Field::Source, true);
+                        field(p, "Pattern name", &drafts.name, Field::Name, false, true);
+                        field(p, "RLE source", &drafts.source, Field::Source, true, false);
                         button(p, "Import and select", Action::ImportSubmit);
                         p.spawn(label("Export", 19.0, Token::Ink));
                         p.spawn(label("Copy the live cells, cropped to their bounding box, as RLE with the board rule.", 14.0, Token::Muted));
@@ -473,14 +489,15 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                     }
                     DialogKind::Settings => {
                         p.spawn(label("Board dimensions", 19.0, Token::Ink));
-                        p.spawn(label("Resizing preserves cells that fit and clears undo history. Window resizing leaves the board size unchanged.", 14.0, Token::Muted));
+                        p.spawn(label("Resizing preserves cells that fit and clears undo history. Window resizing leaves the board size unchanged, unless Fill canvas is on.", 14.0, Token::Muted));
                         p.spawn(row()).with_children(|p| {
                             for (size, _) in BOARD_SIZE_PRESETS { button(p, &format!("{size}²"), Action::BoardPreset(size)); }
+                            button(p, "Fill canvas", Action::FillCanvas);
                         });
                         p.spawn(Node { column_gap: px(12), flex_shrink: 0.0, ..default() }).with_children(|p| {
                             for (title, value, kind) in [("Width (cells)", &drafts.width, Field::Width), ("Height (cells)", &drafts.height, Field::Height)] {
                                 p.spawn(Node { flex_direction: FlexDirection::Column, row_gap: px(12), flex_grow: 1.0, flex_basis: px(0), min_width: px(0), ..default() })
-                                    .with_children(|p| field(p, title, value, kind, false));
+                                    .with_children(|p| field(p, title, value, kind, false, matches!(kind, Field::Width) && !drafts.rule_first));
                             }
                         });
                         button(p, "Apply board size", Action::ResizeBoard);
@@ -489,7 +506,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         p.spawn(row()).with_children(|p| {
                             for (index, (name, _)) in RULE_PRESETS.iter().enumerate() { button(p, name, Action::RulePreset(index)); }
                         });
-                        field(p, "Rulestring", &drafts.rule, Field::Rule, false);
+                        field(p, "Rulestring", &drafts.rule, Field::Rule, false, drafts.rule_first);
                         button(p, "Apply rule", Action::ApplyRule);
                         p.spawn(label("Theme", 19.0, Token::Ink));
                         p.spawn(label("Colours of the board, the pattern library, and the interface.", 14.0, Token::Muted));
@@ -535,7 +552,11 @@ mod tests {
         world.insert_resource(Drafts::default());
         world.init_resource::<crate::ui_input::UiInputCapture>();
         world.insert_resource(Simulation::new(GolApp::new(32, 32)));
-        world.insert_resource(BoardSettings { cols: 32, rows: 32 });
+        world.insert_resource(BoardSettings {
+            cols: 32,
+            rows: 32,
+            fill_canvas: false,
+        });
         world.insert_resource(DiagnosticsOverlay { enabled: false });
         world.insert_resource(InputFocus::default());
         world.insert_resource(ButtonInput::<KeyCode>::default());
@@ -562,18 +583,46 @@ mod tests {
     }
 
     #[test]
-    fn a_dialog_opened_from_more_returns_focus_to_the_menu_button() {
+    fn the_status_bar_rule_opens_settings_with_the_rulestring_first() {
         let mut world = test_world(DialogKind::Settings);
         world.resource_mut::<NativeUi>().dialog = None;
-        let owner = world.spawn(Action::MoreMenu).id();
-        let popup = world
-            .spawn((super::super::menus::WorkspacePopup(owner), ChildOf(owner)))
-            .id();
-        let item = world.spawn((Action::Settings, ChildOf(popup))).id();
-        world.trigger(Activate { entity: item });
-        let close = world.spawn(Action::CloseDialog).id();
-        world.trigger(Activate { entity: close });
-        assert_eq!(world.resource::<InputFocus>().get(), Some(owner));
+        let rule = world.spawn(Action::EditRule).id();
+        world.trigger(Activate { entity: rule });
+        assert_eq!(
+            world.resource::<NativeUi>().dialog,
+            Some(DialogKind::Settings)
+        );
+        assert!(world.resource::<Drafts>().rule_first);
+        assert_eq!(world.resource::<Drafts>().return_focus, Some(rule));
+        // The gear opens the same dialog at the top.
+        world.resource_mut::<NativeUi>().dialog = None;
+        let gear = world.spawn(Action::Settings).id();
+        world.trigger(Activate { entity: gear });
+        assert!(!world.resource::<Drafts>().rule_first);
+    }
+
+    #[test]
+    fn fill_canvas_toggles_and_an_explicit_size_switches_it_off() {
+        let mut world = test_world(DialogKind::Settings);
+        let fill = world.spawn(Action::FillCanvas).id();
+        world.trigger(Activate { entity: fill });
+        assert!(world.resource::<BoardSettings>().fill_canvas);
+        world.trigger(Activate { entity: fill });
+        assert!(!world.resource::<BoardSettings>().fill_canvas);
+
+        world.trigger(Activate { entity: fill });
+        world.spawn((Field::Width, EditableText::new("64")));
+        world.spawn((Field::Height, EditableText::new("48")));
+        let apply = world.spawn(Action::ResizeBoard).id();
+        world.trigger(Activate { entity: apply });
+        let board = *world.resource::<BoardSettings>();
+        assert_eq!((board.cols, board.rows, board.fill_canvas), (64, 48, false));
+        assert!(
+            world
+                .resource::<Drafts>()
+                .feedback
+                .contains("Fill canvas is now off")
+        );
     }
 
     #[test]

@@ -15,16 +15,16 @@ Resetting the generation counter leaves the cells as they are.
 
 ## Speed
 
-Speed is shown in generations per second (gen/s) on the toolbar slider. It ranges from 1 to 40 gen/s.
+Speed is shown in generations per second (gen/s) in the toolbar's speed field. It ranges from 1 to 40 gen/s, and one step past 40 is **∞**, maximum speed.
 
-- Drag the slider, or focus it and use .keybinding {Left} and .keybinding {Right}. .keybinding {Home} and .keybinding {End} jump to the limits.
-- Press .keybinding {plus} to speed up and .keybinding {minus} to slow down while the board has keyboard focus. Each press changes the time between generations by 25 ms.
+- Click **‹** or **›** beside the field to change the speed by 1 gen/s. **›** at 40 gen/s goes to ∞, and **‹** at ∞ returns to 40.
+- Drag sideways on the field to scrub through the speeds; hold .keybinding {Shift} for finer control. Dragging past 40 reaches ∞. .keybinding {Esc} during a drag restores the previous speed.
+- Click the field to type a speed from 1 to 40, decimals included, or `∞`. Since ∞ is hard to type, `max` and `inf` work too. .keybinding {Enter} applies it, and .keybinding {Esc} cancels.
+- Press .keybinding {plus} to speed up and .keybinding {minus} to slow down while the board has keyboard focus. Each press changes the time between generations by 25 ms. .keybinding {plus} at 40 gen/s also goes to ∞, and .keybinding {minus} at ∞ returns to 40.
 
 ### Max speed
 
-Click the separate **Max** toggle beside the slider to enable maximum speed. Switch it off to return to your previous fixed rate; adjusting the slider also leaves Max. The slider always stays within 1–40 gen/s. At Max, each frame runs as many generations as fit in about 8 ms, up to 1024, and leaves the rest of the frame for drawing and input. The adjacent readout shows the rate actually achieved while running, which depends on the board size and how busy it is.
-
-Pressing .keybinding {plus} at 40 gen/s also selects Max, and .keybinding {minus} from Max returns to 40 gen/s.
+At ∞, each frame runs as many generations as fit in about 8 ms, up to 1024, and leaves the rest of the frame for drawing and input. A readout under the field shows the rate actually achieved while running, which depends on the board size and how busy it is.
 
 ### Catching up after a stall
 

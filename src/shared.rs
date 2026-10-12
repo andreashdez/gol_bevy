@@ -493,10 +493,12 @@ pub const BOARD_SIZE_PRESETS: [(usize, usize); 4] =
 
 /// Board dimensions, held independently of the window. Resizing the window only
 /// changes how much of the board is visible; only a change here resizes the board.
+/// With `fill_canvas`, the canvas view keeps the size matched to the canvas instead.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub struct BoardSettings {
     pub cols: usize,
     pub rows: usize,
+    pub fill_canvas: bool,
 }
 
 impl BoardSettings {
@@ -518,13 +520,23 @@ pub enum StartupSet {
     BuildWorld,
 }
 
+/// How much more than the board a fitted view shows: just enough to keep the
+/// fixed-edge walls, which sit outside the board, on screen.
+const FIT_MARGIN: f32 = 1.02;
+
 /// Orthographic scale that frames the whole board in the available canvas, with a margin.
 pub fn camera_scale_to_fit_board(size: Vec2, cols: usize, rows: usize) -> f32 {
     let board_width = cols as f32 * CELL_SIZE;
     let board_height = rows as f32 * CELL_SIZE;
     let horizontal = board_width / size.x.max(1.0);
     let vertical = board_height / size.y.max(1.0);
-    (horizontal.max(vertical) * 1.05).clamp(CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+    (horizontal.max(vertical) * FIT_MARGIN).clamp(CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+}
+
+/// The largest board that fits a canvas of `size` at 100%, the fitted zoom.
+pub fn board_size_for_canvas(size: Vec2) -> (usize, usize) {
+    let cells = (size / (CELL_SIZE * FIT_MARGIN)).floor();
+    (cells.x.max(1.0) as usize, cells.y.max(1.0) as usize)
 }
 
 #[derive(Component)]

@@ -92,7 +92,7 @@ Keyboard shortcuts and mouse editing run later, in the `Input` set of `PostUpdat
 | Resource                            | Holds                                                         |
 |-------------------------------------|---------------------------------------------------------------|
 | `Simulation`                        | The `App`, the step timer, average step time, and measured rate |
-| `BoardSettings`                     | The chosen board size, independent of the window              |
+| `BoardSettings`                     | The chosen board size, or that it should fill the canvas      |
 | `UiLayout`                          | Whether the palette is shown                                  |
 | `RedrawRequested`                   | Whether this frame needs a redraw                             |
 | `DiagnosticsOverlay`, `GridOverlay` | Whether diagnostics and the grid are on                       |

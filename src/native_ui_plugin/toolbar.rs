@@ -1,11 +1,11 @@
 //! One row when there is room; the same controls reflow without losing focus.
 use super::*;
 
-pub(super) const SINGLE_ROW_MIN_WIDTH: f32 = 880.0;
+pub(super) const SINGLE_ROW_MIN_WIDTH: f32 = 900.0;
 
 /// Column budgets for the playback and board edit groups, with a little slack.
-/// Icon buttons keep both narrow enough for one row from 880 px.
-const PLAYBACK_WIDTH: f32 = 280.0;
+/// With the workspace controls, one row needs 900 px.
+const PLAYBACK_WIDTH: f32 = 232.0;
 const EDITING_WIDTH: f32 = 252.0;
 
 pub(super) fn height(width: f32) -> f32 {
@@ -21,7 +21,6 @@ pub(super) struct Toolbar;
 
 #[derive(Component, Clone, Copy)]
 pub(super) enum Group {
-    Brand,
     Playback,
     Editing,
     Workspace,
@@ -32,6 +31,11 @@ pub(super) struct ToolbarButton;
 
 pub(super) fn button(parent: &mut ChildSpawnerCommands, text: &str, action: Action) {
     let entity = super::button(parent, text, action);
+    parent.commands().entity(entity).insert(ToolbarButton);
+}
+
+fn icon_button(parent: &mut ChildSpawnerCommands, name: &str, icon: Icon, action: Action) {
+    let entity = super::icon_button(parent, name, icon, action);
     parent.commands().entity(entity).insert(ToolbarButton);
 }
 
@@ -59,9 +63,6 @@ pub(super) fn spawn(commands: &mut Commands) {
             GlobalZIndex(10),
         ))
         .with_children(|p| {
-            p.spawn((Group::Brand, row())).with_children(|p| {
-                p.spawn(label("LIFE", 21.0, Token::Accent));
-            });
             for (group, name) in [
                 (Group::Playback, "Playback"),
                 (Group::Editing, "Board edits"),
@@ -81,23 +82,25 @@ pub(super) fn spawn(commands: &mut Commands) {
                 ))
                 .with_children(|p| match group {
                     Group::Playback => {
-                        button(p, "Play", Action::Play);
-                        button(p, "Step", Action::Step);
-                        button(p, "Max", Action::MaxSpeed);
+                        icon_button(p, "Play", Icon::Play, Action::Play);
+                        icon_button(p, "Step", Icon::Step, Action::Step);
                         speed::spawn(p);
                     }
                     Group::Editing => {
                         button(p, "Randomize", Action::Randomize);
                         button(p, "Clear", Action::Clear);
-                        button(p, "Undo", Action::Undo);
-                        button(p, "Redo", Action::Redo);
+                        icon_button(p, "Undo", Icon::Undo, Action::Undo);
+                        icon_button(p, "Redo", Icon::Redo, Action::Redo);
                     }
+                    // View toggles show their state; every workspace control is one click.
                     Group::Workspace => {
-                        menus::spawn(p, "View", Action::ViewMenu);
+                        icon_button(p, "Grid", Icon::Grid, Action::Grid);
+                        icon_button(p, "Cell age", Icon::CellAge, Action::CellAge);
+                        icon_button(p, "Pattern palette", Icon::Palette, Action::Sidebar);
                         button(p, "Import / Export", Action::Import);
-                        menus::spawn(p, "More", Action::MoreMenu);
+                        icon_button(p, "Settings", Icon::Gear, Action::Settings);
+                        icon_button(p, "Help", Icon::Help, Action::Help);
                     }
-                    Group::Brand => unreachable!(),
                 });
             }
         });
@@ -136,17 +139,12 @@ pub(super) fn sync_layout(
             let columns = if single {
                 // Explicit group budgets leave space for all toolbar controls.
                 vec![
-                    GridTrack::px(44.0),
                     GridTrack::px(PLAYBACK_WIDTH),
                     GridTrack::px(EDITING_WIDTH),
                     GridTrack::flex(1.0),
                 ]
             } else {
-                vec![
-                    GridTrack::px(44.0),
-                    GridTrack::flex(1.0),
-                    GridTrack::px(EDITING_WIDTH),
-                ]
+                vec![GridTrack::flex(1.0), GridTrack::px(EDITING_WIDTH)]
             };
             let rows = vec![GridTrack::flex(1.0); if single { 1 } else { 2 }];
             if node.grid_template_columns != columns {
@@ -158,14 +156,12 @@ pub(super) fn sync_layout(
         }
         if let Some(group) = group {
             let (column, span, row, order) = match (single, group) {
-                (true, Group::Brand) => (1, 1, 1, 0),
-                (true, Group::Playback) => (2, 1, 1, -3),
-                (true, Group::Editing) => (3, 1, 1, -2),
-                (true, Group::Workspace) => (4, 1, 1, -1),
-                (false, Group::Brand) => (1, 1, 1, 0),
-                (false, Group::Workspace) => (2, 2, 1, -3),
-                (false, Group::Playback) => (1, 2, 2, -2),
-                (false, Group::Editing) => (3, 1, 2, -1),
+                (true, Group::Playback) => (1, 1, 1, -3),
+                (true, Group::Editing) => (2, 1, 1, -2),
+                (true, Group::Workspace) => (3, 1, 1, -1),
+                (false, Group::Workspace) => (1, 2, 1, -3),
+                (false, Group::Playback) => (1, 1, 2, -2),
+                (false, Group::Editing) => (2, 1, 2, -1),
             };
             node.grid_column = GridPlacement::start_span(column, span);
             node.grid_row = GridPlacement::start(row);

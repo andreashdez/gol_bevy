@@ -1,10 +1,9 @@
 //! The board camera occupies the workspace while UI keeps a full-window camera.
 use crate::{
-    board::Board,
     native_ui_plugin::canvas_rect,
     shared::{
         BoardSettings, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, MainCamera, UiLayout, UpdateSet,
-        camera_scale_to_fit_board, cell_to_world,
+        board_size_for_canvas, camera_scale_to_fit_board,
     },
 };
 use bevy::{camera::Viewport, prelude::*, window::PrimaryWindow};
@@ -22,31 +21,6 @@ impl CanvasView {
         transform.translation.y = 0.0;
         if let Projection::Orthographic(ortho) = projection {
             ortho.scale = self.fit_scale;
-        }
-    }
-
-    /// Fit the occupied rectangle, including a two-cell margin for small patterns.
-    /// Empty boards fall back to the whole board.
-    pub fn fit_live_cells(
-        &self,
-        board: &Board,
-        canvas_size: Vec2,
-        transform: &mut Transform,
-        projection: &mut Projection,
-    ) {
-        let Some((min, max)) = board.live_bounds() else {
-            self.fit_camera(transform, projection);
-            return;
-        };
-        let (cols, rows) = board.size();
-        let centre = (cell_to_world(min.0, min.1, cols, rows)
-            + cell_to_world(max.0, max.1, cols, rows))
-            / 2.0;
-        transform.translation.x = centre.x;
-        transform.translation.y = centre.y;
-        if let Projection::Orthographic(ortho) = projection {
-            ortho.scale =
-                camera_scale_to_fit_board(canvas_size, max.0 - min.0 + 5, max.1 - min.1 + 5);
         }
     }
 }
@@ -83,7 +57,7 @@ fn physical_viewport(rect: Rect, scale: f32, target: UVec2) -> Viewport {
 fn update_viewport(
     windows: Query<&Window, With<PrimaryWindow>>,
     layout: Res<UiLayout>,
-    settings: Res<BoardSettings>,
+    mut settings: ResMut<BoardSettings>,
     mut view: ResMut<CanvasView>,
     mut cameras: Query<(&mut Camera, &mut Projection, &mut Transform), With<MainCamera>>,
 ) {
@@ -112,6 +86,13 @@ fn update_viewport(
     let size = camera.viewport.as_ref().map_or(window.size(), |v| {
         v.physical_size.as_vec2() / window.scale_factor()
     });
+    if settings.fill_canvas {
+        let (cols, rows) = board_size_for_canvas(size);
+        if (settings.cols, settings.rows) != (cols, rows) {
+            // Resized here, before the camera fits, so both change in one frame.
+            settings.set(cols, rows);
+        }
+    }
     let board = (settings.cols, settings.rows);
     let fit = camera_scale_to_fit_board(size, board.0, board.1);
     if let Projection::Orthographic(ortho) = &mut *projection {
@@ -150,39 +131,6 @@ mod tests {
         camera::{CameraProjection, ComputedCameraValues, RenderTargetInfo},
         ecs::system::RunSystemOnce,
     };
-
-    #[test]
-    fn live_fit_centres_off_axis_patterns_and_empty_boards_reset_the_view() {
-        let mut board = Board::new(100, 80);
-        let view = CanvasView {
-            fit_scale: 3.0,
-            ..default()
-        };
-        let size = Vec2::new(800.0, 400.0);
-        let mut transform = Transform::from_xyz(0.0, 0.0, 10.0);
-        let mut projection = Projection::Orthographic(OrthographicProjection::default_2d());
-        board.populate(5, 60);
-        board.populate(15, 70);
-        view.fit_live_cells(&board, size, &mut transform, &mut projection);
-        assert_eq!(
-            transform.translation,
-            cell_to_world(10, 65, 100, 80) + Vec3::Z * 10.0
-        );
-        let Projection::Orthographic(ortho) = &projection else {
-            panic!()
-        };
-        // Eleven occupied cells plus four margin cells fit in both directions.
-        assert!(ortho.scale * size.min_element() >= 15.0 * crate::shared::CELL_SIZE);
-        assert!(ortho.scale < view.fit_scale);
-
-        board.clear();
-        view.fit_live_cells(&board, size, &mut transform, &mut projection);
-        assert_eq!(transform.translation, Vec3::new(0.0, 0.0, 10.0));
-        let Projection::Orthographic(ortho) = &projection else {
-            panic!()
-        };
-        assert_eq!(ortho.scale, view.fit_scale);
-    }
 
     #[test]
     fn the_largest_board_fits_at_the_minimum_window_size_with_or_without_the_palette() {
@@ -227,6 +175,7 @@ mod tests {
         world.insert_resource(BoardSettings {
             cols: 128,
             rows: 128,
+            fill_canvas: false,
         });
         world.init_resource::<CanvasView>();
         let window = world.spawn((Window::default(), PrimaryWindow)).id();
@@ -257,6 +206,55 @@ mod tests {
         };
         assert_eq!(o.scale, world.resource::<CanvasView>().fit_scale);
         assert_eq!(world.get::<Transform>(camera).unwrap().translation.x, 0.0);
+    }
+
+    #[test]
+    fn fill_canvas_sizes_the_board_to_the_canvas_at_100_percent_and_follows_it() {
+        use crate::shared::CELL_SIZE;
+        let mut world = World::new();
+        world.insert_resource(UiLayout::default());
+        world.insert_resource(BoardSettings {
+            cols: 64,
+            rows: 64,
+            fill_canvas: true,
+        });
+        world.init_resource::<CanvasView>();
+        let window = world.spawn((Window::default(), PrimaryWindow)).id();
+        world.spawn((Camera2d, MainCamera));
+        let check = |world: &mut World| {
+            world.run_system_once(update_viewport).unwrap();
+            let size = canvas_rect(
+                world.get::<Window>(window).unwrap().size(),
+                &UiLayout::default(),
+            )
+            .size();
+            let settings = *world.resource::<BoardSettings>();
+            assert_eq!((settings.cols, settings.rows), board_size_for_canvas(size));
+            // Fit lands at 100%, leaving less than a cell of gutter on the snug axis.
+            let fit = world.resource::<CanvasView>().fit_scale;
+            assert!(
+                fit <= 1.0 && fit > 1.0 - 1.1 * CELL_SIZE / size.min_element(),
+                "{fit}"
+            );
+        };
+        check(&mut world);
+        world
+            .get_mut::<Window>(window)
+            .unwrap()
+            .resolution
+            .set(1000.0, 650.0);
+        check(&mut world);
+
+        // Switched off, the board keeps its size whatever the window does.
+        world.resource_mut::<BoardSettings>().fill_canvas = false;
+        let before = *world.resource::<BoardSettings>();
+        world
+            .get_mut::<Window>(window)
+            .unwrap()
+            .resolution
+            .set(1400.0, 900.0);
+        world.run_system_once(update_viewport).unwrap();
+        assert!(*world.resource::<BoardSettings>() == before);
     }
 
     #[test]

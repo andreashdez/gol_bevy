@@ -1,7 +1,7 @@
 .docname {Settings}
 .include {docs}
 
-Open the **Settings** dialog from the gear menu at the right end of the toolbar.
+Open the **Settings** dialog with the gear button near the right end of the toolbar.
 
 ## Board size
 
@@ -10,6 +10,14 @@ Pick a preset (128², 256², 512², or 1024²), or type a **Width** and **Height
 Resizing keeps the cells that fit in the new size, fits the board into view, and clears the [undo history](editing.qd#history-limits).
 
 The board size is independent of the window. Resizing the window only changes how much of the board you can see.
+
+### Fill canvas
+
+Click **Fill canvas** to size the board to the canvas, so **Fit board** shows it edge to edge at 100% with no empty border. While it is on, the board follows the canvas: resizing the window, or showing or hiding the palette, resizes the board too.
+
+> Warning: Like any resize, a canvas change keeps only the cells that fit and clears the undo history. Shrinking the window, or showing the palette, removes cells beyond the new right and top edges.
+
+Click **Fill canvas** again to keep the current size from then on. Applying a size or preset also switches it off.
 
 ## Rule
 
@@ -35,6 +43,7 @@ These settings are saved whenever they change, and restored on the next launch:
 |----------------|--------------------------------------|
 | Palette shown  | `palette`                            |
 | Board size     | `board_cols`, `board_rows`           |
+| Fill canvas    | `fill_canvas`                        |
 | Grid           | `grid`                               |
 | Cell age       | `cell_age`                           |
 | Theme          | `theme`                              |
@@ -62,6 +71,7 @@ A typical file:
 palette = true
 board_cols = 256
 board_rows = 256
+fill_canvas = false
 grid = false
 cell_age = true
 theme = "dark"
@@ -75,6 +85,7 @@ max_speed = false
 |-----------------|-----------------------------------------------------------|
 | `palette`       | `true` or `false`                                         |
 | `board_cols`, `board_rows` | Whole numbers, clamped to 8–2048. Both must be present |
+| `fill_canvas`   | `true` or `false`; with `true`, the saved size is replaced by the canvas's at startup |
 | `grid`          | `true` or `false`                                         |
 | `cell_age`      | `true` or `false`; `true` if missing                      |
 | `theme`         | `"dark"`, `"light"`, or `"high-contrast"`                 |

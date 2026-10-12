@@ -34,6 +34,7 @@ struct SettingsPersistence {
 struct PersistedSettings {
     palette: bool,
     board: (usize, usize),
+    fill_canvas: bool,
     simulation: SimulationSettings,
     grid: bool,
     cell_age: bool,
@@ -81,6 +82,7 @@ impl SimulationSettings {
 struct ParsedSettings {
     palette: Option<bool>,
     board: Option<(usize, usize)>,
+    fill_canvas: Option<bool>,
     simulation: SimulationSettings,
     grid: Option<bool>,
     cell_age: Option<bool>,
@@ -152,6 +154,9 @@ fn load_settings(
             if let Some((cols, rows)) = settings.board {
                 board_settings.set(cols, rows);
             }
+            if let Some(fill) = settings.fill_canvas {
+                board_settings.fill_canvas = fill;
+            }
             if let Some(enabled) = settings.grid {
                 grid.enabled = enabled;
             }
@@ -195,6 +200,7 @@ fn persist_settings(
     let current = PersistedSettings {
         palette: ui_layout.control_deck_visible,
         board: (board_settings.cols, board_settings.rows),
+        fill_canvas: board_settings.fill_canvas,
         simulation: SimulationSettings::of(&sim),
         grid: grid.enabled,
         cell_age: cell_age.enabled,
@@ -217,10 +223,11 @@ fn persist_settings(
 
     let simulation = current.simulation;
     let mut contents = format!(
-        "palette = {}\nboard_cols = {}\nboard_rows = {}\ngrid = {}\ncell_age = {}\ntheme = \"{}\"\n",
+        "palette = {}\nboard_cols = {}\nboard_rows = {}\nfill_canvas = {}\ngrid = {}\ncell_age = {}\ntheme = \"{}\"\n",
         current.palette,
         current.board.0,
         current.board.1,
+        current.fill_canvas,
         current.grid,
         current.cell_age,
         theme_storage_str(current.theme),
@@ -281,6 +288,7 @@ fn parse_settings_from_toml(contents: &str) -> ParsedSettings {
             }
             "board_cols" => cols = value.parse::<usize>().ok(),
             "board_rows" => rows = value.parse::<usize>().ok(),
+            "fill_canvas" => parsed.fill_canvas = value.parse::<bool>().ok(),
             "grid" => parsed.grid = value.parse::<bool>().ok(),
             "cell_age" => parsed.cell_age = value.parse::<bool>().ok(),
             "theme" => parsed.theme = theme_from_storage_str(value),
@@ -433,6 +441,7 @@ mod persistence_tests {
         );
         assert!(!layout.control_deck_visible);
         assert_eq!((board.cols, board.rows), (512, 256));
+        assert!(!board.fill_canvas);
         assert_eq!(legacy, SimulationSettings::default());
         assert!(!grid.enabled);
         assert!(cell_age.enabled);
@@ -447,6 +456,7 @@ mod persistence_tests {
         let mut world = World::new();
         layout.control_deck_visible = true;
         board.set(128, 64);
+        board.fill_canvas = true;
         world.insert_resource(layout);
         world.insert_resource(board);
         world.insert_resource(GridOverlay { enabled: true });
@@ -476,6 +486,7 @@ mod persistence_tests {
         );
         assert!(loaded_layout.control_deck_visible);
         assert_eq!((loaded_board.cols, loaded_board.rows), (128, 64));
+        assert!(loaded_board.fill_canvas);
         assert!(loaded_grid.enabled);
         assert!(!loaded_cell_age.enabled);
         assert_eq!(loaded_theme, Theme::HighContrast);

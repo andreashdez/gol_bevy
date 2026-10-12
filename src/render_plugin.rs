@@ -20,8 +20,9 @@ use bevy::{
 
 pub struct RenderPlugin;
 
+/// The board cell under the pointer, as `(col, row)` with row 0 at the bottom.
 #[derive(Resource, Default)]
-struct HoveredCell(Option<(usize, usize)>);
+pub struct HoveredCell(pub Option<(usize, usize)>);
 
 #[derive(Component)]
 struct GhostPreviewCell;

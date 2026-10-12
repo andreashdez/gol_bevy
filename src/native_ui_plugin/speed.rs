@@ -1,4 +1,5 @@
-//! A fixed rate with Feathers-style scrubbing, direct entry, and step buttons.
+//! The speed: 1–40 gen/s, then ∞ as the last stop, with Feathers-style
+//! scrubbing, direct entry, and step buttons.
 use super::*;
 use bevy::{
     input::{ButtonState, keyboard::KeyboardInput},
@@ -13,9 +14,11 @@ use bevy::{
     window::SystemCursorIcon,
 };
 
-const INPUT_HINT: &str =
-    "Speed · Drag to adjust · Shift for finer control · Click to type · 1–40 gen/s";
-const INVALID_HINT: &str = "Enter a speed from 1 to 40 gen/s.";
+const INPUT_HINT: &str = "Speed · Drag to adjust · Shift for finer control · Click to type · 1–40 gen/s, or ∞ for as fast as possible";
+const INVALID_HINT: &str = "Enter a speed from 1 to 40 gen/s, or ∞ (or max).";
+/// How far past the fastest rate a drag must go to reach ∞, and where a drag
+/// that starts at ∞ begins.
+const INFINITY_MARGIN: f32 = 0.5;
 const DRAG_THRESHOLD: f32 = 3.0;
 const RATE_PER_PIXEL: f32 = 0.2;
 
@@ -143,12 +146,17 @@ pub(super) fn spawn(parent: &mut ChildSpawnerCommands) {
             p.spawn((
                 controls::SpeedLabel,
                 label("", 11.0, Token::Muted),
+                // Centred under the field, not the field and its "/s" together.
+                TextLayout {
+                    justify: Justify::Center,
+                    ..default()
+                },
                 Node {
                     display: Display::None,
                     position_type: PositionType::Absolute,
                     left: px(0),
                     top: px(34),
-                    width: px(118),
+                    width: px(94),
                     ..default()
                 },
             ));
@@ -231,7 +239,11 @@ pub(super) fn sync_chevrons(
     mut bars: Query<(&SpeedChevron, &mut ThemedBackground)>,
 ) {
     for (entity, action, _, mut node) in &mut buttons {
-        if matches!(action, Action::SpeedAdjust(_)) {
+        // Steps inside a shared box show a border only for keyboard focus.
+        if matches!(
+            action,
+            Action::SpeedAdjust(_) | Action::ZoomIn | Action::ZoomOut
+        ) {
             set_if_neq!(
                 node.border,
                 UiRect::all(px(if visible.0 && focus.get() == Some(entity) {
@@ -317,9 +329,18 @@ fn scrub_drag(
     scrub.offset += event.delta.x / scale.0 * RATE_PER_PIXEL * if fine { 0.1 } else { 1.0 };
     scrub.moved |= ((event.pointer.position.x - scrub.origin.x) / scale.0).abs() >= DRAG_THRESHOLD;
     if scrub.moved {
-        let base = 1000.0 / scrub.interval as f32;
+        // ∞ sits just past the fastest rate, so dragging left from it steps down.
+        let base = if scrub.max {
+            controls::MAX_FIXED_RATE + 2.0 * INFINITY_MARGIN
+        } else {
+            1000.0 / scrub.interval as f32
+        };
         let rate = ((base + scrub.offset) * 10.0).round() / 10.0;
-        sim.app.set_tick_rate_ms(controls::rate_to_ms(rate));
+        if rate > controls::MAX_FIXED_RATE + INFINITY_MARGIN {
+            sim.app.set_max_speed();
+        } else {
+            sim.app.set_tick_rate_ms(controls::rate_to_ms(rate));
+        }
     }
 }
 
@@ -439,15 +460,33 @@ pub(super) fn handle_key(
     event.propagate(false);
 }
 
-fn parse_rate(value: &str) -> Option<f32> {
+#[derive(Debug, PartialEq)]
+enum Speed {
+    Fixed(f32),
+    Max,
+}
+
+/// ∞ is hard to type, so `max`, `inf`, and `infinity` mean it too.
+fn parse_speed(value: &str) -> Option<Speed> {
+    let value = value.trim();
+    if value == "∞"
+        || ["max", "inf", "infinity"]
+            .iter()
+            .any(|word| value.eq_ignore_ascii_case(word))
+    {
+        return Some(Speed::Max);
+    }
     value
-        .trim()
         .parse::<f32>()
         .ok()
-        .filter(|rate| rate.is_finite() && (1.0..=40.0).contains(rate))
+        .filter(|rate| (1.0..=controls::MAX_FIXED_RATE).contains(rate))
+        .map(Speed::Fixed)
 }
 
 fn formatted_rate(app: &GolApp) -> String {
+    if app.is_max_speed() {
+        return "∞".to_owned();
+    }
     let value = format!("{:.1}", controls::fixed_rate(app));
     value.strip_suffix(".0").unwrap_or(&value).to_owned()
 }
@@ -487,8 +526,11 @@ pub(super) fn edit(
     let apply = matches!(request, Some(Request::Apply))
         || (state.focused && !focused && draft != state.initial && !rate_changed);
     if apply && !cancelled {
-        if let Some(rate) = parse_rate(&draft) {
-            sim.app.set_tick_rate_ms(controls::rate_to_ms(rate));
+        if let Some(speed) = parse_speed(&draft) {
+            match speed {
+                Speed::Fixed(rate) => sim.app.set_tick_rate_ms(controls::rate_to_ms(rate)),
+                Speed::Max => sim.app.set_max_speed(),
+            };
             state.invalid = false;
             if focused {
                 focus.clear();
@@ -632,22 +674,25 @@ mod tests {
         world.resource_mut::<Simulation>().app.set_tick_rate_ms(100);
         world.resource_mut::<Simulation>().app.set_max_speed();
         press(&mut world, layer);
-        // Sub-threshold pointer jitter remains a click and does not leave Max.
+        // Sub-threshold pointer jitter remains a click and does not leave ∞.
         drag(&mut world, layer, 1.0, 1.0);
         assert!(world.resource::<Simulation>().app.is_max_speed());
-        drag(&mut world, layer, 50.0, 49.0);
-        assert_eq!(world.resource::<Simulation>().app.tick_rate_ms(), 50);
+        // A drag from ∞ starts just past 40: 41 + 0.2 - 10.2 is 31 gen/s.
+        drag(&mut world, layer, -50.0, -51.0);
+        assert_eq!(world.resource::<Simulation>().app.tick_rate_ms(), 32);
         assert!(!world.resource::<Simulation>().app.is_max_speed());
         world
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::ShiftLeft);
-        drag(&mut world, layer, 100.0, 50.0);
-        assert_eq!(world.resource::<Simulation>().app.tick_rate_ms(), 48);
+        drag(&mut world, layer, -100.0, -50.0);
+        assert_eq!(world.resource::<Simulation>().app.tick_rate_ms(), 33);
         world.resource_mut::<ButtonInput<KeyCode>>().reset_all();
+        // Far past the fastest rate is ∞, and far below the slowest is 1 gen/s.
         drag(&mut world, layer, 1000.0, 900.0);
-        assert_eq!(world.resource::<Simulation>().app.tick_rate_ms(), 25);
+        assert!(world.resource::<Simulation>().app.is_max_speed());
         drag(&mut world, layer, -1000.0, -2000.0);
         assert_eq!(world.resource::<Simulation>().app.tick_rate_ms(), 1000);
+        assert!(!world.resource::<Simulation>().app.is_max_speed());
         release(&mut world, layer);
         assert!(world.resource::<InputFocus>().get().is_none());
         assert!(world.get::<SpeedEditor>(field).unwrap().scrub.is_none());
@@ -679,7 +724,8 @@ mod tests {
         assert_eq!(*world.get::<Pickable>(layer).unwrap(), Pickable::default());
         press(&mut world, layer);
         drag(&mut world, layer, -25.0, -25.0);
-        assert_eq!(world.resource::<Simulation>().app.tick_rate_ms(), 200);
+        // 41 - 5 gen/s.
+        assert_eq!(world.resource::<Simulation>().app.tick_rate_ms(), 28);
         world
             .resource_mut::<ButtonInput<MouseButton>>()
             .press(MouseButton::Left);
@@ -728,7 +774,7 @@ mod tests {
         world.resource_mut::<Simulation>().app.set_tick_rate_ms(100);
         world.resource_mut::<Simulation>().app.set_max_speed();
         press(&mut world, layer);
-        drag(&mut world, layer, 50.0, 50.0);
+        drag(&mut world, layer, -50.0, -50.0);
         assert!(!world.resource::<Simulation>().app.is_max_speed());
         world.trigger(PointerCancel {
             entity: layer,
@@ -774,6 +820,7 @@ mod tests {
         world.get_mut::<SpeedEditor>(field).unwrap().request = Some(Request::Cancel);
         world.run_system_once(edit).unwrap();
         assert_eq!(world.resource::<Simulation>().app.tick_rate_ms(), 80);
+        // Cancelling shows the current speed again, which is ∞.
         assert!(world.resource::<Simulation>().app.is_max_speed());
         assert_eq!(
             world
@@ -781,7 +828,7 @@ mod tests {
                 .unwrap()
                 .value()
                 .to_string(),
-            "12.5"
+            "∞"
         );
     }
 
@@ -792,7 +839,7 @@ mod tests {
             .resource_mut::<InputFocus>()
             .set(field, FocusCause::Navigated);
         world.run_system_once(edit).unwrap();
-        for value in ["", "0", "41", "NaN", "inf", "abc"] {
+        for value in ["", "0", "41", "NaN", "-inf", "abc"] {
             world
                 .get_mut::<EditableText>(field)
                 .unwrap()
@@ -821,5 +868,54 @@ mod tests {
                 .to_string(),
             "10"
         );
+    }
+
+    #[test]
+    fn infinity_can_be_typed_and_shows_in_the_field() {
+        let (mut world, field) = world();
+        for typed in ["∞", "max", "Infinity"] {
+            world.resource_mut::<Simulation>().app.set_tick_rate_ms(100);
+            world
+                .resource_mut::<InputFocus>()
+                .set(field, FocusCause::Navigated);
+            world.run_system_once(edit).unwrap();
+            world
+                .get_mut::<EditableText>(field)
+                .unwrap()
+                .editor_mut()
+                .set_text(typed);
+            world.get_mut::<SpeedEditor>(field).unwrap().request = Some(Request::Apply);
+            world.run_system_once(edit).unwrap();
+            assert!(world.resource::<Simulation>().app.is_max_speed(), "{typed}");
+            let shown = world
+                .get::<EditableText>(field)
+                .unwrap()
+                .value()
+                .to_string();
+            assert_eq!(shown, "∞");
+        }
+    }
+
+    #[test]
+    fn steps_in_a_shared_box_show_a_border_only_for_keyboard_focus() {
+        let mut world = World::new();
+        world.init_resource::<InputFocus>();
+        world.init_resource::<InputFocusVisible>();
+        let zoom = world.spawn((Action::ZoomIn, Node::default())).id();
+        let speed = world.spawn((Action::SpeedAdjust(1), Node::default())).id();
+        let border = |world: &World, entity| world.get::<Node>(entity).unwrap().border;
+        for (entity, other) in [(zoom, speed), (speed, zoom)] {
+            world
+                .resource_mut::<InputFocus>()
+                .set(entity, FocusCause::Navigated);
+            // A click focuses too, but only keyboard focus is outlined.
+            world.resource_mut::<InputFocusVisible>().0 = false;
+            world.run_system_once(sync_chevrons).unwrap();
+            assert_eq!(border(&world, entity), UiRect::all(px(0)));
+            world.resource_mut::<InputFocusVisible>().0 = true;
+            world.run_system_once(sync_chevrons).unwrap();
+            assert_eq!(border(&world, entity), UiRect::all(px(1)));
+            assert_eq!(border(&world, other), UiRect::all(px(0)));
+        }
     }
 }

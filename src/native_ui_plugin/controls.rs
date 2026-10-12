@@ -1,7 +1,10 @@
 //! Everyday controls, shortcut hints, and first-use guidance.
 use super::*;
 use crate::shared::{CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, MainCamera, PATTERN_SHORTCUTS};
-use bevy::{a11y::AccessibilityNode, text::FontFeatureTag};
+use bevy::{
+    a11y::AccessibilityNode,
+    text::{FontFeatureTag, Justify},
+};
 
 #[derive(Component)]
 pub(super) struct Tooltip(pub String);
@@ -73,17 +76,11 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::Grid => "Show / hide the grid · T",
         Action::CellAge => "Brighten newborn cells, deepen old ones, and fade where cells died",
         Action::FitBoard => "Fit the whole board in the canvas · V",
-        Action::FitLiveCells => {
-            "Fit live cells with a small margin · empty boards fit the whole board"
-        }
-        Action::ZoomIn => "Zoom in · scroll over the canvas to zoom · middle-drag to pan",
-        Action::ZoomOut => "Zoom out · scroll over the canvas to zoom · middle-drag to pan",
-        Action::MaxSpeed => "Toggle maximum speed · switch off to restore your selected rate",
-        Action::SpeedAdjust(step) if step < 0 => "Decrease speed by 1 gen/s · leaves Max mode",
-        Action::SpeedAdjust(_) => "Increase speed by 1 gen/s · leaves Max mode",
+        Action::ZoomIn => "Zoom in · or scroll over the canvas · middle-drag to pan",
+        Action::ZoomOut => "Zoom out · or scroll over the canvas · middle-drag to pan",
+        Action::SpeedAdjust(step) if step < 0 => "Decrease speed by 1 gen/s · ∞ steps back to 40",
+        Action::SpeedAdjust(_) => "Increase speed by 1 gen/s · past 40 is ∞, as fast as possible",
         Action::Sidebar => "Show / hide the palette · H",
-        Action::ViewMenu => "View options · grid, cell age, and pattern palette",
-        Action::MoreMenu => "Settings and help",
         Action::Help => "Controls and tips · /",
         Action::Diagnostics => "Simulation diagnostics · F3",
         Action::Rotate => "Rotate stamp 90° clockwise · Z",
@@ -96,9 +93,13 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::Tool(EditTool::Stamp) => "Place the selected pattern on the board",
         Action::Import => "Import RLE into your library, or copy the board as RLE",
         Action::Settings => "Board size, rule, theme, grid, cell age, and edges",
+        Action::FillCanvas => {
+            "Size the board to fill the canvas, and follow it when the window or palette changes"
+        }
         Action::RulePreset(_) => "Switch the board to this rule · undo with U",
         Action::Theme(_) => "Switch the colours of the board and interface · saved automatically",
         Action::ApplyRule => "Use the rulestring above, written in B/S notation",
+        Action::EditRule => "The board's rule · click to change it in Settings",
         Action::ExportRle => "Copy the live cells to the clipboard as RLE",
         Action::CloseDialog => "Close this dialog · Escape",
         _ => "",
@@ -109,9 +110,6 @@ pub(super) fn navigate(
     event: On<Activate>,
     actions: Query<&Action>,
     view: Res<crate::canvas_view::CanvasView>,
-    sim: Res<Simulation>,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    layout: Res<UiLayout>,
     mut cameras: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
 ) {
     let Ok(action) = actions.get(event.entity) else {
@@ -120,16 +118,6 @@ pub(super) fn navigate(
     if let Ok((mut transform, mut projection)) = cameras.single_mut() {
         match action {
             Action::FitBoard => view.fit_camera(&mut transform, &mut projection),
-            Action::FitLiveCells => {
-                if let Ok(window) = windows.single() {
-                    view.fit_live_cells(
-                        &sim.app.board,
-                        canvas_rect(window.size(), &layout).size(),
-                        &mut transform,
-                        &mut projection,
-                    );
-                }
-            }
             Action::ZoomIn | Action::ZoomOut => {
                 if let Projection::Orthographic(ortho) = &mut *projection {
                     let factor = if *action == Action::ZoomIn {
@@ -145,8 +133,24 @@ pub(super) fn navigate(
     }
 }
 
-/// Maximum speed is a separate toggle; the field selects a fixed rate.
-const MAX_FIXED_RATE: f32 = 40.0;
+/// The fastest fixed rate. One step further is ∞, maximum speed.
+pub(super) const MAX_FIXED_RATE: f32 = 40.0;
+
+/// Steps the rate by 1 gen/s, with ∞ as the stop after the fastest fixed rate.
+pub(super) fn step_speed(app: &mut GolApp, step: i8) {
+    if app.is_max_speed() {
+        if step < 0 {
+            app.set_tick_rate_ms(rate_to_ms(MAX_FIXED_RATE));
+        }
+        return;
+    }
+    let rate = (fixed_rate(app) * 10.0).round() / 10.0;
+    if step > 0 && rate >= MAX_FIXED_RATE {
+        app.set_max_speed();
+    } else {
+        app.set_tick_rate_ms(rate_to_ms(rate + f32::from(step)));
+    }
+}
 
 pub(super) fn rate_to_ms(rate: f32) -> u64 {
     (1000.0 / rate.clamp(1.0, MAX_FIXED_RATE)).round() as u64
@@ -263,14 +267,10 @@ pub(super) fn sync_tool_hint(
         return;
     };
     let canvas = canvas_rect(window.size(), &view.layout);
-    let menu_open = view
-        .menus
-        .iter()
-        .any(|state| *state != bevy::ui_widgets::MenuFocusState::Closed);
     for mut node in &mut nodes {
         set_if_neq!(
             node.display,
-            if view.mode.dialog.is_none() && !menu_open {
+            if view.mode.dialog.is_none() {
                 Display::Flex
             } else {
                 Display::None
@@ -331,10 +331,6 @@ pub(super) fn sync_overlays(
         }
     }
     let candidate = hovered.or(focused);
-    let menu_open = view
-        .menus
-        .iter()
-        .any(|state| *state != bevy::ui_widgets::MenuFocusState::Closed);
     let canvas = canvas_rect(window.size(), &view.layout);
     for (mut node, overlay, wide, tall) in &mut nodes {
         if wide {
@@ -410,7 +406,7 @@ pub(super) fn sync_overlays(
         };
         set_if_neq!(
             node.display,
-            if show && view.mode.dialog.is_none() && (!hint || !menu_open) {
+            if show && view.mode.dialog.is_none() {
                 Display::Flex
             } else {
                 Display::None
@@ -430,13 +426,193 @@ pub(super) fn sync_overlays(
 
 type FooterNode<'a> = (
     &'a mut Node,
-    Has<Footer>,
-    Has<FooterStatus>,
     Has<Sidebar>,
     Option<&'a Readout>,
     Option<&'a Action>,
     Has<toolbar::ToolbarButton>,
 );
+
+/// Grows a readout to the widest it has been, so its neighbours stay put as
+/// digits come and go, without reserving room for numbers it never shows.
+#[derive(Component)]
+pub(super) struct KeepWidest;
+
+pub(super) fn keep_widest(mut nodes: Query<(&mut Node, &ComputedNode), With<KeepWidest>>) {
+    for (mut node, computed) in &mut nodes {
+        let width = computed.size().x * computed.inverse_scale_factor();
+        let widest = match node.min_width {
+            Val::Px(widest) => widest,
+            _ => 0.0,
+        };
+        if width > widest + 0.5 {
+            node.min_width = px(width.ceil());
+        }
+    }
+}
+
+/// A word and its number, kept close together.
+pub(super) fn readout_group() -> impl Bundle {
+    Node {
+        align_items: AlignItems::Center,
+        column_gap: px(5),
+        flex_shrink: 0.0,
+        ..default()
+    }
+}
+
+/// A status bar number with tabular digits. Counts are right-aligned so the
+/// word after them stays put; trailing readouts are left-aligned.
+pub(super) fn number(kind: Readout, size: f32, color: Token) -> impl Bundle {
+    let justify = match kind {
+        Readout::Change | Readout::Pointer => Justify::Left,
+        _ => Justify::Right,
+    };
+    // Room for the largest board's far corner from the start, so the pointer
+    // readout neither wraps nor pushes its neighbours as coordinates grow.
+    let min_width = if kind == Readout::Pointer {
+        px(96)
+    } else {
+        Val::Auto
+    };
+    (
+        Text::default(),
+        numeric_font(size),
+        ThemedText(color),
+        Pickable::IGNORE,
+        // No `LineBreak::NoWrap`: it lays text out unbounded, which ignores
+        // `justify`. Not shrinking is what keeps these on one line.
+        TextLayout {
+            justify,
+            ..default()
+        },
+        Node {
+            min_width,
+            flex_shrink: 0.0,
+            ..default()
+        },
+        kind,
+        KeepWidest,
+    )
+}
+
+/// The UI font has no arrows, so the change is signed: +12, −12, or ±0.
+fn change_text(change: Option<isize>) -> String {
+    match change {
+        None => String::new(),
+        Some(0) => "±0".to_owned(),
+        Some(change) if change > 0 => format!("+{change}"),
+        Some(change) => format!("−{}", change.unsigned_abs()),
+    }
+}
+
+pub(super) fn sync_status(
+    sim: Res<Simulation>,
+    hovered: Res<crate::render_plugin::HoveredCell>,
+    mut texts: Query<(&mut Text, &mut ThemedText, &Readout)>,
+    mut pills: Query<(&mut ThemedBackground, &mut ThemedBorder), With<StatusPill>>,
+) {
+    let running = sim.app.is_running();
+    for (mut background, mut border) in &mut pills {
+        background.set_if_neq(ThemedBackground(if running {
+            Token::Accent
+        } else {
+            Token::Surface
+        }));
+        border.set_if_neq(ThemedBorder(if running {
+            Token::Accent
+        } else {
+            Token::Line
+        }));
+    }
+    let (cols, rows) = sim.app.board.size();
+    for (mut text, mut color, readout) in &mut texts {
+        let value = match readout {
+            Readout::Status => {
+                color.set_if_neq(ThemedText(if running {
+                    Token::OnAccent
+                } else {
+                    Token::Muted
+                }));
+                if running { "Running" } else { "Paused" }.to_owned()
+            }
+            Readout::Generation => sim.app.epoch.to_string(),
+            Readout::Population => sim.app.board.live_cells_count().to_string(),
+            Readout::Change => change_text(sim.app.population_change()),
+            // Counted from the top left, like RLE and other Life tools.
+            Readout::Pointer => hovered
+                .0
+                .map(|(col, row)| format!("({col}, {})", rows - 1 - row))
+                .unwrap_or_default(),
+            Readout::Board => format!(
+                "{cols} × {rows} cells   ·   {} edges",
+                sim.app.boundary_mode_label()
+            ),
+        };
+        if text.0 != value {
+            text.0 = value;
+        }
+    }
+}
+
+/// − 100% + in one box, like the speed field: the steps share its border and
+/// background, and show a border of their own only for keyboard focus.
+pub(super) fn zoom_stepper(parent: &mut ChildSpawnerCommands) {
+    parent
+        .spawn((
+            Node {
+                align_items: AlignItems::Center,
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(7)),
+                flex_shrink: 0.0,
+                ..default()
+            },
+            ThemedBackground(Token::Field),
+            ThemedBorder(Token::Line),
+            accessibility::named_node(accesskit::Role::Group, "Zoom"),
+        ))
+        .with_children(|p| {
+            for (name, text, action) in [
+                ("Zoom out", "−", Action::ZoomOut),
+                ("Zoom in", "+", Action::ZoomIn),
+            ] {
+                if action == Action::ZoomIn {
+                    p.spawn((
+                        ZoomLabel,
+                        Text::new("100%"),
+                        numeric_font(13.0),
+                        ThemedText(Token::Ink),
+                        TextLayout {
+                            justify: Justify::Center,
+                            ..default()
+                        },
+                        Tooltip("Zoom relative to Fit board (100%) · V fits the board".into()),
+                        Hovered::default(),
+                        Node {
+                            min_width: px(48),
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                    ));
+                }
+                let step = button(p, text, action);
+                p.commands().entity(step).insert((
+                    Name::new(name),
+                    Node {
+                        padding: UiRect::axes(px(10), px(9)),
+                        border_radius: if action == Action::ZoomOut {
+                            BorderRadius::left(px(6))
+                        } else {
+                            BorderRadius::right(px(6))
+                        },
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        flex_shrink: 0.0,
+                        ..default()
+                    },
+                ));
+            }
+        });
+}
 
 pub(super) fn sync_footer(
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -448,32 +624,9 @@ pub(super) fn sync_footer(
     let Ok(window) = windows.single() else {
         return;
     };
-    let narrow = window.width() < 1000.0;
-    for (mut node, footer, status, sidebar, readout, action, toolbar_button) in &mut nodes {
-        if footer {
-            set_if_neq!(node.height, px(bottom_height(window.size())));
-            set_if_neq!(
-                node.flex_direction,
-                if narrow {
-                    FlexDirection::Column
-                } else {
-                    FlexDirection::Row
-                }
-            );
-            set_if_neq!(
-                node.align_items,
-                if narrow {
-                    AlignItems::Stretch
-                } else {
-                    AlignItems::Center
-                }
-            );
-        }
-        if status {
-            set_if_neq!(node.flex_grow, if narrow { 0.0 } else { 1.0 });
-        }
+    for (mut node, sidebar, readout, action, toolbar_button) in &mut nodes {
         if sidebar {
-            set_if_neq!(node.bottom, px(bottom_height(window.size()) + 16.0));
+            set_if_neq!(node.bottom, px(STATUS_BAR_HEIGHT + 16.0));
         }
         if matches!(readout, Some(Readout::Board)) {
             set_if_neq!(
@@ -487,7 +640,10 @@ pub(super) fn sync_footer(
         }
         if let Some(action) = action
             && !toolbar_button
-            && !matches!(action, Action::Pattern(_) | Action::SpeedAdjust(_))
+            && !matches!(
+                action,
+                Action::Pattern(_) | Action::SpeedAdjust(_) | Action::ZoomIn | Action::ZoomOut
+            )
         {
             set_if_neq!(
                 node.padding,
@@ -612,29 +768,46 @@ mod tests {
     }
 
     #[test]
-    fn max_toggle_restores_rate_and_field_rates_leave_max() {
-        let mut app = GolApp::new(8, 8);
-        app.set_tick_rate_ms(rate_to_ms(10.0));
-        apply_action(Action::MaxSpeed, &mut app);
-        assert!(app.is_max_speed());
-        assert_eq!(fixed_rate(&app), 10.0);
-        assert!(!app.speed_up());
-        assert_eq!(fixed_rate(&app), 10.0);
-        apply_action(Action::MaxSpeed, &mut app);
-        assert!(!app.is_max_speed());
-        assert_eq!(app.tick_rate_ms(), 100);
+    fn population_change_reads_as_a_signed_count_and_readouts_only_grow() {
+        assert_eq!(change_text(None), "");
+        assert_eq!(change_text(Some(0)), "±0");
+        assert_eq!(change_text(Some(12)), "+12");
+        assert_eq!(change_text(Some(-7)), "−7");
 
-        apply_action(Action::MaxSpeed, &mut app);
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let readout = world
+            .spawn((Node::default(), ComputedNode::default(), KeepWidest))
+            .id();
+        let measure = |world: &mut World, width: f32| {
+            world.get_mut::<ComputedNode>(readout).unwrap().size.x = width;
+            world.run_system_once(keep_widest).unwrap();
+            world.get::<Node>(readout).unwrap().min_width
+        };
+        assert_eq!(measure(&mut world, 30.2), px(31));
+        // Fewer digits keep the widest size, so neighbours do not move back.
+        assert_eq!(measure(&mut world, 20.0), px(31));
+        assert_eq!(measure(&mut world, 40.0), px(40));
+    }
+
+    #[test]
+    fn infinity_is_the_stop_after_the_fastest_rate_for_chevrons_and_keys_alike() {
+        let mut app = GolApp::new(8, 8);
         app.set_tick_rate_ms(rate_to_ms(MAX_FIXED_RATE));
+        step_speed(&mut app, 1);
+        assert!(app.is_max_speed());
+        // Nothing lies past ∞, and stepping down returns to the fastest rate.
+        step_speed(&mut app, 1);
+        assert!(app.is_max_speed());
+        step_speed(&mut app, -1);
         assert!(!app.is_max_speed());
         assert_eq!(fixed_rate(&app), MAX_FIXED_RATE);
 
-        // Keyboard shortcuts retain their existing Max behavior.
+        // The + and - keys take the same path through ∞.
         app.speed_up();
         assert!(app.is_max_speed());
+        app.slow_down();
         assert_eq!(fixed_rate(&app), MAX_FIXED_RATE);
-        app.set_tick_rate_ms(rate_to_ms(MAX_FIXED_RATE + 1.0));
-        assert!(!app.is_max_speed());
     }
 
     #[test]

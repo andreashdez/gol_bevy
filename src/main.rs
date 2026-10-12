@@ -18,7 +18,7 @@ fn main() {
     bevy::prelude::App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "Conway's Game of Life (Bevy)".into(),
+                title: "Conway's Game of Life".into(),
                 resolution: WindowResolution::new(1200, 800),
                 resizable: true,
                 resize_constraints: bevy::window::WindowResizeConstraints {
