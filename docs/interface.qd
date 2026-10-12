@@ -14,8 +14,9 @@ giving the canvas 48 more pixels of height. Subtle dividers separate three group
 
 In narrower windows, workspace controls sit on the first row, with playback and
 board edits on the second. Every control remains available, including at the
-minimum window size. Tab order follows the visible groups, and resizing retains
-the focused control, camera pan, and zoom relative to the fitted board.
+minimum window size. Tab order follows the layout: the toolbar, the tools, the palette,
+the status bar, and last the board, which is outlined when it has keyboard focus.
+Resizing retains the focused control, camera pan, and zoom relative to the fitted board.
 
 Most buttons show icons instead of words. Play turns into a pause icon while the simulation runs. The Grid, Cell age, and Pattern palette toggles have a green outline while they are on. Hover over or focus a button to see its name and shortcut. Screen readers announce icon buttons by name, and the toggles as on or off.
 
@@ -82,9 +83,9 @@ From left to right:
 - The rule. Click it to open [Settings](settings.qd#rule) with the rulestring ready to edit.
 - The cell under the pointer, as `(x, y)` counted from the top-left cell `(0, 0)`, while the pointer is over the board.
 
-From 1400 pixels wide, the status bar also shows the board size and edge mode. Numbers use tabular digits and keep the widest size they have reached, so the readouts stay close together without shifting as digits change. The zoom controls sit at the right end. The status bar is a single 48-pixel row at every window size.
+From 1400 pixels wide, the status bar also shows the board size and edge mode. Numbers use tabular digits and keep the widest size they have reached, so the readouts stay close together without shifting as digits change. Clearing or resizing the board, or resetting the generation counter, lets them shrink back to fit. The zoom controls sit at the right end. The status bar is a single 48-pixel row at every window size.
 
-Clear, randomize, undo, and redo briefly show feedback above the status bar. Undoable actions include the **U** shortcut. These notices do not intercept drawing or panning.
+Clear, randomize, undo, and redo briefly show a notice at the bottom left of the canvas, in place of the tool hint, which returns when the notice fades. Undoable actions include the **U** shortcut. These notices do not intercept drawing or panning.
 
 ## Dialogs
 

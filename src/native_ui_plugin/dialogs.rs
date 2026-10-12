@@ -523,7 +523,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                     }
                     DialogKind::Help => {
                         p.spawn(label("Choose a stamp or draw cells, then press Space to play. U undoes an edit and pauses; one drag counts as one edit.", 16.0, Token::Ink));
-                        p.spawn(label("Tab moves between controls. Escape closes a dialog. Simulation shortcuts are disabled while a dialog is open.", 14.0, Token::Muted));
+                        p.spawn(label("Tab moves between controls; the board is the last stop, and while it is outlined Space and the other shortcuts apply to it. Escape closes a dialog. Simulation shortcuts are disabled while a dialog is open.", 14.0, Token::Muted));
                         p.spawn((label(CONTROLS_TEXT.as_str(), 14.0, Token::Ink), super::accessibility::named_node(accesskit::Role::Label, CONTROLS_TEXT.as_str())));
                     }
                     DialogKind::Diagnostics => {

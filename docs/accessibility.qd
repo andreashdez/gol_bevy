@@ -5,7 +5,7 @@ gol-bevy can be used from the keyboard alone, and exposes its interface to scree
 
 ## Keyboard navigation
 
-- .keybinding {Tab} moves between the visible, enabled controls; .keybinding {Shift+Tab} moves back.
+- .keybinding {Tab} moves between the visible, enabled controls in the order they appear: the toolbar, the Draw, Erase, and Stamp tools, the palette, the status bar, and the board. .keybinding {Shift+Tab} moves back.
 - The board is the last stop in the tab order. While it has focus, the board shortcuts apply, so .keybinding {Shift+Tab} from the start returns to them.
 - .keybinding {Enter} or .keybinding {Space} activates the focused button.
 - Click the board, or press .keybinding {Esc} in a text field or the slider, to give the keyboard back to the board shortcuts.

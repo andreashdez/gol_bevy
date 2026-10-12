@@ -47,6 +47,13 @@ use theme::{ThemedBackground, ThemedBorder, ThemedImage, ThemedText, Token};
 
 /// The status bar fits on one row at every window width the app allows.
 const STATUS_BAR_HEIGHT: f32 = 48.0;
+
+/// Tab follows the layout: the toolbar's groups (negative orders), then the
+/// tools, the palette, the status bar, and the board last.
+const TAB_ORDER_TOOLS: i32 = 1;
+const TAB_ORDER_PALETTE: i32 = 2;
+const TAB_ORDER_STATUS_BAR: i32 = 3;
+const TAB_ORDER_BOARD: i32 = 4;
 const SIDE: f32 = 256.0;
 const TOOL_STRIP_HEIGHT: f32 = 48.0;
 const TOOL_STRIP_SPACE: f32 = TOOL_STRIP_HEIGHT + 8.0;
@@ -99,11 +106,12 @@ impl Plugin for NativeUiPlugin {
                     speed::sync_scrubber,
                     speed::sync_chevrons,
                     controls::sync_overlays,
-                    controls::sync_tool_hint,
                     controls::sync_footer,
                     controls::sync_status,
                     toolbar::sync_layout,
                     controls::sync_feedback,
+                    // After the notice counts down, so the hint returns as it ends.
+                    controls::sync_tool_hint,
                     publish_input_regions,
                     release_pointer_focus,
                     sync_board_focus,
@@ -289,7 +297,7 @@ fn setup(
             NativeRoot,
             ToolStrip,
             TabGroup {
-                order: 1,
+                order: TAB_ORDER_TOOLS,
                 ..default()
             },
             Node {
@@ -320,7 +328,10 @@ fn setup(
         .spawn((
             NativeRoot,
             Sidebar,
-            TabGroup::default(),
+            TabGroup {
+                order: TAB_ORDER_PALETTE,
+                ..default()
+            },
             Node {
                 position_type: PositionType::Absolute,
                 left: px(16),
@@ -348,7 +359,10 @@ fn setup(
         .spawn((
             NativeRoot,
             Footer,
-            TabGroup::default(),
+            TabGroup {
+                order: TAB_ORDER_STATUS_BAR,
+                ..default()
+            },
             Node {
                 position_type: PositionType::Absolute,
                 left: px(0),
@@ -423,7 +437,7 @@ fn setup(
             NativeRoot,
             BoardArea,
             TabGroup {
-                order: 2,
+                order: TAB_ORDER_BOARD,
                 ..default()
             },
             Node {
@@ -1009,6 +1023,82 @@ mod tests {
         assert_eq!(focused(&mut world, button, true, false), Some(button));
         assert_eq!(focused(&mut world, button, false, true), Some(button));
         assert_eq!(focused(&mut world, field, false, false), Some(field));
+    }
+
+    #[test]
+    fn tab_follows_the_layout_from_the_toolbar_to_the_board() {
+        use bevy::{
+            ecs::system::RunSystemOnce,
+            input_focus::{
+                FocusCause,
+                tab_navigation::{NavAction, TabNavigation},
+            },
+        };
+        let mut world = World::new();
+        world.init_resource::<Assets<Font>>();
+        world.init_resource::<Assets<Image>>();
+        world.init_resource::<UiLayout>();
+        world.init_resource::<InputFocus>();
+        world.spawn((Window::default(), PrimaryWindow));
+        world.run_system_once(setup).unwrap();
+        // Visibility propagation does not run here; Bevy's tab walker skips hidden nodes.
+        for mut visibility in world
+            .query::<&mut InheritedVisibility>()
+            .iter_mut(&mut world)
+        {
+            *visibility = InheritedVisibility::VISIBLE;
+        }
+        let area = |world: &World, entity: Entity| {
+            let mut current = Some(entity);
+            while let Some(e) = current {
+                let found = if world.get::<toolbar::Group>(e).is_some() {
+                    Some("toolbar")
+                } else if world.get::<ToolStrip>(e).is_some() {
+                    Some("tools")
+                } else if world.get::<Sidebar>(e).is_some() {
+                    Some("palette")
+                } else if world.get::<Footer>(e).is_some() {
+                    Some("status bar")
+                } else if world.get::<BoardArea>(e).is_some() {
+                    Some("board")
+                } else {
+                    None
+                };
+                if found.is_some() {
+                    return found;
+                }
+                current = world.get::<ChildOf>(e).map(ChildOf::parent);
+            }
+            None
+        };
+        let play = world
+            .query::<(Entity, &Action)>()
+            .iter(&world)
+            .find_map(|(e, a)| (*a == Action::Play).then_some(e))
+            .unwrap();
+        world
+            .resource_mut::<InputFocus>()
+            .set(play, FocusCause::Navigated);
+        let mut visited = vec!["toolbar"];
+        while *visited.last().unwrap() != "board" {
+            let next = world
+                .run_system_once(|nav: TabNavigation, focus: Res<InputFocus>| {
+                    nav.navigate(&focus, NavAction::Next).unwrap()
+                })
+                .unwrap();
+            world
+                .resource_mut::<InputFocus>()
+                .set(next, FocusCause::Navigated);
+            let here = area(&world, next).expect("every Tab stop is in a known area");
+            if *visited.last().unwrap() != here {
+                assert!(!visited.contains(&here), "Tab returned to the {here}");
+                visited.push(here);
+            }
+        }
+        assert_eq!(
+            visited,
+            ["toolbar", "tools", "palette", "status bar", "board"]
+        );
     }
 
     #[test]

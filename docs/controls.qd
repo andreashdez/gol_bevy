@@ -5,6 +5,8 @@ Every keyboard and mouse control in one place. Shortcuts with a command modifier
 
 Board shortcuts work while the board has keyboard focus. They are disabled while a dialog is open, or while a text field or the speed slider is focused; press .keybinding {Esc} or click the board to get them back. In-app, press .keybinding {/} for the same list.
 
+> Tip: When you move through the controls with .keybinding {Tab}, the board is the last stop, and it gets a bright outline when it has focus. While the board is outlined, .keybinding {Space} and the other board shortcuts apply to it again. .keybinding {Shift+Tab} from the first toolbar button jumps straight back to it.
+
 ## Simulation
 
 | Key                     | Action                       |

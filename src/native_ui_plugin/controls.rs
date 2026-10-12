@@ -256,8 +256,11 @@ fn tool_hint(app: &GolApp) -> String {
 }
 
 /// Passive guidance stays inside the canvas and lets pointer input pass through.
+/// The hint and edit notices share one slot: a notice replaces the hint while it
+/// shows, rather than covering it.
 pub(super) fn sync_tool_hint(
     sim: Res<Simulation>,
+    feedback: Res<EditFeedback>,
     view: ViewState,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut nodes: Query<&mut Node, With<CanvasToolHint>>,
@@ -270,7 +273,7 @@ pub(super) fn sync_tool_hint(
     for mut node in &mut nodes {
         set_if_neq!(
             node.display,
-            if view.mode.dialog.is_none() {
+            if view.mode.dialog.is_none() && feedback.remaining <= 0.0 {
                 Display::Flex
             } else {
                 Display::None
@@ -434,8 +437,9 @@ type FooterNode<'a> = (
 
 /// Grows a readout to the widest it has been, so its neighbours stay put as
 /// digits come and go, without reserving room for numbers it never shows.
+/// Holds the width it starts from, and returns to when the board jumps.
 #[derive(Component)]
-pub(super) struct KeepWidest;
+pub(super) struct KeepWidest(pub Val);
 
 pub(super) fn keep_widest(mut nodes: Query<(&mut Node, &ComputedNode), With<KeepWidest>>) {
     for (mut node, computed) in &mut nodes {
@@ -491,7 +495,7 @@ pub(super) fn number(kind: Readout, size: f32, color: Token) -> impl Bundle {
             ..default()
         },
         kind,
-        KeepWidest,
+        KeepWidest(min_width),
     )
 }
 
@@ -505,11 +509,23 @@ fn change_text(change: Option<isize>) -> String {
     }
 }
 
+type StatusText<'a> = (
+    &'a mut Text,
+    &'a mut ThemedText,
+    &'a Readout,
+    &'a mut Node,
+    Option<&'a KeepWidest>,
+);
+
+/// What the board looked like last frame, to tell a jump from a tick.
+type BoardShape = (usize, (usize, usize), usize);
+
 pub(super) fn sync_status(
     sim: Res<Simulation>,
     hovered: Res<crate::render_plugin::HoveredCell>,
-    mut texts: Query<(&mut Text, &mut ThemedText, &Readout)>,
+    mut texts: Query<StatusText>,
     mut pills: Query<(&mut ThemedBackground, &mut ThemedBorder), With<StatusPill>>,
+    mut last: Local<Option<BoardShape>>,
 ) {
     let running = sim.app.is_running();
     for (mut background, mut border) in &mut pills {
@@ -525,7 +541,18 @@ pub(super) fn sync_status(
         }));
     }
     let (cols, rows) = sim.app.board.size();
-    for (mut text, mut color, readout) in &mut texts {
+    let live = sim.app.board.live_cells_count();
+    // A cleared or resized board, or a generation counter that went back,
+    // makes the readouts start over at their own widths. Each then grows to
+    // its current number again; ordinary ticks still never shrink them.
+    let jumped = last.is_some_and(|(epoch, size, count)| {
+        sim.app.epoch < epoch || size != (cols, rows) || (live == 0 && count != 0)
+    });
+    *last = Some((sim.app.epoch, (cols, rows), live));
+    for (mut text, mut color, readout, mut node, keep) in &mut texts {
+        if jumped && let Some(keep) = keep {
+            set_if_neq!(node.min_width, keep.0);
+        }
         let value = match readout {
             Readout::Status => {
                 color.set_if_neq(ThemedText(if running {
@@ -536,7 +563,7 @@ pub(super) fn sync_status(
                 if running { "Running" } else { "Paused" }.to_owned()
             }
             Readout::Generation => sim.app.epoch.to_string(),
-            Readout::Population => sim.app.board.live_cells_count().to_string(),
+            Readout::Population => live.to_string(),
             Readout::Change => change_text(sim.app.population_change()),
             // Counted from the top left, like RLE and other Life tools.
             Readout::Pointer => hovered
@@ -716,8 +743,9 @@ pub(super) fn sync_feedback(
                 Display::None
             }
         );
+        // The tool hint's slot, which it gives up while the notice shows.
         set_if_neq!(node.left, px(canvas.min.x + 12.0));
-        set_if_neq!(node.bottom, px(window.height() - canvas.max.y + 12.0));
+        set_if_neq!(node.bottom, px(window.height() - canvas.max.y + 8.0));
         set_if_neq!(node.max_width, px((canvas.width() - 24.0).max(0.0)));
     }
     for mut text in &mut texts {
@@ -735,6 +763,93 @@ pub(super) fn sync_feedback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn readout_widths_start_over_when_the_board_jumps_but_not_when_it_ticks() {
+        let mut world = World::new();
+        let mut app = GolApp::new(16, 16);
+        app.randomize_board();
+        world.insert_resource(Simulation::new(app));
+        world.init_resource::<crate::render_plugin::HoveredCell>();
+        let spawn = |world: &mut World, kind, base| {
+            world
+                .spawn((
+                    Text::default(),
+                    ThemedText(Token::Ink),
+                    kind,
+                    Node {
+                        min_width: px(120),
+                        ..default()
+                    },
+                    KeepWidest(base),
+                ))
+                .id()
+        };
+        let generation = spawn(&mut world, Readout::Generation, Val::Auto);
+        let pointer = spawn(&mut world, Readout::Pointer, px(96));
+        // A registered system remembers last frame, unlike `run_system_once`.
+        let system = world.register_system(sync_status);
+        let sync = |world: &mut World| {
+            world.run_system(system).unwrap();
+            let width = |entity| world.get::<Node>(entity).unwrap().min_width;
+            (width(generation), width(pointer))
+        };
+        let grown = (px(120), px(120));
+        assert_eq!(sync(&mut world), grown);
+        world.resource_mut::<Simulation>().app.increment_epoch();
+        assert_eq!(sync(&mut world), grown, "a generation is a tick");
+        world.resource_mut::<Simulation>().app.clear_board();
+        assert_eq!(sync(&mut world), (Val::Auto, px(96)));
+
+        // Growing again, then resetting the counter, starts over too.
+        for entity in [generation, pointer] {
+            world.get_mut::<Node>(entity).unwrap().min_width = px(120);
+        }
+        assert_eq!(sync(&mut world), grown);
+        world.resource_mut::<Simulation>().app.reset_epoch();
+        assert_eq!(sync(&mut world), (Val::Auto, px(96)));
+    }
+
+    #[test]
+    fn an_edit_notice_takes_the_tool_hint_slot_until_it_fades() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.insert_resource(Simulation::new(GolApp::new(8, 8)));
+        world.init_resource::<EditFeedback>();
+        world.init_resource::<Time>();
+        world.init_resource::<NativeUi>();
+        world.init_resource::<UiLayout>();
+        world.insert_resource(GridOverlay { enabled: false });
+        world.init_resource::<CellAge>();
+        world.init_resource::<crate::shared::BoardSettings>();
+        world.init_resource::<InputFocus>();
+        world.init_resource::<InputFocusVisible>();
+        world.init_resource::<Theme>();
+        world.spawn((Window::default(), PrimaryWindow));
+        let hint = world.spawn((CanvasToolHint, Node::default())).id();
+        let notice = world.spawn((FeedbackOverlay, Node::default())).id();
+        let shown = |world: &mut World| {
+            world.run_system_once(sync_feedback).unwrap();
+            world.run_system_once(sync_tool_hint).unwrap();
+            let display = |entity| world.get::<Node>(entity).unwrap().display;
+            (
+                display(hint) != Display::None,
+                display(notice) != Display::None,
+            )
+        };
+        assert_eq!(shown(&mut world), (true, false));
+        world
+            .resource_mut::<EditFeedback>()
+            .show("Board randomized · U to undo");
+        assert_eq!(shown(&mut world), (false, true));
+        // Both sit in the same place, so the notice reads as replacing the hint.
+        assert_eq!(
+            world.get::<Node>(hint).unwrap().bottom,
+            world.get::<Node>(notice).unwrap().bottom
+        );
+        world.resource_mut::<EditFeedback>().remaining = 0.0;
+        assert_eq!(shown(&mut world), (true, false));
+    }
 
     #[test]
     fn fit_button_restores_camera_center_and_zoom() {
@@ -777,7 +892,11 @@ mod tests {
         use bevy::ecs::system::RunSystemOnce;
         let mut world = World::new();
         let readout = world
-            .spawn((Node::default(), ComputedNode::default(), KeepWidest))
+            .spawn((
+                Node::default(),
+                ComputedNode::default(),
+                KeepWidest(Val::Auto),
+            ))
             .id();
         let measure = |world: &mut World, width: f32| {
             world.get_mut::<ComputedNode>(readout).unwrap().size.x = width;

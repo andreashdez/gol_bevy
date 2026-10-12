@@ -11,7 +11,7 @@
 
 Resetting the generation counter leaves the cells as they are.
 
-> Tip: After you click a toolbar button, .keybinding {Space} activates that button. Click the board to give .keybinding {Space} back to playback.
+> Tip: .keybinding {Space} keeps playing and pausing after you click a toolbar button. Only a button you reach with .keybinding {Tab} takes .keybinding {Space} for itself. Click the board, or press .keybinding {Tab} until the board is outlined, to give .keybinding {Space} back to playback.
 
 ## Speed
 
