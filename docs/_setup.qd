@@ -14,7 +14,7 @@
 .ifnot {.docname::equals {gol-bevy}}
     .htmloptions title:{.docname | gol-bevy}
 
-.var {repourl} {https://gitlab.com/andreashdez/gol-bevy}
+.var {repourl} {https://github.com/andreashdez/gol_bevy}
 
 .function {repolink}
     label path:
@@ -24,4 +24,4 @@
     [gol-bevy](@)
 
 .pagemargin {topright}
-    .text {.icon {gitlab} GitLab} url:{.repourl}
+    .text {.icon {github} GitHub} url:{.repourl}

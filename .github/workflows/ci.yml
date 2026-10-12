@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # System libraries Bevy builds and links against on Linux.
+  LINUX_DEPS: pkg-config libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    # Matches rust-toolchain.toml, so rustup finds the pinned toolchain already
+    # installed. The Debian release is pinned too: it sets the oldest glibc the
+    # Linux release build runs on.
+    container: rust:1.99.0-trixie
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup component add rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    container: rust:1.99.0-trixie
+    steps:
+      - uses: actions/checkout@v7
+      - run: apt-get update && apt-get install -y --no-install-recommends $LINUX_DEPS
+      - run: rustup component add clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    container: rust:1.99.0-trixie
+    steps:
+      - uses: actions/checkout@v7
+      - run: apt-get update && apt-get install -y --no-install-recommends $LINUX_DEPS
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-targets --all-features --locked
+
+  # Release builds run only for tags, once lint and tests have passed.
+  release-linux:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [fmt, clippy, test]
+    runs-on: ubuntu-latest
+    container: rust:1.99.0-trixie
+    env:
+      # Symbols are a third of the binary; local release builds keep them for profiling.
+      CARGO_PROFILE_RELEASE_STRIP: symbols
+    steps:
+      - uses: actions/checkout@v7
+      - run: apt-get update && apt-get install -y --no-install-recommends $LINUX_DEPS
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - run: scripts/package-release.sh "gol-bevy-$GITHUB_REF_NAME-x86_64-linux" target/release/gol-bevy
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-linux
+          path: dist/*.tar.gz
+
+  # Cross-compiled with MinGW, so it needs no Windows runner.
+  release-windows:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [fmt, clippy, test]
+    runs-on: ubuntu-latest
+    container: rust:1.99.0-trixie
+    env:
+      CARGO_PROFILE_RELEASE_STRIP: symbols
+    steps:
+      - uses: actions/checkout@v7
+      - run: apt-get update && apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 zip
+      - run: rustup target add x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked --target x86_64-pc-windows-gnu
+      - run: scripts/package-release.sh "gol-bevy-$GITHUB_REF_NAME-x86_64-windows" target/x86_64-pc-windows-gnu/release/gol-bevy.exe zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-windows
+          path: dist/*.zip
+
+  # Universal (Apple silicon + Intel) binary, built by the same recipe as local
+  # macOS release builds.
+  release-macos:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [fmt, clippy, test]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Installs the version pinned in rust-toolchain.toml.
+      - run: rustup toolchain install
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: Swatinem/rust-cache@v2
+      - run: just release-macos "$GITHUB_REF_NAME"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-macos
+          path: dist/*.tar.gz
+
+  release:
+    needs: [release-linux, release-windows, release-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - run: >
+          gh release create "$GITHUB_REF_NAME" dist/*
+          --repo "$GITHUB_REPOSITORY"
+          --title "gol-bevy $GITHUB_REF_NAME"
+          --notes "Built from $GITHUB_SHA. Download the archive for your platform, unpack it, and run gol-bevy."
+        env:
+          GH_TOKEN: ${{ github.token }}

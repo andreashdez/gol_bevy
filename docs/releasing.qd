@@ -1,37 +1,34 @@
 .docname {Releasing}
 .include {docs}
 
-Releases are built from tags. CI builds Linux and Windows; the macOS build needs an Apple machine and is made by hand.
+Releases are built from tags. CI builds Linux, Windows, and macOS and publishes them as a GitHub release.
 
-## 1. Tag the release
+## Tag the release
 
 ```shell
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-On a tag, CI runs the usual lint and test stages, then:
+On a tag, CI runs the usual lint and test jobs, then:
 
 | Job               | Output                                         | Notes                                    |
 |-------------------|------------------------------------------------|------------------------------------------|
 | `release-linux`   | `gol-bevy-<tag>-x86_64-linux.tar.gz`           | Built on Debian trixie, so it needs glibc 2.39 or newer |
 | `release-windows` | `gol-bevy-<tag>-x86_64-windows.zip`            | Cross-compiled with MinGW, so no Windows runner is needed |
-| `release`         | A GitLab release named `gol-bevy <tag>`        | Links to both archives                   |
+| `release-macos`   | `gol-bevy-<tag>-universal-macos.tar.gz`        | Universal binary for Apple silicon and Intel, built on a macOS runner |
+| `release`         | A GitHub release named `gol-bevy <tag>`        | Has all three archives attached          |
 
-Release binaries are built with `--locked` and stripped of symbols, which are about a third of the binary. Local release builds keep them for profiling. The archives are kept as job artifacts with no expiry, since the release page links to them.
+Release binaries are built with `--locked` and stripped of symbols, which are about a third of the binary. Local release builds keep them for profiling.
 
-## 2. Build for macOS
+## Building for macOS locally
 
-On a Mac:
+`release-macos` runs the same recipe CI uses. On a Mac, run it to try a release build:
 
 ```shell
 just release-macos v0.2.0
 ```
 
 This adds both Apple targets, builds for Apple silicon and Intel, joins them into a universal binary with `lipo`, and writes `dist/gol-bevy-v0.2.0-universal-macos.tar.gz`. Without a version, it uses `git describe --tags --always`.
-
-## 3. Attach the macOS archive
-
-Edit the release on GitLab and drag the macOS archive into its description.
 
 ## Archive layout
 

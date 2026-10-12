@@ -3,7 +3,7 @@
 #
 #   scripts/package-release.sh <archive name> <binary> [tar.gz|zip]
 #
-# Used by the release jobs in .gitlab-ci.yml and by `just release-macos`, so
+# Used by the release jobs in .github/workflows/ci.yml and by `just release-macos`, so
 # every platform's download has the same layout.
 set -eu
 

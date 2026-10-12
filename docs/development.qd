@@ -9,7 +9,7 @@ The Rust version is pinned in `rust-toolchain.toml` (currently **1.99.0**, with 
 rustup toolchain install
 ```
 
-CI uses the matching `rust:1.99.0-trixie` image, so a new Rust release cannot change what CI accepts. To move to a newer Rust, change the version in `rust-toolchain.toml` and `.gitlab-ci.yml` together.
+CI uses the matching `rust:1.99.0-trixie` image, so a new Rust release cannot change what CI accepts. To move to a newer Rust, change the version in `rust-toolchain.toml` and `.github/workflows/ci.yml` together.
 
 The crate uses the Rust 2024 edition.
 
@@ -61,15 +61,15 @@ Run `just ci-local` before pushing.
 
 ## Continuous integration
 
-`.gitlab-ci.yml` runs three stages on every push:
+`.github/workflows/ci.yml` runs three jobs on every push and pull request:
 
-| Stage   | Job      | Command                                                    |
-|---------|----------|------------------------------------------------------------|
-| lint    | `fmt`    | `cargo fmt --all -- --check`                               |
-| lint    | `clippy` | `cargo clippy --all-targets --all-features --locked -- -D warnings` |
-| test    | `test`   | `cargo test --all-targets --all-features --locked`         |
+| Job      | Command                                                    |
+|----------|------------------------------------------------------------|
+| `fmt`    | `cargo fmt --all -- --check`                               |
+| `clippy` | `cargo clippy --all-targets --all-features --locked -- -D warnings` |
+| `test`   | `cargo test --all-targets --all-features --locked`         |
 
-Tags add the build and release stages; see [Releasing](releasing.qd).
+Tags add the release build and release jobs; see [Releasing](releasing.qd).
 
 ## This documentation
 

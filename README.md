@@ -10,8 +10,8 @@ Conway's Game of Life with a native desktop GUI built on Bevy.
 
 ## Download
 
-Each tagged release on the GitLab Releases page has ready-to-run builds, so no Rust
-toolchain is needed: unpack the archive for your platform and run `gol-bevy`.
+Each tagged release on the [GitHub Releases page](https://github.com/andreashdez/gol_bevy/releases)
+has ready-to-run builds, so no Rust toolchain is needed: unpack the archive for your platform and run `gol-bevy`.
 
 - **Linux (x86_64):** needs glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40, or
   later) and a Wayland or X11 desktop.
@@ -278,15 +278,14 @@ just ci-local
 
 ### Releasing
 
-Pushing a tag such as `v0.2.0` runs the usual checks, then builds Linux and Windows
-archives (Windows is cross-compiled with MinGW) and creates a GitLab release linking
-to them. The macOS build needs an Apple machine:
+Pushing a tag such as `v0.2.0` runs the usual checks, then builds Linux, Windows,
+and universal macOS archives (Windows is cross-compiled with MinGW) and creates a
+GitHub release with them attached:
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0
-just release-macos v0.2.0   # writes dist/gol-bevy-v0.2.0-universal-macos.tar.gz
 ```
 
-Then edit the release on GitLab and drag the macOS archive into its description to
-attach it. `scripts/package-release.sh` gives every platform the same archive layout:
+To try the macOS release build locally, run `just release-macos v0.2.0`.
+`scripts/package-release.sh` gives every platform the same archive layout:
 the binary, this README, and the licence.

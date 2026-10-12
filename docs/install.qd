@@ -3,7 +3,7 @@
 
 ## Download a release
 
-Every tagged release on the .repolink {GitLab Releases page} {-/releases} has ready-to-run builds, so you don't need a Rust toolchain. Download the archive for your platform, unpack it, and run `gol-bevy`.
+Every tagged release on the .repolink {GitHub Releases page} {releases} has ready-to-run builds, so you don't need a Rust toolchain. Download the archive for your platform, unpack it, and run `gol-bevy`.
 
 Each archive contains the same three files: the binary, the README, and the licence. The app needs nothing else on disk: built-in patterns and the UI font are embedded in the binary.
 
@@ -25,7 +25,7 @@ Download the `x86_64-windows.zip` archive, unzip it, and run `gol-bevy.exe`. Rel
 
 ### macOS (universal)
 
-The macOS archive runs natively on both Apple silicon and Intel Macs. It is attached to each release by hand, so it can appear a little after the Linux and Windows builds.
+The macOS archive runs natively on both Apple silicon and Intel Macs.
 
 > Warning: The binary is not signed, so macOS blocks it the first time you open it.
 
