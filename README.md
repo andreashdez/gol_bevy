@@ -98,6 +98,11 @@ in `settings.toml`, in a `gol-bevy` folder in the platform's settings location:
 - macOS: `~/Library/Application Support`
 - Windows: `%APPDATA%`
 
+Settings save after 500 ms without further changes, and pending changes flush on normal
+app exit, including window close. Writes use a temporary file beside `settings.toml`
+and replace it only after the complete contents have been flushed. Failed saves retain
+the previous file and retry after a delay.
+
 `GOL_BEVY_CONFIG_DIR` overrides the folder on every platform. Earlier versions saved
 `ui_layout.toml`, at first in `~/.config/gol-bevy` everywhere; an old file is read
 until the first save writes `settings.toml`, and is left alone. Entries that are

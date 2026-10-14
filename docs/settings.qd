@@ -53,6 +53,11 @@ These settings are saved whenever they change, and restored on the next launch:
 
 The board's cells, undo history, and imported patterns are *not* saved.
 
+Settings save after 500 ms without further changes. Normal app exit, including window
+close, saves pending changes immediately. The app writes a temporary file beside the
+settings file and replaces the destination only after flushing the complete contents.
+Failed writes retain the previous settings file and retry after a delay.
+
 ## The settings file
 
 Settings are stored in `settings.toml`, in a `gol-bevy` folder in your platform's settings location:

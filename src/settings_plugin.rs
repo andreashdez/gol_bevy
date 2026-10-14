@@ -4,7 +4,13 @@ use crate::{
     shared::{BoardSettings, CellAge, GridOverlay, Simulation, StartupSet, Theme, UiLayout},
 };
 use bevy::prelude::*;
-use std::path::PathBuf;
+use bevy::{
+    app::{AppExit, OnAppExitSystems},
+    ecs::system::SystemParam,
+};
+use std::{path::PathBuf, time::Duration};
+
+const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 
 pub struct SettingsPlugin;
 impl Plugin for SettingsPlugin {
@@ -20,7 +26,12 @@ impl Plugin for SettingsPlugin {
                     apply_simulation_settings.after(StartupSet::BuildWorld),
                 ),
             )
-            .add_systems(Update, persist_settings);
+            .add_systems(
+                Last,
+                persist_settings
+                    .in_set(OnAppExitSystems)
+                    .after(bevy::window::ExitSystems),
+            );
     }
 }
 
@@ -28,6 +39,8 @@ impl Plugin for SettingsPlugin {
 struct SettingsPersistence {
     path: PathBuf,
     last_saved: Option<PersistedSettings>,
+    /// The latest observed state and when it is eligible for saving (or retry).
+    pending: Option<(PersistedSettings, Duration)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -124,6 +137,7 @@ fn setup_settings_persistence(
     commands.insert_resource(SettingsPersistence {
         path,
         last_saved: None,
+        pending: None,
     });
 }
 
@@ -181,34 +195,66 @@ fn load_settings(
     }
 }
 
-fn persist_settings(
-    ui_layout: Res<UiLayout>,
-    board_settings: Res<BoardSettings>,
-    grid: Res<GridOverlay>,
-    cell_age: Res<CellAge>,
-    theme: Res<Theme>,
-    sim: Option<Res<Simulation>>,
-    mut persistence: ResMut<SettingsPersistence>,
-) {
-    // Saving before the world is built would overwrite the file with defaults.
-    let Some(sim) = sim else {
-        return;
-    };
-    if !board_settings.is_set() {
-        return;
+/// Resources used to capture a complete settings snapshot.
+#[derive(SystemParam)]
+struct SettingsState<'w> {
+    ui_layout: Res<'w, UiLayout>,
+    board_settings: Res<'w, BoardSettings>,
+    grid: Res<'w, GridOverlay>,
+    cell_age: Res<'w, CellAge>,
+    theme: Res<'w, Theme>,
+    sim: Option<Res<'w, Simulation>>,
+}
+
+impl SettingsState<'_> {
+    fn snapshot(&self) -> Option<PersistedSettings> {
+        // Saving before the world is built would overwrite the file with defaults.
+        let sim = self.sim.as_ref()?;
+        if !self.board_settings.is_set() {
+            return None;
+        }
+        Some(PersistedSettings {
+            palette: self.ui_layout.control_deck_visible,
+            board: (self.board_settings.cols, self.board_settings.rows),
+            fill_canvas: self.board_settings.fill_canvas,
+            simulation: SimulationSettings::of(sim),
+            grid: self.grid.enabled,
+            cell_age: self.cell_age.enabled,
+            theme: *self.theme,
+        })
     }
-    let current = PersistedSettings {
-        palette: ui_layout.control_deck_visible,
-        board: (board_settings.cols, board_settings.rows),
-        fill_canvas: board_settings.fill_canvas,
-        simulation: SimulationSettings::of(&sim),
-        grid: grid.enabled,
-        cell_age: cell_age.enabled,
-        theme: *theme,
+}
+
+fn persist_settings(
+    state: SettingsState,
+    mut persistence: ResMut<SettingsPersistence>,
+    time: Res<Time<Real>>,
+    mut exits: MessageReader<AppExit>,
+) {
+    let exiting = exits.read().count() != 0;
+    let Some(current) = state.snapshot() else {
+        return;
     };
     if persistence.last_saved == Some(current) {
+        persistence.pending = None;
         return;
     }
+    let now = time.elapsed();
+    if !persistence
+        .pending
+        .is_some_and(|(pending, _)| pending == current)
+    {
+        persistence.pending = Some((current, now.saturating_add(SAVE_DEBOUNCE)));
+    }
+    if !exiting
+        && persistence
+            .pending
+            .is_some_and(|(_, deadline)| now < deadline)
+    {
+        return;
+    }
+    // A failed save must not retry and log every frame. Keep the state pending.
+    persistence.pending = Some((current, now.saturating_add(SAVE_DEBOUNCE)));
 
     if let Some(parent) = persistence.path.parent()
         && let Err(err) = std::fs::create_dir_all(parent)
@@ -247,7 +293,7 @@ fn persist_settings(
     if let Some(max_speed) = simulation.max_speed {
         contents.push_str(&format!("max_speed = {max_speed}\n"));
     }
-    if let Err(err) = std::fs::write(&persistence.path, contents) {
+    if let Err(err) = crate::atomic_file::write(&persistence.path, contents.as_bytes()) {
         warn!(
             "Failed to persist settings to {}: {}",
             persistence.path.display(),
@@ -257,6 +303,7 @@ fn persist_settings(
     }
 
     persistence.last_saved = Some(current);
+    persistence.pending = None;
 }
 
 /// Minimal key/value reader for the handful of scalars this app persists.
@@ -403,13 +450,158 @@ fn settings_source(path: &std::path::Path, older: impl IntoIterator<Item = PathB
 
 #[cfg(test)]
 mod persistence_tests {
-    use super::{parse_settings_from_toml, settings_source, unquote};
-    use std::path::PathBuf;
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    fn persistence_world(path: PathBuf) -> World {
+        let mut world = World::new();
+        populate_world(&mut world, path);
+        world
+    }
+
+    fn populate_world(world: &mut World, path: PathBuf) {
+        world.init_resource::<UiLayout>();
+        world.insert_resource(BoardSettings {
+            cols: 16,
+            rows: 16,
+            fill_canvas: false,
+        });
+        world.insert_resource(GridOverlay { enabled: false });
+        world.init_resource::<CellAge>();
+        world.init_resource::<Theme>();
+        world.insert_resource(Simulation::new(crate::app::App::new(16, 16)));
+        world.insert_resource(SettingsPersistence {
+            path,
+            last_saved: None,
+            pending: None,
+        });
+        world.init_resource::<Time<Real>>();
+        world.init_resource::<Messages<AppExit>>();
+    }
+
+    fn advance(world: &mut World, milliseconds: u64) {
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(milliseconds));
+        world.run_system_once(persist_settings).unwrap();
+    }
+
+    #[test]
+    fn rapid_changes_save_only_after_settling_and_reverting_cancels_a_pending_save() {
+        let directory = crate::test_support::TestDirectory::new();
+        let path = directory.0.join("nested/settings.toml");
+        let mut world = persistence_world(path.clone());
+        advance(&mut world, 0);
+        advance(&mut world, 499);
+        assert!(!path.exists());
+        world.resource_mut::<Simulation>().app.set_tick_rate_ms(100);
+        advance(&mut world, 0);
+        advance(&mut world, 499);
+        assert!(!path.exists());
+        advance(&mut world, 1);
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            parse_settings_from_toml(&saved).simulation.tick_rate_ms,
+            Some(100)
+        );
+        assert!(world.resource::<SettingsPersistence>().pending.is_none());
+        // A marker detects unwanted rewrites without relying on filesystem timestamp resolution.
+        std::fs::write(&path, "marker").unwrap();
+        advance(&mut world, 1000);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "marker");
+        world.resource_mut::<Simulation>().app.set_tick_rate_ms(200);
+        advance(&mut world, 0);
+        world.resource_mut::<Simulation>().app.set_tick_rate_ms(100);
+        advance(&mut world, 1000);
+        assert!(world.resource::<SettingsPersistence>().pending.is_none());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "marker");
+    }
+
+    #[test]
+    fn failed_saves_keep_the_last_saved_state_and_retry_after_a_delay() {
+        let directory = crate::test_support::TestDirectory::new();
+        let path = directory.0.join("settings.toml");
+        let mut world = persistence_world(path.clone());
+        advance(&mut world, 0);
+        advance(&mut world, 500);
+        let last_saved = world.resource::<SettingsPersistence>().last_saved;
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        world.resource_mut::<GridOverlay>().enabled = true;
+        advance(&mut world, 0);
+        advance(&mut world, 500);
+        assert!(world.resource::<SettingsPersistence>().last_saved == last_saved);
+        assert!(world.resource::<SettingsPersistence>().pending.is_some());
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 1);
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::write(&path, "previous file").unwrap();
+        advance(&mut world, 499);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous file");
+        advance(&mut world, 1);
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(parse_settings_from_toml(&saved).grid, Some(true));
+        assert!(world.resource::<SettingsPersistence>().pending.is_none());
+    }
+
+    #[test]
+    fn an_exit_in_the_final_schedule_flushes_the_latest_settings_without_waiting() {
+        let directory = crate::test_support::TestDirectory::new();
+        let path = directory.0.join("settings.toml");
+        let mut app = App::new();
+        populate_world(app.world_mut(), path.clone());
+        app.add_systems(
+            Last,
+            persist_settings
+                .in_set(OnAppExitSystems)
+                .after(bevy::window::ExitSystems),
+        );
+        app.world_mut().run_schedule(Last);
+        assert!(!path.exists());
+        // Window close emits AppExit in Last; the settings system must run afterwards.
+        app.add_systems(
+            Last,
+            (|mut exits: MessageWriter<AppExit>| {
+                exits.write(AppExit::Success);
+            })
+            .in_set(bevy::window::ExitSystems),
+        );
+        app.world_mut()
+            .resource_mut::<Simulation>()
+            .app
+            .set_tick_rate_ms(250);
+        app.world_mut().run_schedule(Last);
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            parse_settings_from_toml(&saved).simulation.tick_rate_ms,
+            Some(250)
+        );
+        assert!(
+            app.world()
+                .resource::<SettingsPersistence>()
+                .pending
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn startup_without_a_simulation_or_board_size_never_overwrites_settings() {
+        let directory = crate::test_support::TestDirectory::new();
+        let path = directory.0.join("settings.toml");
+        std::fs::write(&path, "keep existing settings").unwrap();
+        let mut world = persistence_world(path.clone());
+        world.resource_mut::<BoardSettings>().cols = 0;
+        advance(&mut world, 1000);
+        world.resource_mut::<BoardSettings>().cols = 16;
+        world.remove_resource::<Simulation>();
+        advance(&mut world, 1000);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "keep existing settings"
+        );
+    }
 
     #[test]
     fn legacy_settings_load_save_and_reload_without_a_ui() {
-        use super::*;
-        use bevy::ecs::system::RunSystemOnce;
         let directory = std::env::temp_dir().join(format!(
             "gol-settings-{}-{}",
             std::process::id(),
@@ -466,7 +658,12 @@ mod persistence_tests {
         world.insert_resource(SettingsPersistence {
             path: path.clone(),
             last_saved: None,
+            pending: None,
         });
+        world.init_resource::<Time<Real>>();
+        world.init_resource::<Messages<AppExit>>();
+        world.run_system_once(persist_settings).unwrap();
+        world.resource_mut::<Time<Real>>().advance_by(SAVE_DEBOUNCE);
         world.run_system_once(persist_settings).unwrap();
 
         let mut loaded_layout = UiLayout {
