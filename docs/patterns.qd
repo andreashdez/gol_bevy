@@ -90,6 +90,9 @@ x = 8, y = 4
 | `invalid RLE token '…'`                         | A character other than digits, `b`, `o`, `$`, `!`, or whitespace |
 | `RLE body missing '!' terminator`               | The body never ends with `!`                 |
 | `RLE run length overflows pattern bounds`       | A run count is too large                     |
+| `RLE exceeds the 8 MiB input or 2048 × 2048 pattern limit` | The source is over 8 MiB, or the header declares more than 2048 cells on a side |
+| `RLE body exceeds its declared dimensions`      | A run or row break goes past the header's `x` or `y` |
+| `RLE counts must be positive and followed by o, b, or $` | A count is `0`, or a count comes right before `!` |
 | `unsupported rule in RLE header: …`             | The `rule` value is not a valid rulestring   |
 
 ## Built-in patterns
@@ -135,3 +138,10 @@ The palette lists built-in patterns in file-name order. A pattern without a `#N`
 A built-in pattern that fails to parse stops the app at startup with the file name and the error, and the `every_builtin_file_parses_with_a_unique_name` test catches it first.
 
 > Warning: Keyboard shortcuts find their pattern by file name: `glider`, `blinker`, `lwss`, and `rle-8x4`. Renaming or removing one of these files unbinds its key. The tests check that each one still resolves.
+
+## Import limits
+
+RLE source is limited to 8 MiB and pattern dimensions to 2048 cells per side. The body
+must fit within the declared dimensions. Zero run counts, dangling counts, and numeric
+overflow are rejected; anything after `!` is ignored. Invalid imports leave the board
+and pattern library unchanged.

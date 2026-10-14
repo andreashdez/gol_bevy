@@ -201,6 +201,10 @@ file's `#N` line, or by the file name if there is none. Keyboard shortcuts find 
 pattern by file name (`glider`, `blinker`, `lwss`, `rle-8x4`), so renaming or removing
 one of those files unbinds its key; the tests check that each still resolves.
 
+RLE imports are limited to 8 MiB of source and 2048 cells per side. Runs must stay
+within the declared header dimensions; zero counts, dangling counts, and numeric overflow
+are rejected before expanding live-cell runs. Anything after the `!` terminator is ignored.
+
 Supported RLE features:
 
 - Header dimensions: `x = <width>, y = <height>`

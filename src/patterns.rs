@@ -59,6 +59,11 @@ impl Pattern {
     }
 }
 
+/// Import limits keep expansion and preview allocations bounded.
+pub const MAX_PATTERN_SIDE: usize = 2048;
+pub const MAX_PATTERN_CELLS: usize = MAX_PATTERN_SIDE * MAX_PATTERN_SIDE;
+pub const MAX_RLE_BYTES: usize = 8 * 1024 * 1024;
+
 /// RLE lines should stay within 70 characters.
 const RLE_LINE_WIDTH: usize = 70;
 
@@ -135,6 +140,9 @@ pub enum PatternParseError {
     MissingTerminator,
     Overflow,
     InvalidRule(RuleParseError),
+    TooLarge,
+    OutOfBounds,
+    InvalidRun,
 }
 
 impl fmt::Display for PatternParseError {
@@ -146,6 +154,12 @@ impl fmt::Display for PatternParseError {
             Self::InvalidToken(ch) => write!(f, "invalid RLE token '{ch}'"),
             Self::MissingTerminator => write!(f, "RLE body missing '!' terminator"),
             Self::Overflow => write!(f, "RLE run length overflows pattern bounds"),
+            Self::TooLarge => write!(
+                f,
+                "RLE exceeds the 8 MiB input or 2048 × 2048 pattern limit"
+            ),
+            Self::OutOfBounds => write!(f, "RLE body exceeds its declared dimensions"),
+            Self::InvalidRun => write!(f, "RLE counts must be positive and followed by o, b, or $"),
             Self::InvalidRule(err) => write!(f, "unsupported rule in RLE header: {err}"),
         }
     }
@@ -163,6 +177,9 @@ struct ParsedRle {
 }
 
 fn parse_rle(source: &str) -> Result<ParsedRle, PatternParseError> {
+    if source.len() > MAX_RLE_BYTES {
+        return Err(PatternParseError::TooLarge);
+    }
     let mut header_line = None;
     let mut name = None;
     let mut body = String::new();
@@ -198,44 +215,52 @@ fn parse_rle(source: &str) -> Result<ParsedRle, PatternParseError> {
     let mut cells = Vec::new();
     let mut x = 0usize;
     let mut y = 0usize;
-    let mut max_x = 0usize;
-    let mut max_y = 0usize;
-    let mut run = 0usize;
+    if declared_w > MAX_PATTERN_SIDE || declared_h > MAX_PATTERN_SIDE {
+        return Err(PatternParseError::TooLarge);
+    }
+    let mut run: Option<usize> = None;
     let mut terminated = false;
 
     for ch in body.chars() {
         match ch {
             '0'..='9' => {
                 let digit = (ch as u8 - b'0') as usize;
-                run = run
-                    .checked_mul(10)
-                    .and_then(|value| value.checked_add(digit))
-                    .ok_or(PatternParseError::Overflow)?;
+                run = Some(
+                    run.unwrap_or(0)
+                        .checked_mul(10)
+                        .and_then(|value| value.checked_add(digit))
+                        .ok_or(PatternParseError::Overflow)?,
+                );
             }
-            'b' => {
-                let count = if run == 0 { 1 } else { run };
-                run = 0;
-                x = x.checked_add(count).ok_or(PatternParseError::Overflow)?;
-                max_x = max_x.max(x);
-            }
-            'o' => {
-                let count = if run == 0 { 1 } else { run };
-                run = 0;
-                for dx in 0..count {
-                    cells.push((x + dx, y));
+            'b' | 'o' | '$' => {
+                let count = run.take().unwrap_or(1);
+                if count == 0 {
+                    return Err(PatternParseError::InvalidRun);
                 }
-                x = x.checked_add(count).ok_or(PatternParseError::Overflow)?;
-                max_x = max_x.max(x);
-                max_y = max_y.max(y + 1);
-            }
-            '$' => {
-                let count = if run == 0 { 1 } else { run };
-                run = 0;
-                y = y.checked_add(count).ok_or(PatternParseError::Overflow)?;
-                x = 0;
-                max_y = max_y.max(y + 1);
+                if ch == '$' {
+                    y = y.checked_add(count).ok_or(PatternParseError::Overflow)?;
+                    if y > declared_h {
+                        return Err(PatternParseError::OutOfBounds);
+                    }
+                    x = 0;
+                } else {
+                    let end = x.checked_add(count).ok_or(PatternParseError::Overflow)?;
+                    if end > declared_w || y >= declared_h {
+                        return Err(PatternParseError::OutOfBounds);
+                    }
+                    // The bounds checks above cap the cells at the declared area.
+                    if ch == 'o' {
+                        cells.extend((x..end).map(|x| (x, y)));
+                    }
+                    x = end;
+                }
             }
             '!' => {
+                if run.is_some() {
+                    return Err(PatternParseError::InvalidRun);
+                }
+                // RLE readers ignore everything after the terminator, where
+                // older files sometimes keep free-form notes.
                 terminated = true;
                 break;
             }
@@ -248,13 +273,11 @@ fn parse_rle(source: &str) -> Result<ParsedRle, PatternParseError> {
         return Err(PatternParseError::MissingTerminator);
     }
 
-    let width = declared_w.max(max_x);
-    let height = declared_h.max(max_y);
     Ok(ParsedRle {
         name,
         cells,
-        width,
-        height,
+        width: declared_w,
+        height: declared_h,
         rule,
     })
 }
@@ -465,6 +488,62 @@ mod tests {
         assert_eq!(actual, expected);
         assert_eq!((parsed.width, parsed.height), (40, 7));
         assert_eq!(parsed.rule, Some(highlife));
+    }
+
+    #[test]
+    fn rejects_oversized_and_malformed_runs_before_expanding() {
+        for (source, error) in [
+            ("x = 3, y = 3\n999999999o!", PatternParseError::OutOfBounds),
+            ("x = 2049, y = 1\no!", PatternParseError::TooLarge),
+            ("x = 1, y = 2049\no!", PatternParseError::TooLarge),
+            ("x = 3, y = 3\n4b!", PatternParseError::OutOfBounds),
+            ("x = 3, y = 3\n4$!", PatternParseError::OutOfBounds),
+            ("x = 3, y = 3\n3$o!", PatternParseError::OutOfBounds),
+            ("x = 0, y = 0\no!", PatternParseError::OutOfBounds),
+            ("x = 3, y = 3\n0o!", PatternParseError::InvalidRun),
+            ("x = 3, y = 3\n0$!", PatternParseError::InvalidRun),
+            ("x = 3, y = 3\n2!", PatternParseError::InvalidRun),
+        ] {
+            assert_eq!(
+                Pattern::from_rle("bad", source).unwrap_err(),
+                error,
+                "{source}"
+            );
+        }
+        let overflow = format!("x = 3, y = 3\no{}o!", usize::MAX);
+        assert_eq!(
+            Pattern::from_rle("bad", &overflow).unwrap_err(),
+            PatternParseError::Overflow
+        );
+        let overflow = format!("x = 3, y = 3\n{}0o!", usize::MAX);
+        assert_eq!(
+            Pattern::from_rle("bad", &overflow).unwrap_err(),
+            PatternParseError::Overflow
+        );
+        let oversized = " ".repeat(super::MAX_RLE_BYTES + 1);
+        assert_eq!(
+            Pattern::from_rle("bad", &oversized).unwrap_err(),
+            PatternParseError::TooLarge
+        );
+    }
+
+    #[test]
+    fn accepts_limit_dimensions_empty_patterns_and_trailing_row_breaks() {
+        let pattern = Pattern::from_rle("edge", "x = 2048, y = 2048\n2047b$o!").unwrap();
+        assert_eq!((pattern.width, pattern.height), (2048, 2048));
+        assert_eq!(pattern.cells, vec![(0, 1)]);
+        assert!(
+            Pattern::from_rle("empty", "x = 0, y = 0\n!")
+                .unwrap()
+                .cells
+                .is_empty()
+        );
+        let pattern = Pattern::from_rle("last", "x = 1, y = 1\no$!").unwrap();
+        assert_eq!((pattern.width, pattern.height), (1, 1));
+        // Notes after the terminator, even ones that look like cells, are ignored.
+        let pattern =
+            Pattern::from_rle("notes", "x = 2, y = 1\no!o 999999999o\nFound by hand.").unwrap();
+        assert_eq!(pattern.cells, vec![(0, 0)]);
     }
 
     #[test]
