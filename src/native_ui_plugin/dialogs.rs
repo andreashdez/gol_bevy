@@ -48,6 +48,8 @@ struct Drafts {
     width: String,
     height: String,
     rule: String,
+    density: String,
+    seed: String,
     feedback: String,
     error: bool,
     return_focus: Option<Entity>,
@@ -63,6 +65,8 @@ impl Default for Drafts {
             width: String::new(),
             height: String::new(),
             rule: String::new(),
+            density: "25".into(),
+            seed: String::new(),
             feedback: String::new(),
             error: false,
             return_focus: None,
@@ -80,6 +84,8 @@ pub(super) enum Field {
     Width,
     Height,
     Rule,
+    Density,
+    Seed,
 }
 #[derive(Component)]
 pub(super) enum DialogReadout {
@@ -119,6 +125,8 @@ fn save_fields<F: bevy::ecs::query::QueryFilter>(
             Field::Width => &mut drafts.width,
             Field::Height => &mut drafts.height,
             Field::Rule => &mut drafts.rule,
+            Field::Density => &mut drafts.density,
+            Field::Seed => &mut drafts.seed,
         };
         if *target != value {
             *target = value;
@@ -177,6 +185,12 @@ fn dialog_action(
             state.drafts.width = width.to_string();
             state.drafts.height = height.to_string();
             state.drafts.rule = state.sim.app.rule_label();
+            let random = state.sim.app.randomize_settings();
+            state.drafts.density = random.density_percent().to_string();
+            state.drafts.seed = random
+                .seed()
+                .map(|seed| seed.to_string())
+                .unwrap_or_default();
             state.drafts.feedback.clear();
             state.mode.dialog = Some(DialogKind::Settings);
         }
@@ -272,9 +286,57 @@ fn dialog_action(
                     format!("Could not read the rule: {error}. Try B/S notation such as B3/S23.");
             }
         },
+        Action::ApplyRandomize | Action::RandomizeNow => {
+            match parse_randomize(&state.drafts.density, &state.drafts.seed) {
+                Ok(settings) => {
+                    state.sim.app.set_randomize_settings(settings);
+                    if *action == Action::RandomizeNow {
+                        state.sim.app.randomize_board();
+                    }
+                    state.drafts.error = false;
+                    let seed = settings
+                        .seed()
+                        .map(|seed| format!("seed {seed}"))
+                        .unwrap_or_else(|| "a fresh seed each time".into());
+                    state.drafts.feedback = if *action == Action::RandomizeNow {
+                        format!(
+                            "Board randomized at {}% with {seed}. U to undo.",
+                            settings.density_percent()
+                        )
+                    } else {
+                        format!(
+                            "Randomization set to {}% with {seed}.",
+                            settings.density_percent()
+                        )
+                    };
+                }
+                Err(error) => {
+                    state.drafts.error = true;
+                    state.drafts.feedback = error.into();
+                }
+            }
+        }
         Action::ExportRle => export_rle(&mut state),
         _ => {}
     }
+}
+
+fn parse_randomize(
+    density: &str,
+    seed: &str,
+) -> Result<crate::board::RandomizeSettings, &'static str> {
+    let density = density
+        .trim()
+        .parse::<u8>()
+        .ok()
+        .filter(|&value| value <= 100)
+        .ok_or("Enter a whole density percentage from 0 to 100.")?;
+    let seed = if seed.trim().is_empty() {
+        None
+    } else {
+        Some(seed.trim().parse::<u64>().map_err(|_| "Seed must be a whole number from 0 to 18446744073709551615, or blank for a fresh seed.")?)
+    };
+    Ok(crate::board::RandomizeSettings::new(density, seed).expect("validated density"))
 }
 
 fn show_rule(fields: &mut Query<(&Field, &mut EditableText)>, rulestring: &str) {
@@ -508,6 +570,14 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         });
                         field(p, "Rulestring", &drafts.rule, Field::Rule, false, drafts.rule_first);
                         button(p, "Apply rule", Action::ApplyRule);
+                        p.spawn(label("Randomization", 19.0, Token::Ink));
+                        p.spawn(label("Each cell has this chance of being alive. The same density, seed, and board dimensions repeat the same starting board. Leave seed blank for a fresh board each time.", 14.0, Token::Muted));
+                        field(p, "Density (whole %, 0–100)", &drafts.density, Field::Density, false, false);
+                        field(p, "Seed (optional whole number)", &drafts.seed, Field::Seed, false, false);
+                        p.spawn(row()).with_children(|p| {
+                            button(p, "Apply randomization", Action::ApplyRandomize);
+                            button(p, "Randomize now", Action::RandomizeNow);
+                        });
                         p.spawn(label("Theme", 19.0, Token::Ink));
                         p.spawn(label("Colours of the board, the pattern library, and the interface.", 14.0, Token::Muted));
                         p.spawn(row()).with_children(|p| {
@@ -724,6 +794,94 @@ mod tests {
         world.trigger(Activate { entity: export });
         assert!(world.resource::<Drafts>().error);
         assert!(world.resource::<Drafts>().feedback.contains("clipboard"));
+    }
+
+    #[test]
+    fn randomization_fields_validate_before_applying_and_randomize_repeatably() {
+        let mut world = test_world(DialogKind::Settings);
+        let density = world.spawn((Field::Density, EditableText::new("70"))).id();
+        let seed = world.spawn((Field::Seed, EditableText::new("42"))).id();
+        let apply = world.spawn(Action::ApplyRandomize).id();
+        let randomize = world.spawn(Action::RandomizeNow).id();
+        world.trigger(Activate { entity: apply });
+        assert!(!world.resource::<Drafts>().error);
+        assert_eq!(
+            world.resource::<Simulation>().app.board.live_cells_count(),
+            0
+        );
+        assert!(!world.resource::<Simulation>().app.can_undo());
+        let settings = crate::board::RandomizeSettings::new(70, Some(42)).unwrap();
+        assert_eq!(
+            world.resource::<Simulation>().app.randomize_settings(),
+            settings
+        );
+        world.trigger(Activate { entity: randomize });
+        let original = world.resource::<Simulation>().app.board.snapshot_cells();
+        world.trigger(Activate { entity: randomize });
+        assert_eq!(
+            world.resource::<Simulation>().app.board.snapshot_cells(),
+            original
+        );
+        world.entity_mut(seed).insert(EditableText::new("-1"));
+        world.trigger(Activate { entity: randomize });
+        assert!(world.resource::<Drafts>().error);
+        assert_eq!(
+            world.resource::<Simulation>().app.board.snapshot_cells(),
+            original
+        );
+        assert_eq!(
+            world.resource::<Simulation>().app.randomize_settings(),
+            settings
+        );
+        world.entity_mut(density).insert(EditableText::new("101"));
+        world.entity_mut(seed).insert(EditableText::new(""));
+        world.trigger(Activate { entity: apply });
+        assert!(world.resource::<Drafts>().error);
+        assert_eq!(
+            world.resource::<Simulation>().app.randomize_settings(),
+            settings
+        );
+        world.entity_mut(density).insert(EditableText::new("0"));
+        world.trigger(Activate { entity: randomize });
+        assert!(!world.resource::<Drafts>().error);
+        assert_eq!(
+            world.resource::<Simulation>().app.board.live_cells_count(),
+            0
+        );
+        assert_eq!(
+            world
+                .resource::<Simulation>()
+                .app
+                .randomize_settings()
+                .seed(),
+            None
+        );
+        assert!(world.resource_mut::<Simulation>().app.undo());
+        assert_eq!(
+            world.resource::<Simulation>().app.board.snapshot_cells(),
+            original
+        );
+    }
+
+    #[test]
+    fn randomization_fields_accept_seed_endpoints_and_reject_invalid_numbers() {
+        assert_eq!(parse_randomize(" 100 ", " 0 ").unwrap().seed(), Some(0));
+        assert_eq!(
+            parse_randomize("0", "18446744073709551615").unwrap().seed(),
+            Some(u64::MAX)
+        );
+        assert_eq!(parse_randomize("25", "  ").unwrap().seed(), None);
+        for (density, seed) in [
+            ("", ""),
+            ("101", ""),
+            ("-1", ""),
+            ("25.5", ""),
+            ("25", "1.5"),
+            ("25", "-1"),
+            ("25", "18446744073709551616"),
+        ] {
+            assert!(parse_randomize(density, seed).is_err(), "{density}, {seed}");
+        }
     }
 
     #[test]

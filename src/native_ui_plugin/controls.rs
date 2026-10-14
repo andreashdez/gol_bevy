@@ -85,14 +85,16 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::Diagnostics => "Simulation diagnostics · F3",
         Action::Rotate => "Rotate stamp 90° clockwise · Z",
         Action::Flip => "Flip stamp horizontally · F",
-        Action::Randomize => "Fill the board with random cells · R",
+        Action::Randomize => "Randomize using the density and seed in Settings · R",
         Action::Clear => "Clear the board · X · undo with U",
         Action::Boundary => "Wrap / fixed edges · M",
         Action::Tool(EditTool::Draw) => "Draw cells with the left mouse button",
         Action::Tool(EditTool::Erase) => "Erase cells · right-click also erases",
         Action::Tool(EditTool::Stamp) => "Place the selected pattern on the board",
         Action::Import => "Import RLE into your library, or copy the board as RLE",
-        Action::Settings => "Board size, rule, theme, grid, cell age, and edges",
+        Action::Settings => "Board size, rule, randomization, theme, grid, cell age, and edges",
+        Action::ApplyRandomize => "Use this density and optional seed for future randomizations",
+        Action::RandomizeNow => "Apply the density and seed, then replace the board · undo with U",
         Action::FillCanvas => {
             "Size the board to fill the canvas, and follow it when the window or palette changes"
         }

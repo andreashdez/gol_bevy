@@ -1,5 +1,5 @@
 use crate::{
-    board::{self, Rule},
+    board::{self, RandomizeSettings, Rule},
     patterns::{Pattern, PatternParseError},
 };
 use std::collections::VecDeque;
@@ -106,6 +106,7 @@ pub struct App {
     stamp_transform: StampTransform,
     /// available stamp patterns
     patterns: Vec<Pattern>,
+    randomize_settings: RandomizeSettings,
     tool: EditTool,
     undo_history: VecDeque<EditSnapshot>,
     redo_history: VecDeque<EditSnapshot>,
@@ -136,6 +137,7 @@ impl App {
             selected_pattern: None,
             stamp_transform: StampTransform::default(),
             patterns: Pattern::builtins(),
+            randomize_settings: RandomizeSettings::default(),
             tool: EditTool::Draw,
             undo_history: VecDeque::new(),
             redo_history: VecDeque::new(),
@@ -282,11 +284,19 @@ impl App {
         }
     }
 
+    pub fn randomize_settings(&self) -> RandomizeSettings {
+        self.randomize_settings
+    }
+
+    /// Preferences apply to the next randomization and do not edit the board.
+    pub fn set_randomize_settings(&mut self, settings: RandomizeSettings) {
+        self.randomize_settings = settings;
+    }
+
     pub fn randomize_board(&mut self) {
         self.end_stroke();
         self.save_edit();
-        self.board.clear();
-        self.board.populate_random();
+        self.board.populate_random_with(self.randomize_settings);
         self.needs_redraw = true;
     }
 
@@ -675,6 +685,28 @@ mod tests {
         app.select_pattern(pattern);
         let (cols, rows) = app.board.size();
         app.place_selected_pattern_at(cols / 2, rows / 2);
+    }
+
+    #[test]
+    fn configured_randomization_repeats_and_remains_one_undoable_edit() {
+        let mut app = App::new(32, 24);
+        app.populate_board(5, 6);
+        app.set_rule(Rule::parse("B36/S23").unwrap());
+        app.epoch = 123;
+        let original = app.board.snapshot_cells();
+        let settings = RandomizeSettings::new(70, Some(u64::MAX)).unwrap();
+        app.set_randomize_settings(settings);
+        app.randomize_board();
+        let randomized = app.board.snapshot_cells();
+        assert!(app.undo());
+        assert_eq!(app.board.snapshot_cells(), original);
+        assert_eq!(app.epoch, 123);
+        assert_eq!(app.rule_label(), "B36/S23");
+        assert_eq!(app.randomize_settings(), settings);
+        assert!(app.redo());
+        assert_eq!(app.board.snapshot_cells(), randomized);
+        app.randomize_board();
+        assert_eq!(app.board.snapshot_cells(), randomized);
     }
 
     #[test]

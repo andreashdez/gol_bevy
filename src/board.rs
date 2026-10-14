@@ -1,5 +1,38 @@
 use bevy::tasks::{ComputeTaskPool, TaskPool};
 
+/// Preferences for replacing a board with random cells. A fixed seed repeats
+/// the same row-major sequence for the same dimensions and density.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RandomizeSettings {
+    density_percent: u8,
+    seed: Option<u64>,
+}
+
+impl Default for RandomizeSettings {
+    fn default() -> Self {
+        Self {
+            density_percent: 25,
+            seed: None,
+        }
+    }
+}
+
+impl RandomizeSettings {
+    pub fn new(density_percent: u8, seed: Option<u64>) -> Option<Self> {
+        (density_percent <= 100).then_some(Self {
+            density_percent,
+            seed,
+        })
+    }
+
+    pub fn density_percent(self) -> u8 {
+        self.density_percent
+    }
+    pub fn seed(self) -> Option<u64> {
+        self.seed
+    }
+}
+
 const CELL_ALIVE: u8 = 1;
 /// Smallest share of a dense scan worth handing to another thread. Dispatching
 /// bands costs roughly 15-20 us per scan, which settled boards, where few cells
@@ -315,16 +348,21 @@ impl Board {
     }
 
     pub fn populate_random(&mut self) {
-        if self.cols == 0 || self.rows == 0 {
-            return;
-        }
+        self.populate_random_with(RandomizeSettings::default());
+    }
 
-        // Roll each cell once. Picking `len / 4` coordinates with replacement
-        // repeats cells, which landed the density nearer 22% than the intended 25%.
+    /// Replace every cell, using a local SplitMix64 sequence. The explicit
+    /// algorithm keeps seeded boards independent of dependency RNG changes and
+    /// other random operations. Arithmetic deliberately wraps at 64 bits.
+    pub fn populate_random_with(&mut self, settings: RandomizeSettings) {
+        let mut state = settings.seed.unwrap_or_else(|| fastrand::u64(..));
         for cell in &mut self.current {
-            if fastrand::u8(0..4) == 0 {
-                *cell = CELL_ALIVE;
-            }
+            state = state.wrapping_add(0x9E3779B97F4A7C15);
+            let mut value = state;
+            value = (value ^ (value >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+            value = (value ^ (value >> 27)).wrapping_mul(0x94D049BB133111EB);
+            value ^= value >> 31;
+            *cell = u8::from(value % 100 < u64::from(settings.density_percent));
         }
         self.live_count = count_live(&self.current);
         self.mark_dirty_full();
@@ -1506,6 +1544,45 @@ mod tests {
             }
         }
         assert!(kept_frontiers > 0 && dropped_frontiers > 0);
+    }
+
+    #[test]
+    fn seeded_randomization_has_a_stable_sequence_and_replaces_previous_cells() {
+        let settings = super::RandomizeSettings::new(25, Some(42)).unwrap();
+        let mut board = Board::new(8, 8);
+        board.populate_random_with(settings);
+        let original = board.snapshot_cells();
+        let sequence: String = original
+            .iter()
+            .map(|&cell| if cell == 1 { '1' } else { '0' })
+            .collect();
+        assert_eq!(
+            sequence,
+            "1000000110100000000100000000011000000001000000000000000100000010"
+        );
+        board.populate_random_with(super::RandomizeSettings::new(100, None).unwrap());
+        board.populate_random_with(settings);
+        assert_eq!(board.snapshot_cells(), original);
+        board.populate_random_with(super::RandomizeSettings::new(25, Some(43)).unwrap());
+        assert_ne!(board.snapshot_cells(), original);
+        assert_live_count_in_sync(&board, "seeded replacement");
+        assert_eq!(board.take_dirty_cells(), DirtyCells::Full);
+    }
+
+    #[test]
+    fn configured_randomization_handles_endpoints_and_expected_densities() {
+        assert!(super::RandomizeSettings::new(101, None).is_none());
+        let mut board = Board::new(512, 256);
+        for (percent, seed) in [(100, 0), (0, u64::MAX), (10, 123), (75, 123)] {
+            board.populate_random_with(super::RandomizeSettings::new(percent, Some(seed)).unwrap());
+            let density = board.live_cells_count() as f64 / (512.0 * 256.0);
+            if percent == 0 || percent == 100 {
+                assert_eq!(density, f64::from(percent) / 100.0);
+            } else {
+                assert!((density - f64::from(percent) / 100.0).abs() < 0.015);
+            }
+            assert_live_count_in_sync(&board, "configured density");
+        }
     }
 
     #[test]

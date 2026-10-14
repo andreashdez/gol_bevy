@@ -186,6 +186,8 @@ enum Action {
     EditRule,
     ExportRle,
     ResetEpoch,
+    ApplyRandomize,
+    RandomizeNow,
     Tool(EditTool),
     Pattern(usize),
     Rotate,
@@ -620,7 +622,9 @@ fn activate(
         | Action::RulePreset(_)
         | Action::ApplyRule
         | Action::EditRule
-        | Action::ExportRle => {}
+        | Action::ExportRle
+        | Action::ApplyRandomize
+        | Action::RandomizeNow => {}
         Action::Grid => view.grid.enabled = !view.grid.enabled,
         Action::CellAge => view.cell_age.enabled = !view.cell_age.enabled,
         Action::Sidebar => layout.toggle_control_deck(),

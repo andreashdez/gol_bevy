@@ -41,10 +41,16 @@ The stamp preview in the palette and the ghost on the board both show the orient
 
 | Action        | Key               | Effect                                                     |
 |---------------|-------------------|------------------------------------------------------------|
-| **Randomize** | .keybinding {R}   | Clear the board, then make each cell alive with a 1 in 4 chance |
+| **Randomize** | .keybinding {R}   | Replace the board using the density and seed chosen in Settings |
 | **Clear**     | .keybinding {X}   | Kill every cell                                            |
 
-Both are edits, so you can undo them.
+Both are edits, so you can undo them. Randomize keeps the rule, edges, and generation
+counter. In Settings, **Randomization** lets you choose a whole-number density from
+0–100% (25% by default), and an optional seed. Leave the seed blank for a fresh board
+each time; the same seed, density, and dimensions repeat the same cell layout.
+**Apply randomization** sets the preferences; **Randomize now** also replaces the board.
+Density is a probability for each cell, so the population is approximate. At 0% the
+board is empty; at 100% every cell is alive.
 
 ## Undo and redo
 

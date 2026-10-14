@@ -91,7 +91,17 @@ type any rulestring in B/S notation (`B36/S23`, or the older `23/36`). Changing 
 rule is an undoable edit. Settings also switches between the Dark, Light, and High contrast
 themes, which recolour both the board and the interface.
 
-Palette visibility, board size, rule, boundary mode, speed, the grid, cell age, and the theme are saved between runs
+Settings also provides **Randomization**: choose a whole-number density from 0–100%
+and optionally enter a seed from 0 to 18446744073709551615. **Apply randomization**
+sets the preferences for the toolbar's Randomize button and **R**; **Randomize now**
+applies them and replaces the board immediately as one undoable edit. The default
+is 25% with a blank seed, which uses a fresh seed each time. With a fixed seed,
+the same density and board dimensions reproduce the same cell layout, independent
+of other random operations. Density is a probability per cell, so the resulting
+population is approximate; 0% clears the board and 100% fills it. Randomization
+keeps the current rule, boundary mode, and generation counter.
+
+Palette visibility, board size, rule, boundary mode, speed, randomization preferences, the grid, cell age, and the theme are saved between runs
 in `settings.toml`, in a `gol-bevy` folder in the platform's settings location:
 
 - Linux: `$XDG_CONFIG_HOME`, or `~/.config` if that is unset

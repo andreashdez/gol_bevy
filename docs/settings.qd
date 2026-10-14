@@ -23,6 +23,23 @@ Click **Fill canvas** again to keep the current size from then on. Applying a si
 
 Pick **Life**, **HighLife**, **Day & Night**, or **Seeds**, or type a rulestring and click **Apply rule**. See [Rules](simulation.qd#rules) for the notation.
 
+## Randomization
+
+Choose a whole-number **Density** from 0–100%, and optionally enter a **Seed** from
+0 to 18446744073709551615. Blank seed means a fresh board each time. The default is
+25% with no seed. The same seed, density, and board dimensions reproduce the same
+starting layout; share all three to repeat an experiment. Use the same rule and
+boundary mode to reproduce its evolution.
+
+**Apply randomization** changes the preferences without editing the board. The toolbar
+Randomize button and .keybinding {R} use those preferences. **Randomize now** applies
+the entered values and replaces the board immediately as one undoable edit. Invalid
+values leave both preferences and board unchanged.
+
+Density is a probability per cell, so the population is approximate. At 0% the board
+is empty; at 100% it is full. Rule, edges, and generation counter stay as they are.
+Preferences are saved between runs.
+
 ## Theme
 
 Pick **Dark**, **Light**, or **High contrast** to change the colours of the board, the pattern thumbnails, and the toolbar, palette, status bar, and dialogs. **Light** shows dark green cells on a white board. **High contrast** uses black panels, white text, bright green cells, yellow fixed edges, and a yellow focus outline.
@@ -50,6 +67,7 @@ These settings are saved whenever they change, and restored on the next launch:
 | Rule           | `rule`                               |
 | Edge mode      | `boundary_mode`                      |
 | Speed          | `tick_rate_ms`, `max_speed`          |
+| Randomization  | `random_density_percent`, `random_seed` |
 
 The board's cells, undo history, and imported patterns are *not* saved.
 
@@ -84,6 +102,8 @@ rule = "B3/S23"
 boundary_mode = "wrap"
 tick_rate_ms = 25
 max_speed = false
+random_density_percent = 25
+# random_seed = 42  # Omit for a fresh seed each time.
 ```
 
 | Key             | Values                                                    |
@@ -98,6 +118,8 @@ max_speed = false
 | `boundary_mode` | `"wrap"` or `"fixed"`                                     |
 | `tick_rate_ms`  | Milliseconds between generations, clamped to 25–1000      |
 | `max_speed`     | `true` or `false`                                         |
+| `random_density_percent` | Whole number from 0–100; 25 if missing or invalid |
+| `random_seed` | Whole number from 0–18446744073709551615; omit for a fresh seed |
 
 You can edit the file while the app is closed. Entries that are missing or can't be read keep their defaults, so a damaged file never stops the app from starting. Without a saved board size, the board is sized to fill the window.
 

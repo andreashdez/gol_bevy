@@ -1,6 +1,6 @@
 //! Persisted workspace settings, independent of the UI implementation.
 use crate::{
-    board::{BoundaryMode, Rule},
+    board::{BoundaryMode, RandomizeSettings, Rule},
     shared::{BoardSettings, CellAge, GridOverlay, Simulation, StartupSet, Theme, UiLayout},
 };
 use bevy::prelude::*;
@@ -62,6 +62,8 @@ struct SimulationSettings {
     boundary: Option<BoundaryMode>,
     tick_rate_ms: Option<u64>,
     max_speed: Option<bool>,
+    random_density_percent: Option<u8>,
+    random_seed: Option<u64>,
 }
 
 impl SimulationSettings {
@@ -71,11 +73,17 @@ impl SimulationSettings {
             boundary: Some(sim.app.board.boundary_mode()),
             tick_rate_ms: Some(sim.app.tick_rate_ms()),
             max_speed: Some(sim.app.is_max_speed()),
+            random_density_percent: Some(sim.app.randomize_settings().density_percent()),
+            random_seed: sim.app.randomize_settings().seed(),
         }
     }
 
     fn apply_to(self, sim: &mut Simulation) {
         // Startup state rather than an edit, so none of this enters undo history.
+        sim.app.set_randomize_settings(
+            RandomizeSettings::new(self.random_density_percent.unwrap_or(25), self.random_seed)
+                .unwrap_or_default(),
+        );
         if let Some(rule) = self.rule {
             sim.app.board.set_rule(rule);
         }
@@ -293,6 +301,12 @@ fn persist_settings(
     if let Some(max_speed) = simulation.max_speed {
         contents.push_str(&format!("max_speed = {max_speed}\n"));
     }
+    if let Some(density) = simulation.random_density_percent {
+        contents.push_str(&format!("random_density_percent = {density}\n"));
+    }
+    if let Some(seed) = simulation.random_seed {
+        contents.push_str(&format!("random_seed = {seed}\n"));
+    }
     if let Err(err) = crate::atomic_file::write(&persistence.path, contents.as_bytes()) {
         warn!(
             "Failed to persist settings to {}: {}",
@@ -343,6 +357,11 @@ fn parse_settings_from_toml(contents: &str) -> ParsedSettings {
             "boundary_mode" => parsed.simulation.boundary = boundary_from_storage_str(value),
             "tick_rate_ms" => parsed.simulation.tick_rate_ms = value.parse::<u64>().ok(),
             "max_speed" => parsed.simulation.max_speed = value.parse::<bool>().ok(),
+            "random_density_percent" => {
+                parsed.simulation.random_density_percent =
+                    value.parse::<u8>().ok().filter(|&density| density <= 100)
+            }
+            "random_seed" => parsed.simulation.random_seed = value.parse::<u64>().ok(),
             _ => {}
         }
     }
@@ -645,6 +664,7 @@ mod persistence_tests {
         app.toggle_boundary_mode();
         app.set_tick_rate_ms(100);
         app.set_max_speed();
+        app.set_randomize_settings(RandomizeSettings::new(70, Some(u64::MAX)).unwrap());
         let mut world = World::new();
         layout.control_deck_visible = true;
         board.set(128, 64);
@@ -694,9 +714,55 @@ mod persistence_tests {
         assert_eq!(restored.app.board.boundary_mode(), BoundaryMode::Fixed);
         assert_eq!(restored.app.tick_rate_ms(), 100);
         assert!(restored.app.is_max_speed());
+        assert_eq!(
+            restored.app.randomize_settings(),
+            RandomizeSettings::new(70, Some(u64::MAX)).unwrap()
+        );
         // Restoring settings is not an edit the user could undo.
         assert!(!restored.app.can_undo());
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn unseeded_preferences_remove_a_previous_seed_from_the_settings_file() {
+        let directory = crate::test_support::TestDirectory::new();
+        let path = directory.0.join("settings.toml");
+        let mut world = persistence_world(path.clone());
+        world
+            .resource_mut::<Simulation>()
+            .app
+            .set_randomize_settings(RandomizeSettings::new(90, Some(0)).unwrap());
+        advance(&mut world, 0);
+        advance(&mut world, 500);
+        assert_eq!(
+            parse_settings_from_toml(&std::fs::read_to_string(&path).unwrap())
+                .simulation
+                .random_seed,
+            Some(0)
+        );
+        world
+            .resource_mut::<Simulation>()
+            .app
+            .set_randomize_settings(RandomizeSettings::new(10, None).unwrap());
+        advance(&mut world, 0);
+        advance(&mut world, 500);
+        let contents = std::fs::read_to_string(&path).unwrap();
+        let parsed = parse_settings_from_toml(&contents).simulation;
+        assert_eq!(parsed.random_density_percent, Some(10));
+        assert_eq!(parsed.random_seed, None);
+        assert!(!contents.contains("random_seed"));
+        for source in [
+            "random_density_percent = 101",
+            "random_density_percent = -1",
+            "random_density_percent = 25.5",
+            "random_seed = -1",
+            "random_seed = 18446744073709551616",
+        ] {
+            assert_eq!(
+                parse_settings_from_toml(source).simulation,
+                SimulationSettings::default()
+            );
+        }
     }
 
     #[test]
