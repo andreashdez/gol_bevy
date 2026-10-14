@@ -106,6 +106,7 @@ pub struct App {
     stamp_transform: StampTransform,
     /// available stamp patterns
     patterns: Vec<Pattern>,
+    library_revision: u64,
     randomize_settings: RandomizeSettings,
     tool: EditTool,
     undo_history: VecDeque<EditSnapshot>,
@@ -137,6 +138,7 @@ impl App {
             selected_pattern: None,
             stamp_transform: StampTransform::default(),
             patterns: Pattern::builtins(),
+            library_revision: 0,
             randomize_settings: RandomizeSettings::default(),
             tool: EditTool::Draw,
             undo_history: VecDeque::new(),
@@ -367,11 +369,22 @@ impl App {
         source: &str,
     ) -> Result<PatternImport, PatternParseError> {
         let pattern = Pattern::from_rle(name, source)?;
+        if pattern.name.len() > crate::patterns::MAX_PATTERN_NAME_BYTES {
+            return Err(PatternParseError::NameTooLong);
+        }
+        let imported = &self.patterns[Pattern::builtin_count()..];
+        let cells: usize = imported.iter().map(|p| p.cells.len()).sum();
+        if imported.len() >= crate::patterns::MAX_LIBRARY_PATTERNS
+            || cells + pattern.cells.len() > crate::patterns::MAX_LIBRARY_CELLS
+        {
+            return Err(PatternParseError::LibraryFull);
+        }
 
         // Honour a declared rule instead of simulating the pattern as plain Life.
         let applied_rule = pattern.rule.filter(|&rule| self.set_rule(rule));
 
         self.patterns.push(pattern);
+        self.library_revision = self.library_revision.wrapping_add(1);
         self.selected_pattern = Some(self.patterns.len() - 1);
         self.tool = EditTool::Stamp;
         self.needs_redraw = true;
@@ -395,6 +408,42 @@ impl App {
         true
     }
 
+    /// Capture the board and imported library for an explicit workspace save.
+    pub fn workspace(
+        &self,
+    ) -> Result<crate::workspace::Workspace, crate::workspace::WorkspaceError> {
+        crate::workspace::Workspace::capture(self, &self.patterns[Pattern::builtin_count()..])
+    }
+
+    /// Validate first, then replace the workspace atomically and leave playback paused.
+    pub fn restore_workspace(
+        &mut self,
+        workspace: crate::workspace::Workspace,
+    ) -> Result<(), crate::workspace::WorkspaceError> {
+        self.restore_decoded(workspace.decode()?);
+        Ok(())
+    }
+
+    /// Replace the workspace with one already validated by [`Workspace::decode`],
+    /// so a caller can confirm with the user between validating and replacing.
+    ///
+    /// [`Workspace::decode`]: crate::workspace::Workspace::decode
+    pub(crate) fn restore_decoded(&mut self, decoded: crate::workspace::DecodedWorkspace) {
+        let mut restored = Self::new(decoded.width, decoded.height);
+        restored.board.set_rule(decoded.rule);
+        restored.board.set_boundary_mode(decoded.boundary);
+        restored.board.restore_cells(decoded.cells);
+        restored.epoch = decoded.generation;
+        restored.randomize_settings = decoded.randomize_settings;
+        restored.set_tick_rate_ms(decoded.tick_rate_ms);
+        if decoded.max_speed {
+            restored.set_max_speed();
+        }
+        restored.patterns.extend(decoded.patterns);
+        restored.library_revision = self.library_revision.wrapping_add(1);
+        *self = restored;
+    }
+
     /// The live cells cropped to their bounding box, as RLE with the board rule
     /// in the header. `None` for an empty board.
     pub fn board_to_rle(&self) -> Option<BoardExport> {
@@ -410,7 +459,7 @@ impl App {
         let cells: Vec<_> = live.iter().map(|&(x, y)| (x - min_x, y - min_y)).collect();
         let comment = format!("Generation {} of a {cols}x{rows} board", self.epoch);
         Some(BoardExport {
-            rle: crate::patterns::to_rle(&cells, width, height, self.board.rule(), &comment),
+            rle: crate::patterns::to_rle(&cells, width, height, Some(self.board.rule()), &comment),
             cells: cells.len(),
             width,
             height,
@@ -427,6 +476,10 @@ impl App {
     pub fn selected_pattern_index(&self) -> Option<usize> {
         self.selected_pattern
             .filter(|&idx| idx < self.patterns.len())
+    }
+
+    pub fn library_revision(&self) -> u64 {
+        self.library_revision
     }
 
     pub fn pattern_count(&self) -> usize {
@@ -707,6 +760,46 @@ mod tests {
         assert_eq!(app.board.snapshot_cells(), randomized);
         app.randomize_board();
         assert_eq!(app.board.snapshot_cells(), randomized);
+    }
+
+    #[test]
+    fn imports_beyond_the_library_limits_leave_the_library_and_rule_unchanged() {
+        use crate::patterns::{MAX_LIBRARY_PATTERNS, MAX_PATTERN_NAME_BYTES, MAX_PATTERN_SIDE};
+        let mut app = App::new(16, 16);
+        for index in 0..MAX_LIBRARY_PATTERNS {
+            app.import_rle_pattern(format!("dot {index}"), "x = 1, y = 1\no!")
+                .unwrap();
+        }
+        let (count, revision) = (app.pattern_count(), app.library_revision());
+        assert_eq!(
+            app.import_rle_pattern("one too many", "x = 1, y = 1, rule = B36/S23\no!")
+                .err(),
+            Some(PatternParseError::LibraryFull)
+        );
+        assert_eq!(
+            (app.pattern_count(), app.library_revision()),
+            (count, revision)
+        );
+        assert_eq!(app.rule_label(), "B3/S23");
+
+        // A maximum-size pattern uses the whole cell budget.
+        let mut app = App::new(16, 16);
+        let side = MAX_PATTERN_SIDE;
+        let full = format!(
+            "x = {side}, y = {side}\n{}{side}o!",
+            format!("{side}o$").repeat(side - 1)
+        );
+        app.import_rle_pattern("full", &full).unwrap();
+        assert_eq!(
+            app.import_rle_pattern("dot", "x = 1, y = 1\no!").err(),
+            Some(PatternParseError::LibraryFull)
+        );
+        assert_eq!(
+            app.import_rle_pattern("n".repeat(MAX_PATTERN_NAME_BYTES + 1), "x = 1, y = 1\no!")
+                .err(),
+            Some(PatternParseError::NameTooLong)
+        );
+        assert_eq!(app.pattern_count(), Pattern::builtin_count() + 1);
     }
 
     #[test]

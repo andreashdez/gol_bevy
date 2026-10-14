@@ -96,6 +96,7 @@ impl Plugin for NativeUiPlugin {
             .add_systems(
                 Update,
                 (
+                    dialogs::poll_file_dialog,
                     dialogs::update_dialogs,
                     sync,
                     sync_palette,
@@ -185,6 +186,10 @@ enum Action {
     /// Opens Settings with the rulestring field focused.
     EditRule,
     ExportRle,
+    SaveWorkspace,
+    OpenWorkspace,
+    ConfirmOpenWorkspace,
+    CancelOpenWorkspace,
     ResetEpoch,
     ApplyRandomize,
     RandomizeNow,
@@ -623,6 +628,10 @@ fn activate(
         | Action::ApplyRule
         | Action::EditRule
         | Action::ExportRle
+        | Action::SaveWorkspace
+        | Action::OpenWorkspace
+        | Action::ConfirmOpenWorkspace
+        | Action::CancelOpenWorkspace
         | Action::ApplyRandomize
         | Action::RandomizeNow => {}
         Action::Grid => view.grid.enabled = !view.grid.enabled,
@@ -864,10 +873,10 @@ fn sync_palette(
     theme: Res<Theme>,
     palette: Query<Entity, With<Palette>>,
     mut images: ResMut<Assets<Image>>,
-    mut count: Local<usize>,
+    mut revision: Local<Option<u64>>,
 ) {
     // Thumbnails are drawn in board colours, so a new theme redraws the library.
-    if *count == sim.app.pattern_count() && !theme.is_changed() {
+    if *revision == Some(sim.app.library_revision()) && !theme.is_changed() {
         return;
     }
     let Ok(entity) = palette.single() else {
@@ -955,7 +964,7 @@ fn sync_palette(
                 });
             }
         });
-    *count = sim.app.pattern_count();
+    *revision = Some(sim.app.library_revision());
 }
 
 /// A bounded thumbnail keeps large imported patterns from spawning thousands of UI entities.
@@ -1004,6 +1013,38 @@ fn thumbnail(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opening_a_workspace_rebuilds_a_library_with_the_same_pattern_count() {
+        let mut world = World::new();
+        let mut app = GolApp::new(16, 16);
+        app.import_rle_pattern("Old import", "x = 1, y = 1\no!")
+            .unwrap();
+        world.insert_resource(Simulation::new(app));
+        world.insert_resource(Theme::Dark);
+        world.init_resource::<Assets<Image>>();
+        world.spawn(Palette);
+        let sync = world.register_system(sync_palette);
+        world.run_system(sync).unwrap();
+        world.clear_trackers();
+        let mut other = GolApp::new(16, 16);
+        other
+            .import_rle_pattern("New import", "x = 2, y = 1\n2o!")
+            .unwrap();
+        world
+            .resource_mut::<Simulation>()
+            .app
+            .restore_workspace(other.workspace().unwrap())
+            .unwrap();
+        world.run_system(sync).unwrap();
+        let names: Vec<_> = world
+            .query::<&Name>()
+            .iter(&world)
+            .map(|name| name.as_str())
+            .collect();
+        assert!(names.contains(&"New import"));
+        assert!(!names.contains(&"Old import"));
+    }
 
     #[test]
     fn clicked_buttons_release_focus_but_keyboard_and_modal_focus_stay() {

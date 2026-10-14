@@ -224,7 +224,7 @@ pub(super) fn filter(
     mut entries: Query<FilterEntry>,
     mut summary: Query<(&mut Text, &mut controls::TallLabel), With<SearchSummary>>,
     mut scroll: Query<&mut ScrollPosition, With<LibraryScroll>>,
-    mut previous: Local<Option<(String, usize)>>,
+    mut previous: Local<Option<(String, u64)>>,
 ) {
     let Ok(search) = search.single() else {
         return;
@@ -233,7 +233,7 @@ pub(super) fn filter(
     let count = sim.app.pattern_count();
     if previous
         .as_ref()
-        .is_some_and(|p| p.0 == query && p.1 == count)
+        .is_some_and(|p| p.0 == query && p.1 == sim.app.library_revision())
     {
         return;
     }
@@ -272,7 +272,7 @@ pub(super) fn filter(
             format!("{found} of {count} patterns")
         };
     }
-    *previous = Some((query, count));
+    *previous = Some((query, sim.app.library_revision()));
 }
 
 /// What the stamp preview was last drawn from.
@@ -381,6 +381,46 @@ mod tests {
         assert_ne!(
             world.resource::<Assets<Image>>().get(&handle).unwrap().data,
             before
+        );
+    }
+
+    #[test]
+    fn search_refreshes_when_a_workspace_replaces_an_equal_size_library() {
+        let mut world = World::new();
+        let mut app = GolApp::new(16, 16);
+        app.import_rle_pattern("Old import", "x = 1, y = 1\no!")
+            .unwrap();
+        world.insert_resource(Simulation::new(app));
+        world.spawn((PatternSearch, EditableText::new("Old import")));
+        let summary = world
+            .spawn((SearchSummary, Text::new(""), controls::TallLabel::default()))
+            .id();
+        let imported = world
+            .spawn((
+                Node::default(),
+                Action::Pattern(crate::patterns::Pattern::builtin_count()),
+            ))
+            .id();
+        let filter_system = world.register_system(filter);
+        world.run_system(filter_system).unwrap();
+        assert_eq!(world.get::<Node>(imported).unwrap().display, Display::Flex);
+        let mut other = GolApp::new(16, 16);
+        other
+            .import_rle_pattern("New import", "x = 1, y = 1\no!")
+            .unwrap();
+        world
+            .resource_mut::<Simulation>()
+            .app
+            .restore_workspace(other.workspace().unwrap())
+            .unwrap();
+        world.run_system(filter_system).unwrap();
+        assert_eq!(world.get::<Node>(imported).unwrap().display, Display::None);
+        assert!(
+            world
+                .get::<Text>(summary)
+                .unwrap()
+                .0
+                .starts_with("No matches.")
         );
     }
 

@@ -63,6 +63,11 @@ impl Pattern {
 pub const MAX_PATTERN_SIDE: usize = 2048;
 pub const MAX_PATTERN_CELLS: usize = MAX_PATTERN_SIDE * MAX_PATTERN_SIDE;
 pub const MAX_RLE_BYTES: usize = 8 * 1024 * 1024;
+/// Imported library limits, enforced on import so a workspace can always save
+/// what the session holds. The board is bounded by its dimensions instead.
+pub const MAX_LIBRARY_PATTERNS: usize = 256;
+pub const MAX_LIBRARY_CELLS: usize = MAX_PATTERN_CELLS;
+pub const MAX_PATTERN_NAME_BYTES: usize = 1024;
 
 /// RLE lines should stay within 70 characters.
 const RLE_LINE_WIDTH: usize = 70;
@@ -70,11 +75,12 @@ const RLE_LINE_WIDTH: usize = 70;
 /// Writes `cells`, which lie within `width` x `height`, as RLE that
 /// [`Pattern::from_rle`] reads back. Dead cells at the end of a row are left
 /// out and runs of empty rows are merged into one `$`, as other tools expect.
+/// Without a rule the header has no `rule =` field, which reads back as `None`.
 pub fn to_rle(
     cells: &[(usize, usize)],
     width: usize,
     height: usize,
-    rule: Rule,
+    rule: Option<Rule>,
     comment: &str,
 ) -> String {
     let mut grid = vec![false; width * height];
@@ -117,7 +123,11 @@ pub fn to_rle(
     for line in comment.lines() {
         rle.push_str(&format!("#C {line}\n"));
     }
-    rle.push_str(&format!("x = {width}, y = {height}, rule = {rule}\n"));
+    rle.push_str(&format!("x = {width}, y = {height}"));
+    if let Some(rule) = rule {
+        rle.push_str(&format!(", rule = {rule}"));
+    }
+    rle.push('\n');
     let mut line_length = 0;
     for token in tokens {
         if line_length + token.len() > RLE_LINE_WIDTH {
@@ -143,6 +153,8 @@ pub enum PatternParseError {
     TooLarge,
     OutOfBounds,
     InvalidRun,
+    LibraryFull,
+    NameTooLong,
 }
 
 impl fmt::Display for PatternParseError {
@@ -161,6 +173,11 @@ impl fmt::Display for PatternParseError {
             Self::OutOfBounds => write!(f, "RLE body exceeds its declared dimensions"),
             Self::InvalidRun => write!(f, "RLE counts must be positive and followed by o, b, or $"),
             Self::InvalidRule(err) => write!(f, "unsupported rule in RLE header: {err}"),
+            Self::LibraryFull => write!(
+                f,
+                "the imported library is full (at most 256 patterns and 4,194,304 live cells)"
+            ),
+            Self::NameTooLong => write!(f, "pattern names may contain at most 1024 bytes"),
         }
     }
 }
@@ -468,15 +485,18 @@ mod tests {
 
         let glider = [(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)];
         assert_eq!(
-            to_rle(&glider, 3, 3, Rule::LIFE, "Glider"),
+            to_rle(&glider, 3, 3, Some(Rule::LIFE), "Glider"),
             "#C Glider\nx = 3, y = 3, rule = B3/S23\nbo$2bo$3o!\n"
         );
+        let unruled = to_rle(&glider, 3, 3, None, "");
+        assert_eq!(unruled, "x = 3, y = 3\nbo$2bo$3o!\n");
+        assert_eq!(Pattern::from_rle("no rule", &unruled).unwrap().rule, None);
 
         // Empty rows inside the pattern, long runs, and a body long enough to wrap.
         let mut cells = vec![(0, 0), (39, 0), (5, 4), (6, 4), (7, 4)];
         cells.extend((0..40).step_by(2).map(|x| (x, 6)));
         let highlife = Rule::parse("B36/S23").unwrap();
-        let rle = to_rle(&cells, 40, 7, highlife, "two\nlines");
+        let rle = to_rle(&cells, 40, 7, Some(highlife), "two\nlines");
         assert!(rle.contains("4$"), "empty rows merge into one run: {rle}");
         assert!(rle.lines().all(|line| line.len() <= 70), "{rle}");
 

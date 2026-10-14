@@ -75,3 +75,22 @@ Undo restores the board, the generation counter, and the rule as they were befor
 History keeps up to 32 edits, within a budget of about 16 MiB of board snapshots. On very large boards fewer edits fit, but at least one is always kept.
 
 Resizing the board clears the undo and redo history, because old snapshots no longer fit the new size. Resizing the *window* does not affect history, unless [Fill canvas](settings.qd#fill-canvas) is on and the board resizes with it.
+
+## Save and reopen workspaces
+
+Open **Import / Export**, then use **Workspace files**. **Save workspace…** opens the
+system file dialog in your Documents folder, or wherever you last saved or opened a
+workspace. The dialog asks before replacing an existing file.
+
+**Open workspace…** lets you choose a `.golw` file and checks it. If it is valid, you're
+asked whether to replace the current board and imported pattern library. **Cancel**
+(or Escape) keeps your current work. Files preserve board dimensions, exact cell positions, generation,
+rule, boundary mode, playback speed, randomization density and seed, and imported pattern names, cells, and rules.
+Replacing pauses playback, clears undo/redo, and turns Fill canvas off. Invalid files
+are reported without asking, and leave the current workspace intact.
+
+Files are versioned JSON containing RLE data. Limits are 32 MiB per file, 256 imported
+patterns, 1024 bytes per pattern name, and 4,194,304 live cells across the imported
+patterns. The board doesn't count toward the cell limit. Camera position,
+active stamp, cell-age trails, and undo history are not saved. Display settings remain
+in the separate settings file. Saving is explicit; there is no automatic recovery.

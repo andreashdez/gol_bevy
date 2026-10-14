@@ -122,6 +122,26 @@ missing or unreadable keep their defaults.
 cropped to their bounding box, with the board rule in the header. The result pastes
 back into Import, or into other Life tools such as Golly.
 
+**Workspace files** in Import / Export provide **Save workspace…** and **Open workspace…**,
+which use the system file dialog. It starts in your Documents folder, then wherever you
+last saved or opened a workspace, and asks before replacing an existing file. Saving
+writes through a temporary file before replacing it. On Linux the file dialog comes
+from xdg-desktop-portal, so a portal backend (such as xdg-desktop-portal-gtk or -kde)
+must be installed.
+
+A workspace preserves the full board dimensions and cell positions, generation, rule,
+boundary mode, playback speed, randomization preferences, and imported patterns, including their names and rules.
+Opening validates the whole file first, then asks before replacing your workspace.
+Replacing pauses playback, clears undo/redo, and turns Fill canvas off so the loaded
+dimensions stay intact. Display settings continue to use
+`settings.toml`; selection, camera position, and cell-age trails are not stored.
+Workspace files use versioned JSON with RLE cell data. Limits are 32 MiB per file,
+256 imported patterns, 1024 bytes per pattern name, and 4,194,304 live cells across
+the imported library. The board doesn't count toward the cell limit, so even a full
+2048 × 2048 board can be saved. Import enforces the same library limits, so anything
+you have imported can always be saved. Imported patterns can now be kept between runs by
+saving a workspace; there is no automatic session recovery.
+
 Local CI-equivalent checks:
 
 ```bash
@@ -175,7 +195,7 @@ bar stays a single row at every window size. The active rule preset is highlight
 Settings. Clear, randomize, undo, and redo show brief feedback, including the undo
 shortcut where applicable. Diagnostics open from Settings or F3 and start hidden.
 
-Undo restores the board, generation, and rule before drawing, erasing, placing a stamp, randomizing, clearing, changing the rule, or importing a pattern that changes the rule, and pauses playback. Redo reapplies an undone edit, and making a new edit discards the redo chain. Each drag is one edit. History retains up to 32 edits within an approximate 16 MiB budget (with at least one edit), and clears when the board is resized. Imported patterns remain available for the current session.
+Undo restores the board, generation, and rule before drawing, erasing, placing a stamp, randomizing, clearing, changing the rule, or importing a pattern that changes the rule, and pauses playback. Redo reapplies an undone edit, and making a new edit discards the redo chain. Each drag is one edit. History retains up to 32 edits within an approximate 16 MiB budget (with at least one edit), and clears when the board is resized. Imported patterns remain available for the current session, or across sessions in saved workspace files.
 
 ## Architecture map
 

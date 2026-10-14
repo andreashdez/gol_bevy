@@ -94,6 +94,8 @@ x = 8, y = 4
 | `RLE body exceeds its declared dimensions`      | A run or row break goes past the header's `x` or `y` |
 | `RLE counts must be positive and followed by o, b, or $` | A count is `0`, or a count comes right before `!` |
 | `unsupported rule in RLE header: …`             | The `rule` value is not a valid rulestring   |
+| `the imported library is full (…)`              | The library already holds 256 patterns, or this pattern would take it past 4,194,304 live cells |
+| `pattern names may contain at most 1024 bytes`  | The name field is longer than 1024 bytes     |
 
 ## Built-in patterns
 
@@ -145,3 +147,8 @@ RLE source is limited to 8 MiB and pattern dimensions to 2048 cells per side. Th
 must fit within the declared dimensions. Zero run counts, dangling counts, and numeric
 overflow are rejected; anything after `!` is ignored. Invalid imports leave the board
 and pattern library unchanged.
+
+The imported library holds up to 256 patterns and 4,194,304 live cells in total (one
+full 2048 × 2048 pattern), with names of at most 1024 bytes. Beyond that, import
+reports that the library is full. These match the workspace file limits, so your
+library can always be saved.

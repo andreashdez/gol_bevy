@@ -363,7 +363,9 @@ fn apply_board_settings(
         return;
     }
     let (cols, rows) = (settings.cols, settings.rows);
-    if sim.app.board.size() == (cols, rows) {
+    if sim.app.board.size() == (cols, rows)
+        && (canvas.texture.cols, canvas.texture.rows) == (cols, rows)
+    {
         return;
     }
 
@@ -763,6 +765,46 @@ mod tests {
         let colors = Theme::Dark.board();
         assert_eq!(color_to_texel(colors.live), [56, 217, 143, 255]);
         assert_eq!(color_to_texel(colors.dead), [20, 23, 28, 255]);
+    }
+
+    #[test]
+    fn restored_board_dimensions_rebuild_the_texture_and_repaint_loaded_cells() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let mut app = GolApp::new(16, 24);
+        app.populate_board(15, 23);
+        world.insert_resource(Simulation::new(app));
+        world.insert_resource(BoardSettings {
+            cols: 16,
+            rows: 24,
+            fill_canvas: false,
+        });
+        world.insert_resource(Theme::Dark);
+        world.insert_resource(RedrawRequested(true));
+        world.insert_resource(CellAge { enabled: false });
+        world.init_resource::<CellAges>();
+        let mut images = Assets::<Image>::default();
+        let old = create_board_image(&mut images, 8, 8, Theme::Dark.board().dead);
+        world.insert_resource(images);
+        world.insert_resource(BoardTexture {
+            handle: old,
+            cols: 8,
+            rows: 8,
+        });
+        let sprite = world.spawn((BoardSprite, Sprite::default())).id();
+        world.run_system_once(apply_board_settings).unwrap();
+        let texture = world.resource::<BoardTexture>();
+        assert_eq!((texture.cols, texture.rows), (16, 24));
+        assert_eq!(world.get::<Sprite>(sprite).unwrap().image, texture.handle);
+        world.run_system_once(sync_cells).unwrap();
+        let texture = world.resource::<BoardTexture>();
+        let images = world.resource::<Assets<Image>>();
+        let data = images.get(&texture.handle).unwrap().data.as_ref().unwrap();
+        let offset = texel_offset(23 * 16 + 15, 16, 24);
+        assert_eq!(
+            data[offset..offset + 4],
+            color_to_texel(Theme::Dark.board().live)
+        );
     }
 
     #[test]

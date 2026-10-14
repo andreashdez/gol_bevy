@@ -103,6 +103,12 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::ApplyRule => "Use the rulestring above, written in B/S notation",
         Action::EditRule => "The board's rule · click to change it in Settings",
         Action::ExportRle => "Copy the live cells to the clipboard as RLE",
+        Action::SaveWorkspace => {
+            "Choose a file for the board, generation, rule, edges, speed, and imported patterns"
+        }
+        Action::OpenWorkspace => "Choose a workspace file to replace this one · asks first",
+        Action::ConfirmOpenWorkspace => "Replace this workspace with the chosen file · clears undo",
+        Action::CancelOpenWorkspace => "Keep the current workspace · Escape also cancels",
         Action::CloseDialog => "Close this dialog · Escape",
         _ => "",
     }

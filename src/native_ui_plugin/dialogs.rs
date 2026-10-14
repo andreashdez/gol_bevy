@@ -1,5 +1,6 @@
 //! Native editors and modal input routing. Drafts survive closing and reopening.
 use super::*;
+use crate::workspace::{DecodedWorkspace, Workspace};
 use crate::{
     board::{Rule, frontier_dense_threshold_percent_for_diagnostics},
     shared::{
@@ -10,9 +11,11 @@ use crate::{
 use bevy::{
     clipboard::Clipboard,
     input_focus::AutoFocus,
+    tasks::{IoTaskPool, Task, futures::check_ready},
     text::{EditableText, TextEdit},
     ui_widgets::{SelectAllOnFocus, TextInput},
 };
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DialogKind {
@@ -20,15 +23,18 @@ pub(crate) enum DialogKind {
     Settings,
     Help,
     Diagnostics,
+    /// Asks before a validated workspace file replaces the current one.
+    ConfirmOpen,
 }
 
 impl DialogKind {
     fn title(self) -> &'static str {
         match self {
-            Self::Import => "Import and export RLE",
+            Self::Import => "Import / Export and workspaces",
             Self::Settings => "Workspace settings",
             Self::Help => "Controls and tips",
             Self::Diagnostics => "Simulation diagnostics",
+            Self::ConfirmOpen => "Open workspace?",
         }
     }
 }
@@ -44,6 +50,10 @@ pub(super) const RULE_PRESETS: [(&str, &str); 4] = [
 #[derive(Resource)]
 struct Drafts {
     name: String,
+    /// The last workspace file saved or opened, where the next file dialog starts.
+    workspace_path: Option<PathBuf>,
+    /// A validated workspace waiting for the user to confirm replacing theirs.
+    pending_open: Option<(PathBuf, DecodedWorkspace)>,
     source: String,
     width: String,
     height: String,
@@ -61,6 +71,8 @@ impl Default for Drafts {
     fn default() -> Self {
         Self {
             name: "Imported Pattern".into(),
+            workspace_path: None,
+            pending_open: None,
             source: "x = 3, y = 3\nbo$2bo$3o!".into(),
             width: String::new(),
             height: String::new(),
@@ -96,7 +108,9 @@ pub(super) enum DialogReadout {
 pub(super) struct NativeDialogsPlugin;
 impl Plugin for NativeDialogsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Drafts>().add_observer(dialog_action);
+        app.init_resource::<Drafts>()
+            .init_resource::<FileDialog>()
+            .add_observer(dialog_action);
     }
 }
 
@@ -109,6 +123,7 @@ pub(super) struct DialogState<'w> {
     diagnostics: ResMut<'w, DiagnosticsOverlay>,
     board: ResMut<'w, BoardSettings>,
     focus: ResMut<'w, InputFocus>,
+    file_dialog: ResMut<'w, FileDialog>,
     /// Absent in tests, which must not touch the system clipboard.
     clipboard: Option<ResMut<'w, Clipboard>>,
 }
@@ -136,6 +151,7 @@ fn save_fields<F: bevy::ecs::query::QueryFilter>(
 }
 
 fn close(state: &mut DialogState) {
+    state.drafts.pending_open = None;
     state.capture.block_modal_frame();
     match state.mode.dialog {
         Some(DialogKind::Help) => state.sim.app.set_help_visible(false),
@@ -317,6 +333,15 @@ fn dialog_action(
             }
         }
         Action::ExportRle => export_rle(&mut state),
+        Action::SaveWorkspace => request_save(&mut state),
+        Action::OpenWorkspace => request_open(&mut state),
+        Action::ConfirmOpenWorkspace => confirm_open(&mut state),
+        Action::CancelOpenWorkspace => {
+            state.drafts.pending_open = None;
+            state.mode.dialog = Some(DialogKind::Import);
+            state.drafts.error = false;
+            state.drafts.feedback = "Kept the current workspace.".into();
+        }
         _ => {}
     }
 }
@@ -337,6 +362,143 @@ fn parse_randomize(
         Some(seed.trim().parse::<u64>().map_err(|_| "Seed must be a whole number from 0 to 18446744073709551615, or blank for a fresh seed.")?)
     };
     Ok(crate::board::RandomizeSettings::new(density, seed).expect("validated density"))
+}
+
+enum FileRequest {
+    /// Captured at the click, so the file holds what was on screen then, even
+    /// if playback continues while the user browses.
+    Save(Box<Workspace>),
+    Open,
+}
+
+/// The native file dialog in progress, if any. It runs off the main thread so
+/// the app keeps drawing while the user browses.
+#[derive(Resource, Default)]
+pub(super) struct FileDialog(Option<(FileRequest, Task<Option<PathBuf>>)>);
+
+fn request_save(state: &mut DialogState) {
+    if file_dialog_busy(state) {
+        return;
+    }
+    match state.sim.app.workspace() {
+        Ok(workspace) => request_file(state, FileRequest::Save(Box::new(workspace))),
+        Err(error) => {
+            state.drafts.error = true;
+            state.drafts.feedback = format!("Could not save the workspace: {error}");
+        }
+    }
+}
+
+fn request_open(state: &mut DialogState) {
+    if !file_dialog_busy(state) {
+        request_file(state, FileRequest::Open);
+    }
+}
+
+fn file_dialog_busy(state: &mut DialogState) -> bool {
+    let busy = state.file_dialog.0.is_some();
+    if busy {
+        state.drafts.error = false;
+        state.drafts.feedback = "A file dialog is already open.".into();
+    }
+    busy
+}
+
+fn request_file(state: &mut DialogState, request: FileRequest) {
+    let previous = state.drafts.workspace_path.as_deref();
+    let directory = previous
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .or_else(dirs::document_dir);
+    let file_name = previous
+        .and_then(Path::file_name)
+        .map_or_else(|| "workspace.golw".into(), |name| name.to_string_lossy());
+    let mut dialog = rfd::AsyncFileDialog::new().add_filter("Game of Life workspace", &["golw"]);
+    if let Some(directory) = directory {
+        dialog = dialog.set_directory(directory);
+    }
+    // The system dialog asks before replacing an existing file.
+    let chosen: std::pin::Pin<Box<dyn Future<Output = Option<rfd::FileHandle>> + Send>> =
+        match request {
+            FileRequest::Save(_) => Box::pin(dialog.set_file_name(file_name).save_file()),
+            FileRequest::Open => Box::pin(dialog.pick_file()),
+        };
+    let task =
+        IoTaskPool::get().spawn(async move { chosen.await.map(|file| file.path().to_owned()) });
+    state.drafts.error = false;
+    state.drafts.feedback = match request {
+        FileRequest::Save(_) => "Choose where to save the workspace.",
+        FileRequest::Open => "Choose a workspace file to open.",
+    }
+    .into();
+    state.file_dialog.0 = Some((request, task));
+}
+
+pub(super) fn poll_file_dialog(mut state: DialogState) {
+    let Some((_, task)) = state.file_dialog.0.as_mut() else {
+        return;
+    };
+    let Some(chosen) = check_ready(task) else {
+        return;
+    };
+    let Some((request, _)) = state.file_dialog.0.take() else {
+        return;
+    };
+    finish_file_request(&mut state, request, chosen);
+}
+
+fn finish_file_request(state: &mut DialogState, request: FileRequest, chosen: Option<PathBuf>) {
+    let Some(path) = chosen else {
+        state.drafts.error = false;
+        state.drafts.feedback = "No file was chosen.".into();
+        return;
+    };
+    let saving = matches!(request, FileRequest::Save(_));
+    let result = match request {
+        FileRequest::Save(workspace) => workspace
+            .write(&path)
+            .map(|()| format!("Workspace saved to {}.", path.display())),
+        // Validate the whole file first, so only a usable workspace asks to replace yours.
+        FileRequest::Open => Workspace::read(&path)
+            .and_then(Workspace::decode)
+            .map(|decoded| {
+                state.drafts.pending_open = Some((path.clone(), decoded));
+                state.mode.dialog = Some(DialogKind::ConfirmOpen);
+                String::new()
+            }),
+    };
+    match result {
+        Ok(feedback) => {
+            state.drafts.workspace_path = Some(path);
+            state.drafts.error = false;
+            state.drafts.feedback = feedback;
+        }
+        Err(error) => {
+            let verb = if saving { "save" } else { "open" };
+            state.drafts.error = true;
+            state.drafts.feedback = format!("Could not {verb} {}: {error}", path.display());
+        }
+    }
+}
+
+fn confirm_open(state: &mut DialogState) {
+    let Some((path, decoded)) = state.drafts.pending_open.take() else {
+        return;
+    };
+    state.sim.app.restore_decoded(decoded);
+    let (width, height) = state.sim.app.board.size();
+    state.board.set(width, height);
+    state.board.fill_canvas = false;
+    state.sim.accumulator = std::time::Duration::ZERO;
+    state.sim.avg_step_ms = 0.0;
+    state.sim.step_samples = 0;
+    state.sim.rate = Default::default();
+    state.mode.dialog = Some(DialogKind::Import);
+    state.drafts.error = false;
+    state.drafts.feedback = format!(
+        "Opened {}. Playback is paused; undo history cleared and Fill canvas off.",
+        path.display()
+    );
 }
 
 fn show_rule(fields: &mut Query<(&Field, &mut EditableText)>, rulestring: &str) {
@@ -548,6 +710,12 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         p.spawn(label("Export", 19.0, Token::Ink));
                         p.spawn(label("Copy the live cells, cropped to their bounding box, as RLE with the board rule.", 14.0, Token::Muted));
                         button(p, "Copy board as RLE", Action::ExportRle);
+                        p.spawn(label("Workspace files", 19.0, Token::Ink));
+                        p.spawn(label("Save your board and imported patterns to a .golw file, or open one to replace them. Opening asks first.", 14.0, Token::Muted));
+                        p.spawn(row()).with_children(|p| {
+                            button(p, "Save workspace…", Action::SaveWorkspace);
+                            button(p, "Open workspace…", Action::OpenWorkspace);
+                        });
                     }
                     DialogKind::Settings => {
                         p.spawn(label("Board dimensions", 19.0, Token::Ink));
@@ -596,6 +764,19 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         p.spawn(label("Tab moves between controls; the board is the last stop, and while it is outlined Space and the other shortcuts apply to it. Escape closes a dialog. Simulation shortcuts are disabled while a dialog is open.", 14.0, Token::Muted));
                         p.spawn((label(CONTROLS_TEXT.as_str(), 14.0, Token::Ink), super::accessibility::named_node(accesskit::Role::Label, CONTROLS_TEXT.as_str())));
                     }
+                    DialogKind::ConfirmOpen => {
+                        let file = drafts.pending_open.as_ref()
+                            .and_then(|(path, _)| path.file_name())
+                            .map_or_else(|| "this file".into(), |name| name.to_string_lossy());
+                        p.spawn(label(&format!("Replace the current board, generation, rule, and imported patterns with {file}?"), 16.0, Token::Ink));
+                        p.spawn(label("Playback pauses, undo history is cleared, and Fill canvas turns off. Unsaved changes are lost.", 14.0, Token::Muted));
+                        p.spawn(row()).with_children(|p| {
+                            button(p, "Replace workspace", Action::ConfirmOpenWorkspace);
+                            // Cancel is the safe default for Enter.
+                            let cancel = button(p, "Cancel", Action::CancelOpenWorkspace);
+                            p.commands().entity(cancel).insert(AutoFocus);
+                        });
+                    }
                     DialogKind::Diagnostics => {
                         p.spawn((Text::default(), TextFont { font_size: FontSize::Px(14.0), ..default() },
                             ThemedText(Token::Ink), DialogReadout::Diagnostics, super::accessibility::named_node(accesskit::Role::Label, "Diagnostics"), Pickable::IGNORE));
@@ -630,6 +811,7 @@ mod tests {
         world.insert_resource(DiagnosticsOverlay { enabled: false });
         world.insert_resource(InputFocus::default());
         world.insert_resource(ButtonInput::<KeyCode>::default());
+        world.init_resource::<FileDialog>();
         world.add_observer(dialog_action);
         world
     }
@@ -794,6 +976,143 @@ mod tests {
         world.trigger(Activate { entity: export });
         assert!(world.resource::<Drafts>().error);
         assert!(world.resource::<Drafts>().feedback.contains("clipboard"));
+    }
+
+    /// Completes a file dialog as if the user had chosen `path`.
+    fn choose(world: &mut World, request: FileRequest, path: Option<&Path>) {
+        let path = path.map(Path::to_path_buf);
+        let mut request = Some(request);
+        world
+            .run_system_once(move |mut state: DialogState| {
+                let request = request.take().expect("the system runs once");
+                finish_file_request(&mut state, request, path.clone());
+            })
+            .unwrap();
+    }
+
+    /// A save request as the Save button captures it from the current app.
+    fn save_request(world: &World) -> FileRequest {
+        let workspace = world.resource::<Simulation>().app.workspace().unwrap();
+        FileRequest::Save(Box::new(workspace))
+    }
+
+    #[test]
+    fn opening_a_workspace_validates_first_then_asks_before_replacing() {
+        let directory = crate::test_support::TestDirectory::new();
+        let path = directory.0.join("workspace.golw");
+        let mut world = test_world(DialogKind::Import);
+        let sim = |world: &World| world.resource::<Simulation>().app.board.is_alive(31, 30);
+        world
+            .resource_mut::<Simulation>()
+            .app
+            .populate_board(31, 30);
+        world.resource_mut::<Simulation>().app.epoch = 42;
+        let request = save_request(&world);
+        choose(&mut world, request, Some(&path));
+        assert!(!world.resource::<Drafts>().error);
+        assert_eq!(
+            world.resource::<Drafts>().workspace_path.as_deref(),
+            Some(path.as_path())
+        );
+
+        // A cancelled system dialog changes nothing.
+        world.resource_mut::<Simulation>().app.resize_board(8, 8);
+        world.resource_mut::<Simulation>().app.toggle_running();
+        choose(&mut world, FileRequest::Open, None);
+        assert_eq!(
+            world.resource::<NativeUi>().dialog,
+            Some(DialogKind::Import)
+        );
+
+        // Choosing a valid file asks first, and Cancel keeps the current workspace.
+        choose(&mut world, FileRequest::Open, Some(&path));
+        assert_eq!(
+            world.resource::<NativeUi>().dialog,
+            Some(DialogKind::ConfirmOpen)
+        );
+        assert_eq!(world.resource::<Simulation>().app.board.size(), (8, 8));
+        let cancel = world.spawn(Action::CancelOpenWorkspace).id();
+        world.trigger(Activate { entity: cancel });
+        assert_eq!(
+            world.resource::<NativeUi>().dialog,
+            Some(DialogKind::Import)
+        );
+        assert!(world.resource::<Drafts>().pending_open.is_none());
+        assert_eq!(world.resource::<Simulation>().app.board.size(), (8, 8));
+        assert!(world.resource::<Simulation>().app.is_running());
+
+        // Closing the prompt (Escape or Close) also drops the pending file.
+        choose(&mut world, FileRequest::Open, Some(&path));
+        let close_button = world.spawn(Action::CloseDialog).id();
+        world.trigger(Activate {
+            entity: close_button,
+        });
+        assert!(world.resource::<Drafts>().pending_open.is_none());
+        assert_eq!(world.resource::<Simulation>().app.board.size(), (8, 8));
+
+        // Confirming replaces the workspace and resets playback state.
+        world.resource_mut::<NativeUi>().dialog = Some(DialogKind::Import);
+        world.resource_mut::<Simulation>().accumulator = std::time::Duration::from_secs(2);
+        world.resource_mut::<BoardSettings>().fill_canvas = true;
+        choose(&mut world, FileRequest::Open, Some(&path));
+        let replace = world.spawn(Action::ConfirmOpenWorkspace).id();
+        world.trigger(Activate { entity: replace });
+        assert_eq!(
+            world.resource::<NativeUi>().dialog,
+            Some(DialogKind::Import)
+        );
+        assert!(!world.resource::<Drafts>().error);
+        assert!(sim(&world));
+        let board = *world.resource::<BoardSettings>();
+        assert_eq!((board.cols, board.rows, board.fill_canvas), (32, 32, false));
+        let state = world.resource::<Simulation>();
+        assert!(!state.app.is_running() && !state.app.can_undo());
+        assert_eq!(state.app.epoch, 42);
+        assert_eq!(state.accumulator, std::time::Duration::ZERO);
+
+        // An invalid file reports an error without asking or changing anything.
+        std::fs::write(&path, "invalid").unwrap();
+        choose(&mut world, FileRequest::Open, Some(&path));
+        assert!(world.resource::<Drafts>().error);
+        assert_eq!(
+            world.resource::<NativeUi>().dialog,
+            Some(DialogKind::Import)
+        );
+        assert!(world.resource::<Drafts>().pending_open.is_none());
+        assert!(sim(&world));
+
+        // The system dialog confirms replacement, so saving over a file just writes it.
+        let request = save_request(&world);
+        choose(&mut world, request, Some(&path));
+        assert!(!world.resource::<Drafts>().error);
+        assert!(crate::workspace::Workspace::read(&path).is_ok());
+        let request = save_request(&world);
+        choose(
+            &mut world,
+            request,
+            Some(&directory.0.join("missing/w.golw")),
+        );
+        assert!(world.resource::<Drafts>().error);
+    }
+
+    #[test]
+    fn saving_writes_the_workspace_as_it_was_when_save_was_clicked() {
+        let directory = crate::test_support::TestDirectory::new();
+        let path = directory.0.join("workspace.golw");
+        let mut world = test_world(DialogKind::Import);
+        world.resource_mut::<Simulation>().app.populate_board(3, 4);
+        world.resource_mut::<Simulation>().app.epoch = 7;
+        let request = save_request(&world);
+        // Playback and edits continue while the user browses for a file.
+        world.resource_mut::<Simulation>().app.clear_board();
+        world.resource_mut::<Simulation>().app.epoch = 99;
+        choose(&mut world, request, Some(&path));
+        let mut restored = GolApp::new(8, 8);
+        restored
+            .restore_workspace(crate::workspace::Workspace::read(&path).unwrap())
+            .unwrap();
+        assert!(restored.board.is_alive(3, 4));
+        assert_eq!(restored.epoch, 7);
     }
 
     #[test]

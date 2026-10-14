@@ -12,3 +12,4 @@ pub mod simulation_plugin;
 #[cfg(test)]
 mod test_support;
 pub mod ui_input;
+pub mod workspace;
