@@ -18,10 +18,11 @@ pub(super) enum Icon {
     Gear,
     Help,
     Fit,
+    More,
 }
 
 impl Icon {
-    const ALL: [Icon; 11] = [
+    const ALL: [Icon; 12] = [
         Icon::Play,
         Icon::Pause,
         Icon::Step,
@@ -33,6 +34,7 @@ impl Icon {
         Icon::Gear,
         Icon::Help,
         Icon::Fit,
+        Icon::More,
     ];
 
     /// Stable handles, so icons can be spawned before or without the asset.
@@ -71,6 +73,11 @@ impl Icon {
             Icon::Gear => gear(p),
             Icon::Help => help(p),
             Icon::Fit => fit(p) - HALF_STROKE,
+            // Three dots in a row, for a menu of further controls.
+            Icon::More => [5.0, 12.0, 19.0]
+                .map(|x| p.distance(vec2(x, 12.0)) - 2.0)
+                .into_iter()
+                .fold(f32::INFINITY, f32::min),
         }
     }
 
@@ -253,6 +260,7 @@ mod tests {
             (Icon::Gear, vec2(12.0, 6.5)),
             (Icon::Help, vec2(12.0, 18.5)),
             (Icon::Fit, vec2(20.0, 6.0)),
+            (Icon::More, vec2(19.0, 12.0)),
         ];
         for (icon, point) in inside {
             assert!(icon.distance(point) < -0.5, "{icon:?} at {point}");

@@ -1,6 +1,6 @@
-use std::{sync::LazyLock, time::Duration};
+use std::time::Duration;
 
-use crate::app::{App as GolApp, PatternKind};
+use crate::app::App as GolApp;
 use bevy::{ecs::schedule::SystemSet, prelude::*, window::Window};
 
 pub const CELL_SIZE: f32 = 12.0;
@@ -13,177 +13,186 @@ pub const CAMERA_PAN_SPEED: f32 = 700.0;
 
 #[derive(Clone, Copy)]
 pub struct KeyBinding {
+    /// Characters matched on the logical key, so the shortcut follows the active
+    /// layout (`/` is Shift+7 on a German keyboard). Matched case-insensitively.
+    pub chars: &'static [&'static str],
+    /// Physical keys, for bindings that depend on position (WASD) or type no
+    /// character.
     pub keys: &'static [KeyCode],
-    pub label: &'static str,
+    /// Key caps shown in Help and tooltips, one per alternative.
+    pub caps: &'static [&'static str],
     pub action: &'static str,
 }
 
 impl KeyBinding {
-    pub fn just_pressed(self, input: &ButtonInput<KeyCode>) -> bool {
+    pub fn just_pressed(self, input: &ButtonInput<KeyCode>, typed: &TypedKeys) -> bool {
         self.keys.iter().copied().any(|key| input.just_pressed(key))
+            || self
+                .chars
+                .iter()
+                .any(|character| typed.just_typed(character))
     }
 
+    /// Held state is only tracked for physical keys.
     pub fn pressed(self, input: &ButtonInput<KeyCode>) -> bool {
         self.keys.iter().copied().any(|key| input.pressed(key))
     }
 }
 
+/// Characters typed this frame, lowercased. Rebuilt from key events every frame
+/// instead of using `ButtonInput<Key>`, whose held state sticks when a modifier
+/// changes the character between press and release (Shift+= pressed as `+`,
+/// released as `=`), which would swallow the next press.
+#[derive(Resource, Default)]
+pub struct TypedKeys(Vec<String>);
+
+impl TypedKeys {
+    pub fn just_typed(&self, character: &str) -> bool {
+        self.0.iter().any(|typed| typed == character)
+    }
+
+    pub fn press(&mut self, character: &str) {
+        self.0.push(character.to_lowercase());
+    }
+}
+
+pub fn collect_typed_keys(
+    mut events: MessageReader<bevy::input::keyboard::KeyboardInput>,
+    mut typed: ResMut<TypedKeys>,
+) {
+    if !typed.0.is_empty() {
+        typed.0.clear();
+    }
+    for event in events.read() {
+        if event.state.is_pressed()
+            && !event.repeat
+            && let bevy::input::keyboard::Key::Character(character) = &event.logical_key
+        {
+            typed.press(character);
+        }
+    }
+}
+
 pub const BINDING_RUN_PAUSE: KeyBinding = KeyBinding {
+    chars: &[],
     keys: &[KeyCode::Space],
-    label: "Space",
-    action: "run/pause",
+    caps: &["Space"],
+    action: "Play / pause",
 };
 pub const BINDING_STEP: KeyBinding = KeyBinding {
-    keys: &[KeyCode::KeyJ],
-    label: "j",
-    action: "step",
+    chars: &["j"],
+    keys: &[],
+    caps: &["J"],
+    action: "Step one generation",
 };
 pub const BINDING_RANDOMIZE: KeyBinding = KeyBinding {
-    keys: &[KeyCode::KeyR],
-    label: "r",
-    action: "randomize",
+    chars: &["r"],
+    keys: &[],
+    caps: &["R"],
+    action: "Randomize the board",
 };
 pub const BINDING_CLEAR: KeyBinding = KeyBinding {
-    keys: &[KeyCode::KeyX],
-    label: "x",
-    action: "clear",
+    chars: &["x"],
+    keys: &[],
+    caps: &["X"],
+    action: "Clear the board",
 };
 pub const BINDING_RESET_EPOCH: KeyBinding = KeyBinding {
-    keys: &[KeyCode::Digit0],
-    label: "0",
-    action: "reset epoch",
+    chars: &["0"],
+    keys: &[],
+    caps: &["0"],
+    action: "Reset generation counter",
 };
 pub const BINDING_SPEED_UP: KeyBinding = KeyBinding {
-    keys: &[KeyCode::Equal, KeyCode::NumpadAdd],
-    label: "+",
-    action: "speed up",
+    // `=` shares the key with `+` on US layouts.
+    chars: &["+", "="],
+    keys: &[],
+    caps: &["+"],
+    action: "Speed up",
 };
 pub const BINDING_SLOW_DOWN: KeyBinding = KeyBinding {
-    keys: &[KeyCode::Minus, KeyCode::NumpadSubtract],
-    label: "-",
-    action: "slow down",
+    chars: &["-"],
+    keys: &[],
+    caps: &["−"],
+    action: "Slow down",
 };
-
-const SIMULATION_BINDINGS: &[KeyBinding] = &[
-    BINDING_RUN_PAUSE,
-    BINDING_STEP,
-    BINDING_RANDOMIZE,
-    BINDING_CLEAR,
-    BINDING_RESET_EPOCH,
-    BINDING_SPEED_UP,
-    BINDING_SLOW_DOWN,
-];
-
-pub const BINDING_SELECT_GLIDER: KeyBinding = KeyBinding {
-    keys: &[KeyCode::KeyG],
-    label: "g",
-    action: "select glider stamp",
-};
-pub const BINDING_SELECT_BLINKER: KeyBinding = KeyBinding {
-    keys: &[KeyCode::KeyB],
-    label: "b",
-    action: "select blinker stamp",
-};
-pub const BINDING_SELECT_LWSS: KeyBinding = KeyBinding {
-    keys: &[KeyCode::KeyL],
-    label: "l",
-    action: "select LWSS stamp",
-};
-pub const BINDING_SELECT_RLE_DEMO: KeyBinding = KeyBinding {
-    keys: &[KeyCode::KeyP],
-    label: "p",
-    action: "select RLE 8x4 stamp",
-};
-/// Pairs each pattern shortcut with the built-in it selects, for the keyboard
-/// handler and the palette tooltips alike.
-pub const PATTERN_SHORTCUTS: [(KeyBinding, PatternKind); 4] = [
-    (BINDING_SELECT_GLIDER, PatternKind::Glider),
-    (BINDING_SELECT_BLINKER, PatternKind::Blinker),
-    (BINDING_SELECT_LWSS, PatternKind::Lwss),
-    (BINDING_SELECT_RLE_DEMO, PatternKind::RleDemo),
-];
 
 pub const BINDING_ROTATE_STAMP: KeyBinding = KeyBinding {
-    keys: &[KeyCode::KeyZ],
-    label: "z",
-    action: "rotate stamp",
+    chars: &["z"],
+    keys: &[],
+    caps: &["Z"],
+    action: "Rotate 90° clockwise",
 };
 pub const BINDING_FLIP_STAMP: KeyBinding = KeyBinding {
-    keys: &[KeyCode::KeyF],
-    label: "f",
-    action: "flip stamp horizontally",
+    chars: &["f"],
+    keys: &[],
+    caps: &["F"],
+    action: "Flip horizontally",
 };
 pub const BINDING_CLEAR_STAMP: KeyBinding = KeyBinding {
-    keys: &[KeyCode::KeyC],
-    label: "c",
-    action: "clear active stamp",
+    chars: &["c"],
+    keys: &[],
+    caps: &["C"],
+    action: "Put the stamp away and draw",
 };
-
-const STAMP_BINDINGS: &[KeyBinding] = &[
-    BINDING_SELECT_GLIDER,
-    BINDING_SELECT_BLINKER,
-    BINDING_SELECT_LWSS,
-    BINDING_SELECT_RLE_DEMO,
-    BINDING_ROTATE_STAMP,
-    BINDING_FLIP_STAMP,
-    BINDING_CLEAR_STAMP,
-];
 
 pub const BINDING_TOGGLE_BOUNDARY_MODE: KeyBinding = KeyBinding {
-    keys: &[KeyCode::KeyM],
-    label: "m",
-    action: "toggle boundary mode",
+    chars: &["m"],
+    keys: &[],
+    caps: &["M"],
+    action: "Wrap / fixed edges",
 };
 pub const BINDING_TOGGLE_CONTROL_DECK: KeyBinding = KeyBinding {
-    keys: &[KeyCode::KeyH],
-    label: "h",
-    action: "hide/show pattern sidebar",
+    chars: &["h"],
+    keys: &[],
+    caps: &["H"],
+    action: "Show / hide the palette",
 };
 pub const BINDING_TOGGLE_DIAGNOSTICS: KeyBinding = KeyBinding {
+    chars: &[],
     keys: &[KeyCode::F3],
-    label: "F3",
-    action: "toggle diagnostics",
+    caps: &["F3"],
+    action: "Diagnostics",
 };
 pub const BINDING_TOGGLE_GRID: KeyBinding = KeyBinding {
-    keys: &[KeyCode::KeyT],
-    label: "t",
-    action: "toggle grid",
+    chars: &["t"],
+    keys: &[],
+    caps: &["T"],
+    action: "Show / hide the grid",
 };
 pub const BINDING_TOGGLE_HELP: KeyBinding = KeyBinding {
-    keys: &[KeyCode::Slash],
-    label: "/",
-    action: "toggle help",
+    chars: &["/"],
+    keys: &[],
+    caps: &["/"],
+    action: "Help",
 };
-
-const UI_BINDINGS: &[KeyBinding] = &[
-    BINDING_TOGGLE_BOUNDARY_MODE,
-    BINDING_TOGGLE_CONTROL_DECK,
-    BINDING_TOGGLE_DIAGNOSTICS,
-    BINDING_TOGGLE_GRID,
-    BINDING_TOGGLE_HELP,
-];
 
 pub const BINDING_PAN_LEFT: KeyBinding = KeyBinding {
+    chars: &[],
     keys: &[KeyCode::KeyA, KeyCode::ArrowLeft],
-    label: "A / Left",
-    action: "pan camera left",
+    caps: &["A", "Left"],
+    action: "Pan left",
 };
 pub const BINDING_PAN_RIGHT: KeyBinding = KeyBinding {
+    chars: &[],
     keys: &[KeyCode::KeyD, KeyCode::ArrowRight],
-    label: "D / Right",
-    action: "pan camera right",
+    caps: &["D", "Right"],
+    action: "Pan right",
 };
 pub const BINDING_PAN_UP: KeyBinding = KeyBinding {
+    chars: &[],
     keys: &[KeyCode::KeyW, KeyCode::ArrowUp],
-    label: "W / Up",
-    action: "pan camera up",
+    caps: &["W", "Up"],
+    action: "Pan up",
 };
 pub const BINDING_PAN_DOWN: KeyBinding = KeyBinding {
+    chars: &[],
     keys: &[KeyCode::KeyS, KeyCode::ArrowDown],
-    label: "S / Down",
-    action: "pan camera down",
+    caps: &["S", "Down"],
+    action: "Pan down",
 };
 pub const BINDING_PAN_CAMERA: KeyBinding = KeyBinding {
+    chars: &[],
     keys: &[
         KeyCode::KeyW,
         KeyCode::ArrowUp,
@@ -194,58 +203,128 @@ pub const BINDING_PAN_CAMERA: KeyBinding = KeyBinding {
         KeyCode::KeyD,
         KeyCode::ArrowRight,
     ],
-    label: "WASD / Arrows",
-    action: "pan camera",
+    caps: &["WASD", "Arrow keys"],
+    action: "Pan",
 };
 pub const BINDING_RESET_CAMERA: KeyBinding = KeyBinding {
-    keys: &[KeyCode::KeyV],
-    label: "v",
-    action: "reset camera",
+    chars: &["v"],
+    keys: &[],
+    caps: &["V"],
+    action: "Fit board",
 };
 pub const BINDING_QUIT: KeyBinding = KeyBinding {
-    keys: &[KeyCode::KeyQ],
-    label: "q",
-    action: "quit",
+    chars: &["q"],
+    keys: &[],
+    caps: &["Q"],
+    action: "Quit",
 };
 
-pub static CONTROLS_TEXT: LazyLock<String> = LazyLock::new(build_controls_text);
+/// A row of the Help dialog: alternative key caps and what they do. `Mod`
+/// stands for Cmd on macOS and Ctrl elsewhere.
+pub struct HelpEntry {
+    pub caps: &'static [&'static str],
+    pub action: &'static str,
+}
 
-fn append_binding_lines(out: &mut String, bindings: &[KeyBinding]) {
-    for binding in bindings {
-        out.push_str(binding.label);
-        out.push_str(": ");
-        out.push_str(binding.action);
-        out.push('\n');
+impl From<KeyBinding> for HelpEntry {
+    fn from(binding: KeyBinding) -> Self {
+        Self {
+            caps: binding.caps,
+            action: binding.action,
+        }
     }
 }
 
-fn build_controls_text() -> String {
-    let mut out = String::from("Controls\n\n");
-    append_binding_lines(&mut out, SIMULATION_BINDINGS);
-    append_binding_lines(&mut out, STAMP_BINDINGS);
-    append_binding_lines(&mut out, UI_BINDINGS);
-    out.push_str("Wheel: zoom camera\n");
-    out.push_str("Middle drag: pan camera\n");
-    out.push_str(BINDING_PAN_CAMERA.label);
-    out.push_str(": ");
-    out.push_str(BINDING_PAN_CAMERA.action);
-    out.push('\n');
-    out.push_str(BINDING_RESET_CAMERA.label);
-    out.push_str(": ");
-    out.push_str(BINDING_RESET_CAMERA.action);
-    out.push('\n');
-    out.push_str("Left drag: draw or erase with the selected tool\n");
-    out.push_str("Left click (stamp): place pattern\n");
-    out.push_str("Right drag: erase\n");
-    out.push_str("U or Cmd/Ctrl+Z: undo last edit and pause\n");
-    out.push_str("Cmd/Ctrl+Shift+Z: redo last undone edit\n");
-    out.push_str(BINDING_QUIT.label);
-    out.push_str(": ");
-    out.push_str(BINDING_QUIT.action);
-    out.push_str("\n\n");
-    out.push_str("Pattern palette:\n");
-    out.push_str("- Use Import / Export to paste RLE as a stamp or copy the board as RLE\n");
-    out.push_str("- Select a pattern thumbnail, then click the board to place it");
+pub struct HelpSection {
+    pub title: &'static str,
+    pub entries: Vec<HelpEntry>,
+}
+
+/// Every shortcut and pointer gesture, grouped as the Help dialog shows them.
+pub fn help_sections() -> [HelpSection; 5] {
+    let entry = |caps, action| HelpEntry { caps, action };
+    [
+        HelpSection {
+            title: "Simulation",
+            entries: vec![
+                BINDING_RUN_PAUSE.into(),
+                BINDING_STEP.into(),
+                BINDING_SPEED_UP.into(),
+                BINDING_SLOW_DOWN.into(),
+                BINDING_TOGGLE_BOUNDARY_MODE.into(),
+                BINDING_RESET_EPOCH.into(),
+            ],
+        },
+        HelpSection {
+            title: "Editing",
+            entries: vec![
+                entry(&["Left drag"], "Draw or erase with the tool"),
+                entry(&["Right drag"], "Erase"),
+                BINDING_RANDOMIZE.into(),
+                BINDING_CLEAR.into(),
+                entry(&["U", "Mod+Z"], "Undo and pause"),
+                entry(&["Mod+Shift+Z"], "Redo"),
+            ],
+        },
+        HelpSection {
+            title: "Stamps",
+            entries: vec![
+                entry(&["Click"], "Place the stamp"),
+                BINDING_ROTATE_STAMP.into(),
+                BINDING_FLIP_STAMP.into(),
+                BINDING_CLEAR_STAMP.into(),
+            ],
+        },
+        HelpSection {
+            title: "Camera",
+            entries: vec![
+                entry(&["Wheel"], "Zoom"),
+                entry(&["Middle drag"], "Pan"),
+                BINDING_PAN_CAMERA.into(),
+                BINDING_RESET_CAMERA.into(),
+            ],
+        },
+        HelpSection {
+            title: "Interface",
+            entries: vec![
+                BINDING_TOGGLE_GRID.into(),
+                BINDING_TOGGLE_CONTROL_DECK.into(),
+                BINDING_TOGGLE_DIAGNOSTICS.into(),
+                BINDING_TOGGLE_HELP.into(),
+                BINDING_QUIT.into(),
+            ],
+        },
+    ]
+}
+
+/// The name of the command modifier on this platform, for `Mod` in key caps.
+pub fn command_key() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd"
+    } else {
+        "Ctrl"
+    }
+}
+
+/// The shortcut list in the README, generated so it cannot drift from the app.
+pub fn controls_markdown() -> String {
+    let mut out = String::new();
+    for section in help_sections() {
+        out.push_str(&format!(
+            "### {}\n\n| Keys | Action |\n| --- | --- |\n",
+            section.title
+        ));
+        for entry in section.entries {
+            let caps = entry
+                .caps
+                .iter()
+                .map(|cap| format!("`{}`", cap.replace("Mod", "Cmd/Ctrl")))
+                .collect::<Vec<_>>()
+                .join(" or ");
+            out.push_str(&format!("| {caps} | {} |\n", entry.action));
+        }
+        out.push('\n');
+    }
     out
 }
 
@@ -338,9 +417,12 @@ pub struct EditFeedback {
 }
 
 impl EditFeedback {
+    /// Seconds a notice stays on screen. Brief, since it covers part of the board.
+    const DURATION: f32 = 2.0;
+
     pub fn show(&mut self, message: &'static str) {
         self.message = message;
-        self.remaining = 4.0;
+        self.remaining = Self::DURATION;
     }
 
     pub fn undo(&mut self, app: &mut GolApp) {
@@ -416,6 +498,14 @@ impl Theme {
         }
     }
 
+    /// Title bar and other window chrome drawn by the OS.
+    pub fn window_theme(self) -> bevy::window::WindowTheme {
+        match self {
+            Theme::Light => bevy::window::WindowTheme::Light,
+            Theme::Dark | Theme::HighContrast => bevy::window::WindowTheme::Dark,
+        }
+    }
+
     pub fn board(self) -> &'static BoardColors {
         match self {
             Theme::Dark => &DARK_BOARD,
@@ -434,8 +524,11 @@ pub struct BoardColors {
     pub aged: Color,
     /// Cells that just died, fading into `dead`.
     pub trail: Color,
-    /// Cells of the stamp under the pointer, before it is placed.
+    /// Cells of the stamp under the pointer, before it is placed. A hue of
+    /// their own, so a preview never reads as cells already on the board.
     pub ghost: Color,
+    /// Outline around the footprint of the stamp under the pointer.
+    pub ghost_outline: Color,
     pub wall: Color,
     /// Peak of the pulse when the edges switch to fixed.
     pub wall_bright: Color,
@@ -450,7 +543,8 @@ const DARK_BOARD: BoardColors = BoardColors {
     newborn: Color::srgb(0.78, 1.0, 0.86),
     aged: Color::srgb(0.12, 0.58, 0.56),
     trail: Color::srgb(0.13, 0.24, 0.22),
-    ghost: Color::srgba(0.22, 0.85, 0.56, 0.30),
+    ghost: Color::srgba(0.45, 0.70, 1.0, 0.80),
+    ghost_outline: Color::srgb(0.58, 0.79, 1.0),
     wall: Color::srgba(0.96, 0.92, 0.70, 0.55),
     wall_bright: Color::srgba(1.0, 0.98, 0.82, 0.92),
     grid_line: Color::srgba(0.02, 0.02, 0.03, 0.8),
@@ -464,7 +558,8 @@ const LIGHT_BOARD: BoardColors = BoardColors {
     newborn: Color::srgb(0.08, 0.62, 0.30),
     aged: Color::srgb(0.02, 0.30, 0.30),
     trail: Color::srgb(0.80, 0.91, 0.86),
-    ghost: Color::srgba(0.04, 0.50, 0.31, 0.35),
+    ghost: Color::srgba(0.15, 0.40, 0.90, 0.70),
+    ghost_outline: Color::srgb(0.10, 0.33, 0.80),
     wall: Color::srgba(0.75, 0.45, 0.0, 0.65),
     wall_bright: Color::srgba(0.90, 0.55, 0.0, 0.95),
     grid_line: Color::srgba(0.70, 0.75, 0.78, 0.8),
@@ -478,7 +573,8 @@ const HIGH_CONTRAST_BOARD: BoardColors = BoardColors {
     newborn: Color::srgb(0.90, 1.0, 0.92),
     aged: Color::srgb(0.20, 0.78, 0.82),
     trail: Color::srgb(0.20, 0.30, 0.26),
-    ghost: Color::srgba(0.35, 1.0, 0.65, 0.45),
+    ghost: Color::srgba(0.45, 0.80, 1.0, 0.85),
+    ghost_outline: Color::srgb(0.65, 0.88, 1.0),
     wall: Color::srgba(1.0, 0.85, 0.0, 0.85),
     wall_bright: Color::srgb(1.0, 0.95, 0.55),
     grid_line: Color::srgba(0.45, 0.45, 0.45, 0.9),
@@ -494,11 +590,22 @@ pub const BOARD_SIZE_PRESETS: [(usize, usize); 4] =
 /// Board dimensions, held independently of the window. Resizing the window only
 /// changes how much of the board is visible; only a change here resizes the board.
 /// With `fill_canvas`, the canvas view keeps the size matched to the canvas instead.
-#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Resource, Clone, Copy, PartialEq, Eq)]
 pub struct BoardSettings {
     pub cols: usize,
     pub rows: usize,
     pub fill_canvas: bool,
+}
+
+impl Default for BoardSettings {
+    /// Fill canvas is on until a size is chosen, so the board uses the whole canvas.
+    fn default() -> Self {
+        Self {
+            cols: 0,
+            rows: 0,
+            fill_canvas: true,
+        }
+    }
 }
 
 impl BoardSettings {
@@ -579,8 +686,8 @@ pub fn world_to_cell(world: Vec2, cols: usize, rows: usize) -> Option<(usize, us
 #[cfg(test)]
 mod tests {
     use super::{
-        BOARD_SIZE_MAX, BOARD_SIZE_MIN, BoardSettings, CAMERA_ZOOM_MAX, CELL_SIZE, CONTROLS_TEXT,
-        camera_scale_to_fit_board,
+        BOARD_SIZE_MAX, BOARD_SIZE_MIN, BoardSettings, CAMERA_ZOOM_MAX, CELL_SIZE,
+        camera_scale_to_fit_board, controls_markdown,
     };
     use bevy::window::{Window, WindowResolution};
 
@@ -594,6 +701,10 @@ mod tests {
     #[test]
     fn board_settings_start_unset_and_clamp_to_supported_sizes() {
         let mut settings = BoardSettings::default();
+        assert!(
+            settings.fill_canvas,
+            "the board fills the canvas until a size is chosen"
+        );
         assert!(!settings.is_set());
 
         settings.set(256, 128);
@@ -659,23 +770,12 @@ mod tests {
     }
 
     #[test]
-    fn readme_contains_controls_text() {
+    fn readme_lists_every_shortcut_as_help_shows_it() {
         let readme = include_str!("../README.md");
-        assert!(readme.contains(CONTROLS_TEXT.as_str()));
-    }
-
-    #[test]
-    fn every_pattern_shortcut_selects_its_own_builtin() {
-        use super::PATTERN_SHORTCUTS;
-        use crate::patterns::Pattern;
-
-        let builtins = Pattern::builtins();
-        let expected = ["Glider", "Blinker", "LWSS", "RLE 8x4"];
-        for ((binding, pattern), name) in PATTERN_SHORTCUTS.into_iter().zip(expected) {
-            let index = pattern
-                .builtin_index()
-                .unwrap_or_else(|| panic!("{pattern:?} has no file in assets/patterns"));
-            assert_eq!(builtins[index].name, name, "key {}", binding.label);
-        }
+        assert!(
+            readme.contains(&controls_markdown()),
+            "update the README's controls to:\n{}",
+            controls_markdown()
+        );
     }
 }

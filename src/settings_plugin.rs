@@ -175,6 +175,8 @@ fn load_settings(
             // Left unset, startup falls back to a board that fills the window.
             if let Some((cols, rows)) = settings.board {
                 board_settings.set(cols, rows);
+                // Files from before Fill canvas existed hold a size chosen by hand.
+                board_settings.fill_canvas = false;
             }
             if let Some(fill) = settings.fill_canvas {
                 board_settings.fill_canvas = fill;

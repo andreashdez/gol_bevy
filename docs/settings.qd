@@ -13,11 +13,11 @@ The board size is independent of the window. Resizing the window only changes ho
 
 ### Fill canvas
 
-Click **Fill canvas** to size the board to the canvas, so **Fit board** shows it edge to edge at 100% with no empty border. While it is on, the board follows the canvas: resizing the window, or showing or hiding the palette, resizes the board too.
+Fill canvas is on by default. It sizes the board to the canvas, so **Fit board** shows it edge to edge at 100% with no empty border. While it is on, the board follows the canvas: resizing the window, or showing or hiding the palette, resizes the board too.
 
 > Warning: Like any resize, a canvas change keeps only the cells that fit and clears the undo history. Shrinking the window, or showing the palette, removes cells beyond the new right and top edges.
 
-Click **Fill canvas** again to keep the current size from then on. Applying a size or preset also switches it off.
+Click **Fill canvas** to switch it off and keep the current size from then on, or click it again to turn it back on. Applying a size or preset also switches it off. Settings files saved before Fill canvas existed keep their saved size.
 
 ## Rule
 

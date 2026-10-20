@@ -48,15 +48,16 @@ fn push_bounded(history: &mut VecDeque<EditSnapshot>, snapshot: EditSnapshot) {
     history.push_back(snapshot);
 }
 
-/// Built-in patterns that have a keyboard shortcut.
+/// Built-in patterns that tests select by name.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PatternKind {
     Glider,
     Blinker,
     Lwss,
-    RleDemo,
 }
 
+#[cfg(test)]
 impl PatternKind {
     /// Name of the file under `assets/patterns/`, without `.rle`.
     fn file_stem(self) -> &'static str {
@@ -64,7 +65,6 @@ impl PatternKind {
             Self::Glider => "glider",
             Self::Blinker => "blinker",
             Self::Lwss => "lwss",
-            Self::RleDemo => "rle-8x4",
         }
     }
 
@@ -350,17 +350,10 @@ impl App {
         redraw
     }
 
+    #[cfg(test)]
     pub fn select_pattern(&mut self, pattern: PatternKind) {
-        let Some(slot) = pattern.builtin_index() else {
-            return;
-        };
-        if self.selected_pattern == Some(slot) && self.tool == EditTool::Stamp {
-            self.clear_selected_pattern();
-        } else {
-            self.selected_pattern = Some(slot);
-            self.tool = EditTool::Stamp;
-        }
-        self.needs_redraw = true;
+        let index = pattern.builtin_index().expect("the built-in exists");
+        self.select_pattern_index(index);
     }
 
     pub fn import_rle_pattern(
@@ -1119,15 +1112,6 @@ mod tests {
     }
 
     #[test]
-    fn test_select_pattern_toggles() {
-        let mut app = App::new(8, 8);
-        app.select_pattern(PatternKind::Glider);
-        assert_eq!(app.selected_pattern_name(), Some("Glider"));
-        app.select_pattern(PatternKind::Glider);
-        assert_eq!(app.selected_pattern_name(), None);
-    }
-
-    #[test]
     fn test_place_selected_pattern_at_cursor() {
         let mut app = App::new(8, 8);
         app.select_pattern(PatternKind::Blinker);
@@ -1165,17 +1149,5 @@ mod tests {
         app.select_pattern(PatternKind::Glider);
         app.toggle_stamp_flip();
         assert_eq!(app.selected_pattern_status_label(), "Glider (FlipH)");
-    }
-
-    #[test]
-    fn test_rle_demo_pattern_has_dynamic_size() {
-        let mut app = App::new(20, 20);
-        app.select_pattern(PatternKind::RleDemo);
-
-        let (cells, width, height) = app
-            .selected_pattern_layout()
-            .expect("RLE demo pattern should be selectable");
-        assert!(cells.len() > 20);
-        assert_eq!((width, height), (8, 4));
     }
 }

@@ -34,10 +34,6 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 
 | Key                | Action                                |
 |--------------------|---------------------------------------|
-| .keybinding {G}    | Select the glider stamp               |
-| .keybinding {B}    | Select the blinker stamp              |
-| .keybinding {L}    | Select the LWSS stamp                 |
-| .keybinding {P}    | Select the RLE 8x4 stamp              |
 | .keybinding {Z}    | Rotate the stamp clockwise            |
 | .keybinding {F}    | Flip the stamp horizontally           |
 | .keybinding {C}    | Clear the active stamp                |

@@ -191,6 +191,18 @@ pub(super) fn apply(
     }
 }
 
+/// Matches the OS title bar to the theme. Checked every frame because creating
+/// the native window overwrites it with the OS theme, which may happen after
+/// the theme last changed.
+pub(super) fn apply_window(
+    theme: Res<Theme>,
+    mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+) {
+    for mut window in &mut windows {
+        set_if_neq!(window.window_theme, Some(theme.window_theme()));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,6 +233,28 @@ mod tests {
             world.get::<BackgroundColor>(panel).unwrap().0,
             LIGHT.selected
         );
+    }
+
+    #[test]
+    fn title_bar_follows_the_theme() {
+        let mut world = World::new();
+        world.insert_resource(Theme::Light);
+        let window = world
+            .spawn((Window::default(), bevy::window::PrimaryWindow))
+            .id();
+        let title_bar = |world: &World| world.get::<Window>(window).unwrap().window_theme;
+        world.run_system_once(apply_window).unwrap();
+        assert_eq!(title_bar(&world), Some(bevy::window::WindowTheme::Light));
+
+        // Window creation reports the OS theme back without the theme changing.
+        world.get_mut::<Window>(window).unwrap().window_theme =
+            Some(bevy::window::WindowTheme::Dark);
+        world.run_system_once(apply_window).unwrap();
+        assert_eq!(title_bar(&world), Some(bevy::window::WindowTheme::Light));
+
+        *world.resource_mut::<Theme>() = Theme::HighContrast;
+        world.run_system_once(apply_window).unwrap();
+        assert_eq!(title_bar(&world), Some(bevy::window::WindowTheme::Dark));
     }
 
     #[test]
@@ -260,6 +294,17 @@ mod tests {
                 assert!(contrast(trail, board.dead) < 2.0, "{theme:?} trail {age}");
             }
             assert!(contrast(board.hover, board.dead) >= 3.0, "{theme:?} hover");
+            // A stamp preview has its own hue, so it never passes for live cells.
+            let hue = |color: Color| Hsla::from(color).hue;
+            let apart = (hue(board.ghost) - hue(board.live)).abs();
+            assert!(
+                apart.min(360.0 - apart) >= 45.0,
+                "{theme:?} stamp preview hue"
+            );
+            assert!(
+                contrast(board.ghost_outline, board.dead) >= 3.0,
+                "{theme:?} stamp outline"
+            );
             assert!(
                 contrast(board.hover_erase, board.dead) >= 3.0,
                 "{theme:?} erase hover"

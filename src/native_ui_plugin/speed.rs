@@ -538,8 +538,7 @@ pub(super) fn edit(
             }
         } else {
             state.invalid = true;
-            feedback.message = INVALID_HINT;
-            feedback.remaining = 4.0;
+            feedback.show(INVALID_HINT);
             if focused {
                 focus.set(entity, FocusCause::Navigated);
             }

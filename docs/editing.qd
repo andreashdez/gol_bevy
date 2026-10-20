@@ -13,18 +13,11 @@ Cells you drag across are changed one at a time, but the whole drag counts as a 
 
 A stamp places a whole pattern with one click.
 
-1. Select a pattern: click its thumbnail in the palette, or press its shortcut.
-2. Move the mouse over the board. A translucent *ghost* shows exactly which cells will be placed.
+1. Select a pattern: click its thumbnail in the palette.
+2. Move the mouse over the board. A blue *ghost*, outlined with the stamp's footprint, shows exactly which cells will be placed. It has its own colour so it never passes for cells already on the board.
 3. Click to place the pattern. The stamp stays selected, so you can keep clicking to place copies.
 
-| Key               | Pattern                                        |
-|-------------------|------------------------------------------------|
-| .keybinding {G}   | Glider                                         |
-| .keybinding {B}   | Blinker                                        |
-| .keybinding {L}   | Lightweight spaceship (LWSS)                   |
-| .keybinding {P}   | RLE 8x4, a solid 8 × 4 block                   |
-
-Pressing the shortcut of the active stamp again, or .keybinding {C}, drops the stamp and goes back to the Draw tool. Clicking **Stamp** with no pattern selected picks the first one in the library. Switching to Draw or Erase hides the ghost but keeps the stamp selected, so clicking **Stamp** again brings it back.
+.keybinding {C} drops the stamp and goes back to the Draw tool. Clicking **Stamp** with no pattern selected picks the first one in the library. Switching to Draw or Erase hides the ghost but keeps the stamp selected, so clicking **Stamp** again brings it back.
 
 You can add your own patterns, either for the current session through [RLE import](patterns.qd#importing-a-pattern) or permanently as [built-in patterns](patterns.qd#built-in-patterns).
 

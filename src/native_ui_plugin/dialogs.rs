@@ -4,8 +4,8 @@ use crate::workspace::{DecodedWorkspace, Workspace};
 use crate::{
     board::{Rule, frontier_dense_threshold_percent_for_diagnostics},
     shared::{
-        BOARD_SIZE_MAX, BOARD_SIZE_MIN, BOARD_SIZE_PRESETS, BoardSettings, CONTROLS_TEXT,
-        DiagnosticsOverlay,
+        BOARD_SIZE_MAX, BOARD_SIZE_MIN, BOARD_SIZE_PRESETS, BoardSettings, DiagnosticsOverlay,
+        HelpSection, command_key, help_sections,
     },
 };
 use bevy::{
@@ -681,6 +681,97 @@ fn field(
     }
 }
 
+/// Width of the key caps beside each action, so the actions line up.
+const HELP_KEY_COLUMN: f32 = 132.0;
+
+/// Shortcut groups in two columns, which stack when the window is narrow:
+/// Simulation and Editing, then Stamps, Camera, and Interface.
+fn help_columns(parent: &mut ChildSpawnerCommands) {
+    let mut sections = help_sections().into_iter();
+    parent
+        .spawn(Node {
+            flex_wrap: FlexWrap::Wrap,
+            column_gap: px(32),
+            row_gap: px(20),
+            flex_shrink: 0.0,
+            ..default()
+        })
+        .with_children(|p| {
+            for count in [2, 3] {
+                p.spawn(Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(20),
+                    flex_grow: 1.0,
+                    flex_basis: px(320),
+                    min_width: px(0),
+                    ..default()
+                })
+                .with_children(|p| {
+                    for section in sections.by_ref().take(count) {
+                        help_section(p, section);
+                    }
+                });
+            }
+        });
+}
+
+fn help_section(parent: &mut ChildSpawnerCommands, section: HelpSection) {
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Column,
+            row_gap: px(7),
+            ..default()
+        })
+        .with_children(|p| {
+            p.spawn(label(section.title, 16.0, Token::Ink));
+            for entry in section.entries {
+                p.spawn(Node {
+                    align_items: AlignItems::Center,
+                    column_gap: px(12),
+                    ..default()
+                })
+                .with_children(|p| {
+                    p.spawn(Node {
+                        width: px(HELP_KEY_COLUMN),
+                        flex_shrink: 0.0,
+                        flex_wrap: FlexWrap::Wrap,
+                        column_gap: px(4),
+                        row_gap: px(4),
+                        ..default()
+                    })
+                    .with_children(|p| {
+                        for cap in entry.caps {
+                            key_cap(p, &cap.replace("Mod", command_key()));
+                        }
+                    });
+                    p.spawn(label(entry.action, 14.0, Token::Ink));
+                });
+            }
+        });
+}
+
+/// A key or gesture drawn as a small raised key.
+fn key_cap(parent: &mut ChildSpawnerCommands, text: &str) {
+    parent
+        .spawn((
+            Node {
+                min_width: px(24),
+                padding: UiRect::axes(px(7), px(2)),
+                justify_content: JustifyContent::Center,
+                border: UiRect {
+                    bottom: px(2),
+                    ..UiRect::all(px(1))
+                },
+                border_radius: BorderRadius::all(px(5)),
+                ..default()
+            },
+            ThemedBackground(Token::Surface),
+            ThemedBorder(Token::Line),
+            Pickable::IGNORE,
+        ))
+        .with_child(label(text, 12.0, Token::Ink));
+}
+
 fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
     commands.spawn((DialogRoot, Node {
         position_type: PositionType::Absolute, width: percent(100), height: percent(100),
@@ -689,7 +780,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
     }, ThemedBackground(Token::Scrim), GlobalZIndex(50)))
     .with_children(|p| {
         p.spawn((TabGroup::modal(), super::accessibility::dialog_node(kind.title()), Node {
-            width: px(540), max_width: percent(100), max_height: percent(100),
+            width: px(if kind == DialogKind::Help { 760 } else { 540 }), max_width: percent(100), max_height: percent(100),
             flex_direction: FlexDirection::Column, padding: UiRect::all(px(22)), row_gap: px(16),
             border: UiRect::all(px(1)), border_radius: BorderRadius::all(px(14)), ..default()
         }, ThemedBackground(Token::Panel), ThemedBorder(Token::Line))).with_children(|p| {
@@ -762,7 +853,8 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                     DialogKind::Help => {
                         p.spawn(label("Choose a stamp or draw cells, then press Space to play. U undoes an edit and pauses; one drag counts as one edit.", 16.0, Token::Ink));
                         p.spawn(label("Tab moves between controls; the board is the last stop, and while it is outlined Space and the other shortcuts apply to it. Escape closes a dialog. Simulation shortcuts are disabled while a dialog is open.", 14.0, Token::Muted));
-                        p.spawn((label(CONTROLS_TEXT.as_str(), 14.0, Token::Ink), super::accessibility::named_node(accesskit::Role::Label, CONTROLS_TEXT.as_str())));
+                        help_columns(p);
+                        p.spawn(label("Import / Export adds RLE patterns to the palette, copies the board as RLE, and saves or opens workspace files.", 14.0, Token::Muted));
                     }
                     DialogKind::ConfirmOpen => {
                         let file = drafts.pending_open.as_ref()

@@ -605,18 +605,20 @@ fn blend_color(from: Color, to: Color, t: f32) -> Color {
     )
 }
 
+type PreviewCell<'a> = (&'a mut Transform, &'a mut Visibility, &'a mut Sprite);
+
 fn sync_pattern_preview(
     mut commands: Commands,
     hovered: Res<HoveredCell>,
     sim: Res<Simulation>,
     theme: Res<Theme>,
     mut preview_pool: ResMut<PatternPreviewPool>,
-    mut preview_q: Query<(&mut Transform, &mut Visibility), With<GhostPreviewCell>>,
-    mut ghosts: Query<&mut Sprite, With<GhostPreviewCell>>,
+    mut preview_q: Query<PreviewCell, With<GhostPreviewCell>>,
+    mut gizmos: Gizmos,
 ) {
     let ghost = theme.board().ghost;
     if theme.is_changed() {
-        for mut sprite in &mut ghosts {
+        for (_, _, mut sprite) in &mut preview_q {
             sprite.color = ghost;
         }
     }
@@ -634,8 +636,21 @@ fn sync_pattern_preview(
     let origin_col = cursor_col.saturating_sub(width / 2);
     let origin_row = cursor_row.saturating_sub(height / 2);
 
+    // Outline the footprint, clipped to the board like the cells themselves.
+    let end_col = (origin_col + width).min(cols);
+    let end_row = (origin_row + height).min(rows);
+    if end_col > origin_col && end_row > origin_row {
+        let first = cell_to_world(origin_col, origin_row, cols, rows).truncate();
+        let last = cell_to_world(end_col - 1, end_row - 1, cols, rows).truncate();
+        gizmos.rect_2d(
+            Isometry2d::from_translation((first + last) / 2.0),
+            (last - first).abs() + Vec2::splat(CELL_SIZE),
+            theme.board().ghost_outline,
+        );
+    }
+
     for (idx, entity) in preview_pool.entities.iter().copied().enumerate() {
-        let Ok((mut transform, mut visibility)) = preview_q.get_mut(entity) else {
+        let Ok((mut transform, mut visibility, _)) = preview_q.get_mut(entity) else {
             continue;
         };
         let Some(&(dx, dy)) = pattern.get(idx) else {
@@ -657,10 +672,10 @@ fn sync_pattern_preview(
 
 fn hide_preview_cells(
     preview_pool: &PatternPreviewPool,
-    preview_q: &mut Query<(&mut Transform, &mut Visibility), With<GhostPreviewCell>>,
+    preview_q: &mut Query<PreviewCell, With<GhostPreviewCell>>,
 ) {
     for entity in &preview_pool.entities {
-        if let Ok((_, mut visibility)) = preview_q.get_mut(*entity) {
+        if let Ok((_, mut visibility, _)) = preview_q.get_mut(*entity) {
             *visibility = Visibility::Hidden;
         }
     }
@@ -703,6 +718,10 @@ fn render_hover_cell(
     let Some((col, row)) = hovered.0 else {
         return;
     };
+    // A stamp shows its own outline instead.
+    if sim.app.tool() == EditTool::Stamp && sim.app.has_selected_pattern() {
+        return;
+    }
     let (cols, rows) = sim.app.board.size();
     let erasing = sim.app.tool() == EditTool::Erase || mouse_buttons.pressed(MouseButton::Right);
     let color = if erasing {

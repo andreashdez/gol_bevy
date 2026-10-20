@@ -31,21 +31,19 @@ cargo run
 The interface uses native Bevy UI throughout: playback controls, a searchable pattern
 palette, editing tools, live status, and import/settings/help/diagnostics dialogs.
 
-At 900 pixels wide and above, the toolbar uses a single 64-pixel row, grouped into
-playback, board edits, and workspace controls. Narrower windows use two rows.
+The toolbar is a single 64-pixel row, grouped into playback, board edits, and workspace
+controls. Below 900 pixels wide, the workspace controls move into a menu behind a **⋯**
+button at the right end.
 Resizing preserves keyboard focus and the camera view relative to the fitted board.
 The workspace group has icon toggles for the grid, cell age, and pattern palette, which show
-whether they are on, plus Import / Export, a gear for Settings, and a ? for Help, all one click
-away. Play / Pause, Step, Undo, and Redo are icon buttons too; tooltips give their names and shortcuts.
+whether they are on, plus Import / Export, a gear for Settings, and a ? for Help.
+Play / Pause, Step, Undo, and Redo are icon buttons too; tooltips give their names and shortcuts.
 
 The pattern library scrolls with the mouse wheel or its scrollbar; the
 stamp preview with its rotate/flip controls, and search stay visible while browsing. Scrolling
 over the canvas zooms it. Randomize and Clear are always available in the toolbar.
 Draw, Erase, and Stamp live in a separate tool strip above the palette. Hiding the
 palette turns that strip into a narrow vertical rail, so editing tools remain available.
-A quiet hint at the bottom of the canvas describes the active tool. Stamp hints show
-the selected pattern, its rotation and flip state, and the Z/F shortcuts, even with
-the palette hidden. The hint lets drawing and stamp clicks pass through.
 The board has its own canvas beside the palette and between the toolbar and status
 bar. Startup, board-size changes, **Fit board**, and **V** fit the entire board into that space.
 The status bar's zoom stepper (**− 100% +**) zooms in steps; 100% means the whole-board
@@ -69,8 +67,7 @@ and `inf` work too): Enter applies it, Escape cancels, and leaving the field app
 a valid edited value. Invalid values leave the simulation speed unchanged. Fixed speeds
 use millisecond intervals, so the field shows the closest achievable rate. At ∞, a
 small readout under the field shows the rate actually achieved while running.
-Hover or focus buttons for shortcut hints. Empty boards show guidance
-that disappears after the first cells are placed. Search and speed field focus block
+Hover or focus buttons for shortcut hints. Search and speed field focus block
 board shortcuts; Escape returns keyboard control to the canvas.
 
 Tab moves between visible, enabled native controls and Enter/Space activates the focused button;
@@ -150,45 +147,57 @@ just ci-local
 
 ## Controls
 
-```text
-Controls
+### Simulation
 
-Space: run/pause
-j: step
-r: randomize
-x: clear
-0: reset epoch
-+: speed up
--: slow down
-g: select glider stamp
-b: select blinker stamp
-l: select LWSS stamp
-p: select RLE 8x4 stamp
-z: rotate stamp
-f: flip stamp horizontally
-c: clear active stamp
-m: toggle boundary mode
-h: hide/show pattern sidebar
-F3: toggle diagnostics
-t: toggle grid
-/: toggle help
-Wheel: zoom camera
-Middle drag: pan camera
-WASD / Arrows: pan camera
-v: reset camera
-Left drag: draw or erase with the selected tool
-Left click (stamp): place pattern
-Right drag: erase
-U or Cmd/Ctrl+Z: undo last edit and pause
-Cmd/Ctrl+Shift+Z: redo last undone edit
-q: quit
+| Keys | Action |
+| --- | --- |
+| `Space` | Play / pause |
+| `J` | Step one generation |
+| `+` | Speed up |
+| `−` | Slow down |
+| `M` | Wrap / fixed edges |
+| `0` | Reset generation counter |
 
-Pattern palette:
-- Use Import / Export to paste RLE as a stamp or copy the board as RLE
-- Select a pattern thumbnail, then click the board to place it
-```
+### Editing
 
-Board size is set in Settings: pick a preset (128², 256², 512², 1024²) or type exact dimensions, from 8 up to 2048 per side. The choice is saved between runs. **Fill canvas** instead sizes the board to the canvas and keeps it matched as the window or palette changes. Resizing the board clears undo history, because old snapshots no longer fit; resizing the window does not, unless Fill canvas is on.
+| Keys | Action |
+| --- | --- |
+| `Left drag` | Draw or erase with the tool |
+| `Right drag` | Erase |
+| `R` | Randomize the board |
+| `X` | Clear the board |
+| `U` or `Cmd/Ctrl+Z` | Undo and pause |
+| `Cmd/Ctrl+Shift+Z` | Redo |
+
+### Stamps
+
+| Keys | Action |
+| --- | --- |
+| `Click` | Place the stamp |
+| `Z` | Rotate 90° clockwise |
+| `F` | Flip horizontally |
+| `C` | Put the stamp away and draw |
+
+### Camera
+
+| Keys | Action |
+| --- | --- |
+| `Wheel` | Zoom |
+| `Middle drag` | Pan |
+| `WASD` or `Arrow keys` | Pan |
+| `V` | Fit board |
+
+### Interface
+
+| Keys | Action |
+| --- | --- |
+| `T` | Show / hide the grid |
+| `H` | Show / hide the palette |
+| `F3` | Diagnostics |
+| `/` | Help |
+| `Q` | Quit |
+
+Board size is set in Settings: pick a preset (128², 256², 512², 1024²) or type exact dimensions, from 8 up to 2048 per side. The choice is saved between runs. **Fill canvas**, on by default, instead sizes the board to the canvas and keeps it matched as the window or palette changes. Resizing the board clears undo history, because old snapshots no longer fit; resizing the window does not, unless Fill canvas is on.
 
 The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools stay available independently of the pattern palette; rotate and flip controls appear in the palette for stamps. Use the Pattern palette toggle to show or hide the library. Grid and Cell age are available in the toolbar and Settings. Cell age, on by default, brightens newborn cells, deepens long-lived ones, and leaves fading trails where cells died; boundary mode is in Settings. The status bar shows a green Running or neutral Paused pill, the generation, the population with its change over the latest generation (for example `842 alive −12`), the rule, which opens Settings at the rulestring when clicked, and the cell under the pointer, plus board dimensions and boundary mode when space allows. Numbers use tabular digits and keep their widest size until the board is cleared or resized, so readouts stay close without shifting. The status
 bar stays a single row at every window size. The active rule preset is highlighted in
@@ -232,9 +241,7 @@ Core domain:
 Built-in patterns are RLE files in `assets/patterns/`. To add one to the palette, drop a
 `.rle` file there and rebuild: `build.rs` embeds every file in the binary, so nothing is
 read from disk at runtime. The palette lists them in file-name order, named by each
-file's `#N` line, or by the file name if there is none. Keyboard shortcuts find their
-pattern by file name (`glider`, `blinker`, `lwss`, `rle-8x4`), so renaming or removing
-one of those files unbinds its key; the tests check that each still resolves.
+file's `#N` line, or by the file name if there is none.
 
 RLE imports are limited to 8 MiB of source and 2048 cells per side. Runs must stay
 within the declared header dimensions; zero counts, dangling counts, and numeric overflow

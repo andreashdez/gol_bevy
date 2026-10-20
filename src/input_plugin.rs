@@ -8,7 +8,8 @@ use crate::{
         BINDING_SPEED_UP, BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_CONTROL_DECK,
         BINDING_TOGGLE_DIAGNOSTICS, BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, CAMERA_PAN_SPEED,
         CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay, EditFeedback,
-        GridOverlay, MainCamera, PATTERN_SHORTCUTS, Simulation, UiLayout, UpdateSet, world_to_cell,
+        GridOverlay, MainCamera, Simulation, TypedKeys, UiLayout, UpdateSet, collect_typed_keys,
+        world_to_cell,
     },
     ui_input::{UiInputCapture, canvas_keyboard_available},
 };
@@ -51,12 +52,18 @@ impl Plugin for InputPlugin {
             handle_camera_reset
                 .run_if(canvas_keyboard_available)
                 .in_set(UpdateSet::Camera),
+        )
+        .init_resource::<TypedKeys>()
+        .add_systems(
+            PreUpdate,
+            collect_typed_keys.after(bevy::input::InputSystems),
         );
     }
 }
 
 fn handle_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
+    typed: Res<TypedKeys>,
     mut sim: ResMut<Simulation>,
     mut diagnostics: ResMut<DiagnosticsOverlay>,
     mut grid_overlay: ResMut<GridOverlay>,
@@ -73,12 +80,12 @@ fn handle_keyboard(
     let command = keys.any_pressed(command_keys)
         || keys.any_just_pressed(command_keys)
         || keys.any_just_released(command_keys);
-    if keys.just_pressed(KeyCode::KeyU) {
+    if typed.just_typed("u") {
         feedback.undo(&mut sim.app);
         return;
     }
     if command {
-        if keys.just_pressed(KeyCode::KeyZ) {
+        if typed.just_typed("z") {
             let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
             if shift {
                 feedback.redo(&mut sim.app);
@@ -88,57 +95,52 @@ fn handle_keyboard(
         }
         return;
     }
-    if BINDING_RUN_PAUSE.just_pressed(&keys) {
+    if BINDING_RUN_PAUSE.just_pressed(&keys, &typed) {
         sim.app.toggle_running();
     }
-    if BINDING_STEP.just_pressed(&keys) {
+    if BINDING_STEP.just_pressed(&keys, &typed) {
         sim.app.increment_epoch();
     }
-    if BINDING_RANDOMIZE.just_pressed(&keys) {
+    if BINDING_RANDOMIZE.just_pressed(&keys, &typed) {
         feedback.randomize(&mut sim.app);
     }
-    if BINDING_CLEAR.just_pressed(&keys) {
+    if BINDING_CLEAR.just_pressed(&keys, &typed) {
         feedback.clear(&mut sim.app);
     }
-    if BINDING_RESET_EPOCH.just_pressed(&keys) {
+    if BINDING_RESET_EPOCH.just_pressed(&keys, &typed) {
         sim.app.reset_epoch();
     }
-    if BINDING_SPEED_UP.just_pressed(&keys) {
+    if BINDING_SPEED_UP.just_pressed(&keys, &typed) {
         sim.app.speed_up();
     }
-    if BINDING_SLOW_DOWN.just_pressed(&keys) {
+    if BINDING_SLOW_DOWN.just_pressed(&keys, &typed) {
         sim.app.slow_down();
     }
-    if BINDING_TOGGLE_HELP.just_pressed(&keys) {
+    if BINDING_TOGGLE_HELP.just_pressed(&keys, &typed) {
         sim.app.toggle_help();
     }
-    for (binding, pattern) in PATTERN_SHORTCUTS {
-        if binding.just_pressed(&keys) {
-            sim.app.select_pattern(pattern);
-        }
-    }
-    if BINDING_CLEAR_STAMP.just_pressed(&keys) {
+    if BINDING_CLEAR_STAMP.just_pressed(&keys, &typed) {
         sim.app.clear_selected_pattern();
     }
-    if BINDING_ROTATE_STAMP.just_pressed(&keys) {
+    if BINDING_ROTATE_STAMP.just_pressed(&keys, &typed) {
         sim.app.rotate_stamp_clockwise();
     }
-    if BINDING_FLIP_STAMP.just_pressed(&keys) {
+    if BINDING_FLIP_STAMP.just_pressed(&keys, &typed) {
         sim.app.toggle_stamp_flip();
     }
-    if BINDING_TOGGLE_DIAGNOSTICS.just_pressed(&keys) {
+    if BINDING_TOGGLE_DIAGNOSTICS.just_pressed(&keys, &typed) {
         diagnostics.enabled = !diagnostics.enabled;
     }
-    if BINDING_TOGGLE_GRID.just_pressed(&keys) {
+    if BINDING_TOGGLE_GRID.just_pressed(&keys, &typed) {
         grid_overlay.enabled = !grid_overlay.enabled;
     }
-    if BINDING_TOGGLE_BOUNDARY_MODE.just_pressed(&keys) {
+    if BINDING_TOGGLE_BOUNDARY_MODE.just_pressed(&keys, &typed) {
         sim.app.toggle_boundary_mode();
     }
-    if BINDING_TOGGLE_CONTROL_DECK.just_pressed(&keys) {
+    if BINDING_TOGGLE_CONTROL_DECK.just_pressed(&keys, &typed) {
         ui_layout.toggle_control_deck();
     }
-    if BINDING_QUIT.just_pressed(&keys) {
+    if BINDING_QUIT.just_pressed(&keys, &typed) {
         sim.app.quit();
     }
 }
@@ -314,9 +316,10 @@ fn handle_camera_drag(
 fn handle_camera_reset(
     view: Res<CanvasView>,
     keys: Res<ButtonInput<KeyCode>>,
+    typed: Res<TypedKeys>,
     mut camera_q: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
 ) {
-    if !BINDING_RESET_CAMERA.just_pressed(&keys) {
+    if !BINDING_RESET_CAMERA.just_pressed(&keys, &typed) {
         return;
     }
 
@@ -444,16 +447,20 @@ mod tests {
             app.select_pattern(crate::app::PatternKind::Glider);
             world.insert_resource(Simulation::new(app));
             let mut keys = ButtonInput::<KeyCode>::default();
+            let mut typed = TypedKeys::default();
             if let Some(modifier) = modifier {
                 keys.press(modifier);
                 keys.press(KeyCode::KeyZ);
                 keys.release(KeyCode::KeyZ);
                 keys.release(modifier);
+                typed.press("z");
             } else {
                 keys.press(KeyCode::KeyU);
                 keys.release(KeyCode::KeyU);
+                typed.press("u");
             }
             world.insert_resource(keys);
+            world.insert_resource(typed);
             world.insert_resource(DiagnosticsOverlay { enabled: false });
             world.insert_resource(GridOverlay { enabled: false });
             world.insert_resource(UiLayout::default());
@@ -463,5 +470,60 @@ mod tests {
             assert_eq!(app.board.live_cells_count(), 0);
             assert_eq!(app.selected_pattern_status_label(), "Glider");
         }
+    }
+
+    #[test]
+    fn character_shortcuts_follow_the_keyboard_layout() {
+        use bevy::input::{
+            ButtonState,
+            keyboard::{Key, KeyboardInput},
+        };
+        let mut app = App::new();
+        app.add_plugins(bevy::input::InputPlugin)
+            .init_resource::<TypedKeys>()
+            .add_systems(
+                PreUpdate,
+                collect_typed_keys.after(bevy::input::InputSystems),
+            );
+        let window = app.world_mut().spawn(Window::default()).id();
+        let press = |app: &mut App, key_code, character: &str| {
+            for state in [ButtonState::Pressed, ButtonState::Released] {
+                app.world_mut().write_message(KeyboardInput {
+                    key_code,
+                    logical_key: Key::Character(character.into()),
+                    state,
+                    text: None,
+                    repeat: false,
+                    window,
+                });
+            }
+            app.world_mut().run_schedule(PreUpdate);
+        };
+        let mut sim = crate::app::App::new(8, 8);
+        sim.select_pattern(crate::app::PatternKind::Glider);
+        app.insert_resource(Simulation::new(sim))
+            .insert_resource(DiagnosticsOverlay { enabled: false })
+            .insert_resource(GridOverlay { enabled: false })
+            .insert_resource(UiLayout::default())
+            .init_resource::<EditFeedback>();
+        let help = |app: &App| app.world().resource::<Simulation>().app.is_help_visible();
+
+        // German layout: `/` is Shift+7 and the key US layouts use for `/` types `-`.
+        press(&mut app, KeyCode::Slash, "-");
+        app.world_mut().run_system_once(handle_keyboard).unwrap();
+        assert!(!help(&app));
+        press(&mut app, KeyCode::Digit7, "/");
+        app.world_mut().run_system_once(handle_keyboard).unwrap();
+        assert!(help(&app));
+
+        // QWERTZ swaps Z and Y; the key labelled Z rotates, even with Shift held.
+        let rotation = |app: &App| app.world().resource::<Simulation>().app.stamp_orientation();
+        let before = rotation(&app);
+        press(&mut app, KeyCode::KeyZ, "y");
+        app.world_mut().run_system_once(handle_keyboard).unwrap();
+        assert_eq!(rotation(&app), before);
+        press(&mut app, KeyCode::KeyY, "Z");
+        app.world_mut().run_system_once(handle_keyboard).unwrap();
+        assert_ne!(rotation(&app), before);
     }
 }

@@ -1,6 +1,6 @@
 //! Everyday controls, shortcut hints, and first-use guidance.
 use super::*;
-use crate::shared::{CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, MainCamera, PATTERN_SHORTCUTS};
+use crate::shared::{CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, MainCamera};
 use bevy::{
     a11y::AccessibilityNode,
     text::{FontFeatureTag, Justify},
@@ -22,10 +22,6 @@ pub(super) struct ZoomLabel;
 pub(super) struct FeedbackOverlay;
 #[derive(Component)]
 pub(super) struct FeedbackText;
-#[derive(Component)]
-pub(super) struct CanvasToolHint;
-#[derive(Component)]
-pub(super) struct CanvasToolHintText;
 
 pub(super) fn numeric_font(size: f32) -> TextFont {
     TextFont {
@@ -35,30 +31,17 @@ pub(super) fn numeric_font(size: f32) -> TextFont {
         ..default()
     }
 }
-#[derive(Component)]
-pub(super) enum Overlay {
-    Hint {
-        target: Option<Entity>,
-        elapsed: f32,
-    },
-    Empty,
+/// The shortcut hint shown for the hovered or keyboard-focused control.
+#[derive(Component, Default)]
+pub(super) struct Overlay {
+    target: Option<Entity>,
+    elapsed: f32,
 }
 #[derive(Component)]
-pub(super) struct OverlayText(bool);
+pub(super) struct OverlayText;
 
-/// Names the shortcut of a built-in by looking up which one the palette entry
-/// shows, since entries are listed in file order rather than shortcut order.
-pub(super) fn pattern_hint(name: &str, index: usize) -> String {
-    let shortcut = PATTERN_SHORTCUTS
-        .iter()
-        .find(|(_, pattern)| pattern.builtin_index() == Some(index));
-    match shortcut {
-        Some((binding, _)) => format!(
-            "Select {name} · {} · click the board to place",
-            binding.label.to_uppercase()
-        ),
-        None => format!("Select {name} · click the board to place"),
-    }
+pub(super) fn pattern_hint(name: &str) -> String {
+    format!("Select {name} · click the board to place")
 }
 
 pub(super) fn hint(action: Action) -> &'static str {
@@ -93,6 +76,7 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::Tool(EditTool::Stamp) => "Place the selected pattern on the board",
         Action::Import => "Import RLE into your library, or copy the board as RLE",
         Action::Settings => "Board size, rule, randomization, theme, grid, cell age, and edges",
+        Action::More => "Grid, cell age, palette, import / export, settings, and help",
         Action::ApplyRandomize => "Use this density and optional seed for future randomizations",
         Action::RandomizeNow => "Apply the density and seed, then replace the board · undo with U",
         Action::FillCanvas => {
@@ -195,107 +179,27 @@ pub(super) fn overlays(commands: &mut Commands) {
     commands
         .spawn((
             NativeRoot,
-            CanvasToolHint,
+            Overlay::default(),
             Node {
+                display: Display::None,
                 position_type: PositionType::Absolute,
-                padding: UiRect::axes(px(10), px(7)),
-                border_radius: BorderRadius::all(px(6)),
+                padding: UiRect::all(px(12)),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(8)),
+                width: px(OVERLAY_WIDTH),
                 ..default()
             },
             ThemedBackground(Token::Panel),
-            GlobalZIndex(1),
+            ThemedBorder(Token::Line),
+            GlobalZIndex(100),
             Pickable::IGNORE,
-            accessibility::named_node(accesskit::Role::GenericContainer, "Canvas editing guidance"),
         ))
         .with_children(|p| {
-            p.spawn((
-                CanvasToolHintText,
-                label("", 12.0, Token::Muted),
-                accessibility::named_node(accesskit::Role::Label, ""),
-            ));
+            p.spawn((OverlayText, label("", 13.0, Token::Muted)));
         });
-    for hint in [false, true] {
-        commands
-            .spawn((
-                NativeRoot,
-                if hint {
-                    Overlay::Hint {
-                        target: None,
-                        elapsed: 0.0,
-                    }
-                } else {
-                    Overlay::Empty
-                },
-                Node {
-                    display: Display::None,
-                    position_type: PositionType::Absolute,
-                    padding: UiRect::all(px(12)),
-                    border: UiRect::all(px(1)),
-                    border_radius: BorderRadius::all(px(8)),
-                    ..default()
-                },
-                ThemedBackground(Token::Panel),
-                ThemedBorder(Token::Line),
-                GlobalZIndex(if hint { 100 } else { 1 }),
-                Pickable::IGNORE,
-            ))
-            .with_children(|p| {
-                p.spawn((OverlayText(hint), label("", 13.0, Token::Muted)));
-            });
-    }
 }
 
-fn tool_hint(app: &GolApp) -> String {
-    match app.tool() {
-        EditTool::Draw => "Draw · drag to paint · right-drag to erase".into(),
-        EditTool::Erase => "Erase · drag to erase cells".into(),
-        EditTool::Stamp => {
-            let Some(name) = app.selected_pattern_name() else {
-                return "Stamp · choose a pattern from the palette · H shows the palette".into();
-            };
-            let (rotation, flipped) = app.stamp_orientation();
-            format!(
-                "Stamp: {name} · {}°{}\nClick to place · Z rotate · F flip",
-                rotation as u32 * 90,
-                if flipped { " · flipped" } else { "" }
-            )
-        }
-    }
-}
-
-/// Passive guidance stays inside the canvas and lets pointer input pass through.
-/// The hint and edit notices share one slot: a notice replaces the hint while it
-/// shows, rather than covering it.
-pub(super) fn sync_tool_hint(
-    sim: Res<Simulation>,
-    feedback: Res<EditFeedback>,
-    view: ViewState,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    mut nodes: Query<&mut Node, With<CanvasToolHint>>,
-    mut texts: Query<&mut Text, With<CanvasToolHintText>>,
-) {
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let canvas = canvas_rect(window.size(), &view.layout);
-    for mut node in &mut nodes {
-        set_if_neq!(
-            node.display,
-            if view.mode.dialog.is_none() && feedback.remaining <= 0.0 {
-                Display::Flex
-            } else {
-                Display::None
-            }
-        );
-        set_if_neq!(node.left, px(canvas.min.x + 12.0));
-        set_if_neq!(node.bottom, px(window.height() - canvas.max.y + 8.0));
-        set_if_neq!(node.max_width, px((canvas.width() - 24.0).max(1.0)));
-    }
-    let hint = tool_hint(&sim.app);
-    for mut text in &mut texts {
-        set_if_neq!(text.0, hint.clone());
-    }
-}
+const OVERLAY_WIDTH: f32 = 280.0;
 
 type OverlayNode<'a> = (
     &'a mut Node,
@@ -304,32 +208,39 @@ type OverlayNode<'a> = (
     Option<&'a TallLabel>,
 );
 
+type TooltipNode<'a> = (
+    Entity,
+    &'a Tooltip,
+    &'a Hovered,
+    &'a ComputedNode,
+    &'a UiGlobalTransform,
+    &'a mut AccessibilityNode,
+    Has<toolbar::MenuItem>,
+);
+
 pub(super) fn sync_overlays(
-    sim: Res<Simulation>,
     view: ViewState,
+    menu: Res<toolbar::WorkspaceMenu>,
     windows: Query<&Window, With<PrimaryWindow>>,
     time: Res<Time>,
-    mut hints: Query<(
-        Entity,
-        &Tooltip,
-        &Hovered,
-        &ComputedNode,
-        &UiGlobalTransform,
-        &mut AccessibilityNode,
-    )>,
+    mut hints: Query<TooltipNode>,
     mut nodes: Query<OverlayNode>,
-    mut texts: Query<(&mut Text, &OverlayText)>,
+    mut texts: Query<&mut Text, With<OverlayText>>,
 ) {
     let Ok(window) = windows.single() else {
         return;
     };
     let mut hovered = None;
     let mut focused = None;
-    for (entity, tooltip, hover, computed, transform, mut accessible) in &mut hints {
+    for (entity, tooltip, hover, computed, transform, mut accessible, menu_item) in &mut hints {
         if tooltip.0.is_empty() {
             continue;
         }
         accessible.set_description(tooltip.0.clone());
+        // Menu items are labelled, and a hint would cover the open menu.
+        if menu.open || (menu.collapsed && menu_item) {
+            continue;
+        }
         // Layout works in physical pixels; the overlay is placed in logical ones.
         let scale = computed.inverse_scale_factor();
         let rect = Rect::from_center_size(transform.translation * scale, computed.size() * scale);
@@ -342,7 +253,6 @@ pub(super) fn sync_overlays(
         }
     }
     let candidate = hovered.or(focused);
-    let canvas = canvas_rect(window.size(), &view.layout);
     for (mut node, overlay, wide, tall) in &mut nodes {
         if wide {
             set_if_neq!(
@@ -367,53 +277,26 @@ pub(super) fn sync_overlays(
         let Some(mut overlay) = overlay else {
             continue;
         };
-        let (show, hint, text, left, top, bottom, width) = match &mut *overlay {
-            Overlay::Hint { target, elapsed } => {
-                let next = candidate.as_ref().map(|c| c.0);
-                if *target != next {
-                    *target = next;
-                    *elapsed = 0.0;
-                }
-                *elapsed += time.delta_secs();
-                let keyboard = view.focus_visible.0 && view.focus.get() == next;
-                let show = candidate.is_some() && (*elapsed >= 0.45 || keyboard);
-                let width = 280.0;
-                let rect = candidate.as_ref().map_or(Rect::default(), |c| c.2);
-                let left = rect.min.x.min(window.width() - width - 8.0).max(8.0);
-                // Open away from the nearest window edge, anchored to the
-                // control so the hint never depends on its own height.
-                let (top, bottom) = if rect.center().y < window.height() / 2.0 {
-                    (px(rect.max.y + 8.0), Val::Auto)
-                } else {
-                    (Val::Auto, px(window.height() - rect.min.y + 8.0))
-                };
-                (
-                    show,
-                    true,
-                    candidate.as_ref().map(|c| c.1.clone()).unwrap_or_default(),
-                    left,
-                    top,
-                    bottom,
-                    width,
-                )
-            }
-            Overlay::Empty => {
-                let text = if sim.app.has_selected_pattern() {
-                    "Place your first pattern\nClick the board to stamp. Z rotates · F flips."
-                } else {
-                    "An empty board is a fresh start\nChoose a pattern, draw cells, or press R to randomize.\nSpace starts the simulation · V fits the board."
-                };
-                let width = (canvas.width() - 24.0).clamp(120.0, 340.0);
-                (
-                    sim.app.board.live_cells_count() == 0,
-                    false,
-                    text.to_owned(),
-                    canvas.center().x - width / 2.0,
-                    px(canvas.min.y + 16.0),
-                    Val::Auto,
-                    width,
-                )
-            }
+        let next = candidate.as_ref().map(|c| c.0);
+        if overlay.target != next {
+            overlay.target = next;
+            overlay.elapsed = 0.0;
+        }
+        overlay.elapsed += time.delta_secs();
+        let keyboard = view.focus_visible.0 && view.focus.get() == next;
+        let show = candidate.is_some() && (overlay.elapsed >= 0.45 || keyboard);
+        let rect = candidate.as_ref().map_or(Rect::default(), |c| c.2);
+        let left = rect
+            .min
+            .x
+            .min(window.width() - OVERLAY_WIDTH - 8.0)
+            .max(8.0);
+        // Open away from the nearest window edge, anchored to the control so the
+        // hint never depends on its own height.
+        let (top, bottom) = if rect.center().y < window.height() / 2.0 {
+            (px(rect.max.y + 8.0), Val::Auto)
+        } else {
+            (Val::Auto, px(window.height() - rect.min.y + 8.0))
         };
         set_if_neq!(
             node.display,
@@ -426,10 +309,9 @@ pub(super) fn sync_overlays(
         set_if_neq!(node.left, px(left));
         set_if_neq!(node.top, top);
         set_if_neq!(node.bottom, bottom);
-        set_if_neq!(node.width, px(width));
-        for (mut label, kind) in &mut texts {
-            if kind.0 == hint && label.0 != text {
-                label.0 = text.clone();
+        if let Some((_, text, _)) = &candidate {
+            for mut label in &mut texts {
+                set_if_neq!(label.0, text.clone());
             }
         }
     }
@@ -649,6 +531,10 @@ pub(super) fn zoom_stepper(parent: &mut ChildSpawnerCommands) {
         });
 }
 
+/// From this width the status bar has room for the board size and edge mode,
+/// even with a 2048 × 2048 board and seven-digit counts.
+const BOARD_READOUT_MIN_WIDTH: f32 = 960.0;
+
 pub(super) fn sync_footer(
     windows: Query<&Window, With<PrimaryWindow>>,
     view: Res<crate::canvas_view::CanvasView>,
@@ -666,7 +552,7 @@ pub(super) fn sync_footer(
         if matches!(readout, Some(Readout::Board)) {
             set_if_neq!(
                 node.display,
-                if window.width() >= 1400.0 {
+                if window.width() >= BOARD_READOUT_MIN_WIDTH {
                     Display::Flex
                 } else {
                     Display::None
@@ -751,7 +637,6 @@ pub(super) fn sync_feedback(
                 Display::None
             }
         );
-        // The tool hint's slot, which it gives up while the notice shows.
         set_if_neq!(node.left, px(canvas.min.x + 12.0));
         set_if_neq!(node.bottom, px(window.height() - canvas.max.y + 8.0));
         set_if_neq!(node.max_width, px((canvas.width() - 24.0).max(0.0)));
@@ -819,7 +704,7 @@ mod tests {
     }
 
     #[test]
-    fn an_edit_notice_takes_the_tool_hint_slot_until_it_fades() {
+    fn an_edit_notice_shows_until_it_fades() {
         use bevy::ecs::system::RunSystemOnce;
         let mut world = World::new();
         world.insert_resource(Simulation::new(GolApp::new(8, 8)));
@@ -834,29 +719,18 @@ mod tests {
         world.init_resource::<InputFocusVisible>();
         world.init_resource::<Theme>();
         world.spawn((Window::default(), PrimaryWindow));
-        let hint = world.spawn((CanvasToolHint, Node::default())).id();
         let notice = world.spawn((FeedbackOverlay, Node::default())).id();
         let shown = |world: &mut World| {
             world.run_system_once(sync_feedback).unwrap();
-            world.run_system_once(sync_tool_hint).unwrap();
-            let display = |entity| world.get::<Node>(entity).unwrap().display;
-            (
-                display(hint) != Display::None,
-                display(notice) != Display::None,
-            )
+            world.get::<Node>(notice).unwrap().display != Display::None
         };
-        assert_eq!(shown(&mut world), (true, false));
+        assert!(!shown(&mut world));
         world
             .resource_mut::<EditFeedback>()
             .show("Board randomized · U to undo");
-        assert_eq!(shown(&mut world), (false, true));
-        // Both sit in the same place, so the notice reads as replacing the hint.
-        assert_eq!(
-            world.get::<Node>(hint).unwrap().bottom,
-            world.get::<Node>(notice).unwrap().bottom
-        );
+        assert!(shown(&mut world));
         world.resource_mut::<EditFeedback>().remaining = 0.0;
-        assert_eq!(shown(&mut world), (true, false));
+        assert!(!shown(&mut world));
     }
 
     #[test]
@@ -935,21 +809,5 @@ mod tests {
         assert!(app.is_max_speed());
         app.slow_down();
         assert_eq!(fixed_rate(&app), MAX_FIXED_RATE);
-    }
-
-    #[test]
-    fn canvas_guidance_follows_the_tool_and_actual_stamp_orientation() {
-        let mut app = GolApp::new(8, 8);
-        assert!(tool_hint(&app).starts_with("Draw ·"));
-        app.select_pattern(crate::app::PatternKind::Glider);
-        assert!(tool_hint(&app).contains("Stamp: Glider · 0°"));
-        app.rotate_stamp_clockwise();
-        app.toggle_stamp_flip();
-        assert!(tool_hint(&app).contains("90° · flipped"));
-        assert!(tool_hint(&app).contains("Z rotate · F flip"));
-        app.set_tool(EditTool::Erase);
-        assert_eq!(tool_hint(&app), "Erase · drag to erase cells");
-        app.set_tool(EditTool::Draw);
-        assert!(tool_hint(&app).starts_with("Draw ·"));
     }
 }

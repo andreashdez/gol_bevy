@@ -1,4 +1,0 @@
-#N RLE 8x4
-#C A solid 8x4 block, showing run lengths spanning whole rows.
-x = 8, y = 4, rule = B3/S23
-8o$8o$8o$8o!

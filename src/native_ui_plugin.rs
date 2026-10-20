@@ -75,8 +75,10 @@ impl Plugin for NativeUiPlugin {
         app.init_resource::<NativeUi>()
             .init_resource::<EditFeedback>()
             .init_resource::<Theme>()
+            .init_resource::<toolbar::WorkspaceMenu>()
             .add_plugins((TabNavigationPlugin, bevy::picking::cursor::CursorIconPlugin))
             .add_observer(activate)
+            .add_observer(toolbar::menu_action)
             .add_observer(speed::handle_key)
             .add_observer(controls::navigate)
             .add_plugins(dialogs::NativeDialogsPlugin)
@@ -87,6 +89,7 @@ impl Plugin for NativeUiPlugin {
                     palette::sync_scrollbar.after(bevy::ui::UiSystems::Layout),
                     controls::keep_widest.after(bevy::ui::UiSystems::Layout),
                     theme::apply.after(bevy::a11y::AccessibilitySystems::Update),
+                    theme::apply_window,
                     speed::edit
                         .after(bevy::text::EditableTextSystems)
                         .before(bevy::ui::UiSystems::PostLayout),
@@ -110,9 +113,8 @@ impl Plugin for NativeUiPlugin {
                     controls::sync_footer,
                     controls::sync_status,
                     toolbar::sync_layout,
+                    toolbar::sync_menu,
                     controls::sync_feedback,
-                    // After the notice counts down, so the hint returns as it ends.
-                    controls::sync_tool_hint,
                     publish_input_regions,
                     release_pointer_focus,
                     sync_board_focus,
@@ -172,6 +174,8 @@ enum Action {
     Import,
     Help,
     Settings,
+    /// Opens the menu holding the workspace controls in narrow windows.
+    More,
     Diagnostics,
     CloseDialog,
     ImportSubmit,
@@ -310,7 +314,7 @@ fn setup(
             Node {
                 position_type: PositionType::Absolute,
                 left: px(16),
-                top: px(toolbar::height(1200.0) + 16.0),
+                top: px(toolbar::HEIGHT + 16.0),
                 width: px(SIDE),
                 height: px(TOOL_STRIP_HEIGHT),
                 padding: UiRect::all(px(4)),
@@ -342,7 +346,7 @@ fn setup(
             Node {
                 position_type: PositionType::Absolute,
                 left: px(16),
-                top: px(toolbar::height(1200.0) + 16.0 + TOOL_STRIP_SPACE),
+                top: px(toolbar::HEIGHT + 16.0 + TOOL_STRIP_SPACE),
                 bottom: px(64),
                 width: px(SIDE),
                 padding: UiRect::all(px(10)),
@@ -528,7 +532,7 @@ fn sync_board_focus(
 
 /// Logical rectangles shared by layout and input routing; gaps remain canvas.
 pub fn panel_rects(size: Vec2, layout: &UiLayout) -> Vec<Rect> {
-    let top = toolbar::height(size.x);
+    let top = toolbar::HEIGHT;
     let bottom = STATUS_BAR_HEIGHT;
     let mut rects = vec![
         Rect::new(0.0, 0.0, size.x, top),
@@ -573,7 +577,7 @@ pub fn canvas_rect(size: Vec2, layout: &UiLayout) -> Rect {
             TOOL_RAIL_WIDTH
         };
     let max = (size - Vec2::new(GAP, STATUS_BAR_HEIGHT + GAP)).max(Vec2::ONE);
-    let min = Vec2::new(left, toolbar::height(size.x) + GAP)
+    let min = Vec2::new(left, toolbar::HEIGHT + GAP)
         .min(max - Vec2::ONE)
         .max(Vec2::ZERO);
     Rect::from_corners(min, max)
@@ -583,9 +587,12 @@ fn publish_input_regions(
     windows: Query<&Window, With<PrimaryWindow>>,
     layout: Res<UiLayout>,
     state: Res<NativeUi>,
+    menu: Res<toolbar::WorkspaceMenu>,
     mut regions: ResMut<UiInputRegions>,
 ) {
-    regions.modal = state.dialog.is_some();
+    // An open menu holds the pointer and keyboard like a dialog, so the click
+    // that dismisses it does not also draw on the board.
+    regions.modal = state.dialog.is_some() || menu.open;
     regions.panels = windows
         .single()
         .map(|window| panel_rects(window.size(), &layout))
@@ -617,6 +624,7 @@ fn activate(
         | Action::ZoomIn
         | Action::ZoomOut
         | Action::Settings
+        | Action::More
         | Action::Diagnostics
         | Action::Help
         | Action::CloseDialog
@@ -910,7 +918,7 @@ fn sync_palette(
                 p.spawn((
                     WidgetButton,
                     Action::Pattern(index),
-                    controls::Tooltip(controls::pattern_hint(&pattern.name, index)),
+                    controls::Tooltip(controls::pattern_hint(&pattern.name)),
                     Hovered::default(),
                     TabIndex(0),
                     Name::new(pattern.name.clone()),
@@ -1302,6 +1310,7 @@ mod tests {
         world.init_resource::<InputFocus>();
         world.init_resource::<InputFocusVisible>();
         world.init_resource::<Theme>();
+        world.init_resource::<toolbar::WorkspaceMenu>();
         world.spawn((Window::default(), PrimaryWindow));
         world.run_system_once(setup).unwrap();
         let mut schedule = Schedule::default();
@@ -1332,6 +1341,102 @@ mod tests {
             .unwrap();
         assert_eq!(tools.flex_direction, FlexDirection::Row);
         assert_eq!(tools.width, px(SIDE));
+    }
+
+    #[test]
+    fn narrow_windows_move_workspace_controls_into_a_menu() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Assets<Font>>();
+        world.init_resource::<Assets<Image>>();
+        world.insert_resource(Simulation::new(GolApp::new(8, 8)));
+        world.init_resource::<NativeUi>();
+        world.init_resource::<UiLayout>();
+        world.init_resource::<toolbar::WorkspaceMenu>();
+        world.init_resource::<InputFocus>();
+        world.init_resource::<InputFocusVisible>();
+        world.init_resource::<ButtonInput<KeyCode>>();
+        world.init_resource::<ButtonInput<MouseButton>>();
+        world.init_resource::<UiInputRegions>();
+        world.add_observer(toolbar::menu_action);
+        let window = world
+            .spawn((
+                Window {
+                    resolution: bevy::window::WindowResolution::new(
+                        toolbar::COLLAPSE_BELOW_WIDTH as u32 - 1,
+                        600,
+                    ),
+                    ..default()
+                },
+                PrimaryWindow,
+            ))
+            .id();
+        world.run_system_once(setup).unwrap();
+        let mut schedule = Schedule::default();
+        schedule.add_systems((toolbar::sync_layout, toolbar::sync_menu).chain());
+        let find = |world: &mut World, action: Action| {
+            world
+                .query::<(Entity, &Action)>()
+                .iter(world)
+                .find_map(|(e, a)| (*a == action).then_some(e))
+                .unwrap()
+        };
+        let more = find(&mut world, Action::More);
+        let grid = find(&mut world, Action::Grid);
+        let panel_shown = |world: &mut World| {
+            let (node, visibility) = world
+                .query_filtered::<(&Node, &Visibility), With<toolbar::MenuPanel>>()
+                .single(world)
+                .unwrap();
+            assert_eq!(
+                node.display != Display::None,
+                *visibility != Visibility::Hidden
+            );
+            node.display != Display::None
+        };
+        schedule.run(&mut world);
+        assert!(world.resource::<toolbar::WorkspaceMenu>().collapsed);
+        assert_ne!(world.get::<Node>(more).unwrap().display, Display::None);
+        assert!(!panel_shown(&mut world));
+
+        // From the keyboard, More opens the menu on its first item.
+        world.resource_mut::<InputFocusVisible>().0 = true;
+        world.trigger(Activate { entity: more });
+        schedule.run(&mut world);
+        assert!(panel_shown(&mut world));
+        world.run_system_once(publish_input_regions).unwrap();
+        assert!(world.resource::<UiInputRegions>().modal);
+        assert_eq!(world.resource::<InputFocus>().get(), Some(grid));
+
+        // Escape closes it and returns focus to More.
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        schedule.run(&mut world);
+        world.resource_mut::<ButtonInput<KeyCode>>().clear();
+        assert!(!panel_shown(&mut world));
+        assert_eq!(world.resource::<InputFocus>().get(), Some(more));
+
+        // Choosing an item closes the menu.
+        world.trigger(Activate { entity: more });
+        schedule.run(&mut world);
+        assert!(panel_shown(&mut world));
+        world.trigger(Activate { entity: grid });
+        schedule.run(&mut world);
+        assert!(!panel_shown(&mut world));
+
+        // Wide windows show the controls in the toolbar and hide More.
+        world.trigger(Activate { entity: more });
+        world
+            .get_mut::<Window>(window)
+            .unwrap()
+            .resolution
+            .set(toolbar::COLLAPSE_BELOW_WIDTH, 600.0);
+        schedule.run(&mut world);
+        let menu = world.resource::<toolbar::WorkspaceMenu>();
+        assert!(!menu.collapsed && !menu.open);
+        assert!(panel_shown(&mut world));
+        assert_eq!(world.get::<Node>(more).unwrap().display, Display::None);
     }
 
     #[test]
@@ -1373,26 +1478,23 @@ mod tests {
     }
 
     #[test]
-    fn compact_toolbar_returns_space_to_the_canvas_and_input_regions_follow_it() {
+    fn toolbar_keeps_one_row_and_input_regions_match_the_canvas() {
         let layout = UiLayout::default();
-        let narrow = Vec2::new(toolbar::SINGLE_ROW_MIN_WIDTH - 1.0, 800.0);
-        let wide = Vec2::new(toolbar::SINGLE_ROW_MIN_WIDTH, 800.0);
+        let narrow = Vec2::new(toolbar::COLLAPSE_BELOW_WIDTH - 1.0, 800.0);
+        let wide = Vec2::new(toolbar::COLLAPSE_BELOW_WIDTH, 800.0);
         assert_eq!(
-            canvas_rect(narrow, &layout).min.y - canvas_rect(wide, &layout).min.y,
-            48.0
+            canvas_rect(narrow, &layout).min.y,
+            canvas_rect(wide, &layout).min.y
         );
-        let returned_space = Vec2::new(500.0, 100.0);
-        assert!(
-            panel_rects(narrow, &layout)
-                .iter()
-                .any(|r| r.contains(returned_space))
-        );
-        assert!(
-            !panel_rects(wide, &layout)
-                .iter()
-                .any(|r| r.contains(returned_space))
-        );
-        assert!(canvas_rect(wide, &layout).contains(returned_space));
+        let below_toolbar = Vec2::new(500.0, toolbar::HEIGHT + 20.0);
+        for size in [narrow, wide] {
+            assert!(
+                !panel_rects(size, &layout)
+                    .iter()
+                    .any(|r| r.contains(below_toolbar))
+            );
+            assert!(canvas_rect(size, &layout).contains(below_toolbar));
+        }
         for width in [680.0, 999.0, 1000.0, 1039.0, 1040.0, 1200.0, 1600.0] {
             for visible in [true, false] {
                 let size = Vec2::new(width, 420.0);
@@ -1422,7 +1524,7 @@ mod tests {
             .iter()
             .any(|r| r.contains(pos))
         };
-        assert!(contains(true, Vec2::new(300.0, 80.0)));
+        assert!(contains(true, Vec2::new(300.0, 40.0)));
         assert!(contains(true, Vec2::new(40.0, 150.0)));
         assert!(contains(false, Vec2::new(40.0, 150.0)));
         assert!(contains(true, Vec2::new(40.0, 210.0)));

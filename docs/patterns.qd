@@ -112,7 +112,6 @@ The palette comes with these patterns:
 | Pentadecathlon     | An oscillator with period 15                                    |
 | Pulsar             | The most common period 3 oscillator                             |
 | R-pentomino        | Five cells that take 1103 generations to settle                 |
-| RLE 8x4            | A solid 8 × 4 block, showing run lengths that span whole rows    |
 
 Acorn and the R-pentomino grow far beyond their starting size and send gliders off in all directions, so they work best on a large board with plenty of empty space. The Gosper glider gun needs room in front of it for its stream of gliders.
 
@@ -138,8 +137,6 @@ Built-in patterns are the RLE files in `assets/patterns/` of the repository, one
 The palette lists built-in patterns in file-name order. A pattern without a `#N` line is named after its file. Hidden files, such as the `._name.rle` files macOS leaves on some drives, are skipped.
 
 A built-in pattern that fails to parse stops the app at startup with the file name and the error, and the `every_builtin_file_parses_with_a_unique_name` test catches it first.
-
-> Warning: Keyboard shortcuts find their pattern by file name: `glider`, `blinker`, `lwss`, and `rle-8x4`. Renaming or removing one of these files unbinds its key. The tests check that each one still resolves.
 
 ## Import limits
 
