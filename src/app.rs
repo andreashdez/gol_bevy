@@ -220,6 +220,11 @@ impl App {
         self.needs_redraw = true;
     }
 
+    pub fn set_boundary_mode(&mut self, mode: crate::board::BoundaryMode) {
+        self.board.set_boundary_mode(mode);
+        self.needs_redraw = true;
+    }
+
     pub fn boundary_mode_label(&self) -> &'static str {
         self.board.boundary_mode_label()
     }

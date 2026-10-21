@@ -41,7 +41,7 @@ Both are edits, so you can undo them. Randomize keeps the rule, edges, and gener
 counter. In Settings, **Randomization** lets you choose a whole-number density from
 0–100% (25% by default), and an optional seed. Leave the seed blank for a fresh board
 each time; the same seed, density, and dimensions repeat the same cell layout.
-**Apply randomization** sets the preferences; **Randomize now** also replaces the board.
+The density slider applies as it moves and the seed applies with **Apply**; **Randomize now** also replaces the board.
 Density is a probability for each cell, so the population is approximate. At 0% the
 board is empty; at 100% every cell is alive.
 

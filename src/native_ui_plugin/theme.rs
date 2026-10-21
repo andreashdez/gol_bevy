@@ -22,7 +22,8 @@ pub(super) enum Token {
     /// Keyboard focus outline on buttons and the slider.
     Focus,
     Error,
-    /// Dims the workspace behind a dialog.
+    /// Dims the workspace behind a dialog. Blending is linear, so it needs a
+    /// high alpha to look clearly darker.
     Scrim,
 }
 
@@ -80,7 +81,7 @@ const DARK: Colors = Colors {
     selected: Color::srgb(0.08, 0.21, 0.17),
     focus: Color::srgb(0.88, 0.93, 0.94),
     error: Color::srgb(1.0, 0.55, 0.5),
-    scrim: Color::srgba(0.0, 0.0, 0.0, 0.65),
+    scrim: Color::srgba(0.0, 0.0, 0.0, 0.85),
 };
 
 const LIGHT: Colors = Colors {
@@ -98,7 +99,7 @@ const LIGHT: Colors = Colors {
     selected: Color::srgb(0.85, 0.95, 0.90),
     focus: Color::srgb(0.07, 0.10, 0.12),
     error: Color::srgb(0.70, 0.15, 0.12),
-    scrim: Color::srgba(0.0, 0.0, 0.0, 0.35),
+    scrim: Color::srgba(0.0, 0.0, 0.0, 0.55),
 };
 
 const HIGH_CONTRAST: Colors = Colors {
@@ -116,7 +117,7 @@ const HIGH_CONTRAST: Colors = Colors {
     selected: Color::srgb(0.0, 0.30, 0.15),
     focus: Color::srgb(1.0, 0.85, 0.0),
     error: Color::srgb(1.0, 0.60, 0.55),
-    scrim: Color::srgba(0.0, 0.0, 0.0, 0.80),
+    scrim: Color::srgba(0.0, 0.0, 0.0, 0.90),
 };
 
 impl Colors {

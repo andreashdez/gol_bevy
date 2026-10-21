@@ -88,9 +88,9 @@ type any rulestring in B/S notation (`B36/S23`, or the older `23/36`). Changing 
 rule is an undoable edit. Settings also switches between the Dark, Light, and High contrast
 themes, which recolour both the board and the interface.
 
-Settings also provides **Randomization**: choose a whole-number density from 0–100%
-and optionally enter a seed from 0 to 18446744073709551615. **Apply randomization**
-sets the preferences for the toolbar's Randomize button and **R**; **Randomize now**
+Settings also provides **Randomization**: a density slider from 0–100%, which applies as
+it moves, and an optional seed from 0 to 18446744073709551615 with its own **Apply**. These
+set the preferences for the toolbar's Randomize button and **R**; **Randomize now**
 applies them and replaces the board immediately as one undoable edit. The default
 is 25% with a blank seed, which uses a fresh seed each time. With a fixed seed,
 the same density and board dimensions reproduce the same cell layout, independent

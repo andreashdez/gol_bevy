@@ -34,7 +34,7 @@ At a fixed speed, a frame that arrives late runs the generations it missed, up t
 
 A rule says how many live neighbours make a dead cell come alive (*birth*, **B**) and let a live cell stay alive (*survival*, **S**). Conway's Game of Life is `B3/S23`.
 
-Choose a rule in **Settings**, either from a preset or by typing a rulestring and clicking **Apply rule**. The preset matching the active board rule is highlighted, including after an import or undo; a custom rule leaves all presets unselected.
+Choose a rule in **Settings**, either from a preset or by typing a rulestring and clicking **Apply** beside it. The preset matching the active board rule is highlighted, including after an import or undo; a custom rule leaves all presets unselected.
 
 | Preset          | Rulestring       | Character                                                           |
 |-----------------|------------------|---------------------------------------------------------------------|

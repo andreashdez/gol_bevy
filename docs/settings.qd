@@ -1,57 +1,50 @@
 .docname {Settings}
 .include {docs}
 
-Open the **Settings** dialog with the gear button near the right end of the toolbar.
+Open the **Settings** dialog with the gear button near the right end of the toolbar. It has five sections: Board, Simulation, Randomization, Display, and Developer. The dialog scrolls when it does not fit, with a scrollbar on the right, and messages about your changes appear below it.
 
-## Board size
+Choices that are on or off use switches, choices between options use joined buttons where the current one is highlighted, and every text field that needs confirming has an **Apply** button at the end of its row.
 
-Pick a preset (128², 256², 512², or 1024²), or type a **Width** and **Height** in cells, then click **Apply board size**. Each side can be from 8 to 2048 cells. Anything else is rejected with a message, and the board keeps its size.
+## Board
+
+Pick a preset (128², 256², 512², or 1024²) to fill in the size, or type a **Width** and **Height** in cells, then click **Apply**. Each side can be from 8 to 2048 cells. Anything else is rejected with a message, and the board keeps its size.
 
 Resizing keeps the cells that fit in the new size, fits the board into view, and clears the [undo history](editing.qd#history-limits).
 
-The board size is independent of the window. Resizing the window only changes how much of the board you can see.
-
 ### Fill canvas
 
-Fill canvas is on by default. It sizes the board to the canvas, so **Fit board** shows it edge to edge at 100% with no empty border. While it is on, the board follows the canvas: resizing the window, or showing or hiding the palette, resizes the board too.
+The **Fill canvas** switch is on by default. It sizes the board to the canvas, so **Fit board** shows it edge to edge at 100% with no empty border. While it is on, the board follows the canvas: resizing the window, or showing or hiding the palette, resizes the board too.
 
 > Warning: Like any resize, a canvas change keeps only the cells that fit and clears the undo history. Shrinking the window, or showing the palette, removes cells beyond the new right and top edges.
 
-Click **Fill canvas** to switch it off and keep the current size from then on, or click it again to turn it back on. Applying a size or preset also switches it off. Settings files saved before Fill canvas existed keep their saved size.
+Switch it off to keep the current size from then on; with it off, resizing the window only changes how much of the board you can see. Applying a size also switches it off. Settings files saved before Fill canvas existed keep their saved size.
 
-## Rule
+## Simulation
 
-Pick **Life**, **HighLife**, **Day & Night**, or **Seeds**, or type a rulestring and click **Apply rule**. See [Rules](simulation.qd#rules) for the notation.
+- **Rule:** pick **Life**, **HighLife**, **Day & Night**, or **Seeds**, or type a rulestring and click **Apply**. See [Rules](simulation.qd#rules) for the notation.
+- **Edges:** choose **Wrap** or **Fixed**. See [Edges](simulation.qd#edges).
+- **Reset generation counter** sets the generation back to 0 without touching the cells.
 
 ## Randomization
 
-Choose a whole-number **Density** from 0–100%, and optionally enter a **Seed** from
-0 to 18446744073709551615. Blank seed means a fresh board each time. The default is
-25% with no seed. The same seed, density, and board dimensions reproduce the same
-starting layout; share all three to repeat an experiment. Use the same rule and
-boundary mode to reproduce its evolution.
+Drag the **Density** slider, or focus it and use the arrow keys, to choose 0–100%. It applies as it moves. Optionally enter a **Seed** from 0 to 18446744073709551615 and click **Apply**; a blank seed means a fresh board each time. The default is 25% with no seed. The same seed, density, and board dimensions reproduce the same starting layout; share all three to repeat an experiment. Use the same rule and edge mode to reproduce its evolution.
 
-**Apply randomization** changes the preferences without editing the board. The toolbar
-Randomize button and .keybinding {R} use those preferences. **Randomize now** applies
-the entered values and replaces the board immediately as one undoable edit. Invalid
-values leave both preferences and board unchanged.
+The toolbar's Randomize button and .keybinding {R} use these preferences. **Randomize now** applies the entered seed and replaces the board immediately as one undoable edit. An invalid seed leaves both the preferences and the board unchanged.
 
 Density is a probability per cell, so the population is approximate. At 0% the board
 is empty; at 100% it is full. Rule, edges, and generation counter stay as they are.
 Preferences are saved between runs and included in workspace files. Older files default
 to 25% with a blank seed.
 
-## Theme
+## Display
 
-Pick **Dark**, **Light**, or **High contrast** to change the colours of the board, the pattern thumbnails, and the toolbar, palette, status bar, and dialogs. **Light** shows dark green cells on a white board. **High contrast** uses black panels, white text, bright green cells, yellow fixed edges, and a yellow focus outline.
-
-## View and edges
-
+- **Theme:** pick **Dark**, **Light**, or **High contrast** to change the colours of the board, the pattern thumbnails, and the toolbar, palette, status bar, and dialogs. **Light** shows dark green cells on a white board. **High contrast** uses black panels, white text, bright green cells, yellow fixed edges, and a yellow focus outline.
 - **Grid** shows or hides cell lines.
 - **Cell age** shades cells by age and leaves fading trails where cells died. See [Cell age](interface.qd#cell-age).
-- **Edges** switches between [wrapping and fixed edges](simulation.qd#edges).
-- **Diagnostics** opens the [diagnostics view](interface.qd#diagnostics).
-- **Reset generation counter** sets the generation back to 0 without touching the cells.
+
+## Developer
+
+**Show diagnostics** opens the [diagnostics view](interface.qd#diagnostics), which .keybinding {F3} also toggles.
 
 ## What is saved
 

@@ -19,8 +19,6 @@ pub(super) struct StampImage;
 pub(super) struct StampCaption;
 #[derive(Component)]
 pub(super) struct LibraryScroll;
-#[derive(Component)]
-pub(super) struct LibraryScrollbar;
 
 /// Only the library scrolls; tools, the stamp preview, and search stay within reach.
 pub(super) fn library(parent: &mut ChildSpawnerCommands) {
@@ -60,44 +58,49 @@ pub(super) fn library(parent: &mut ChildSpawnerCommands) {
                     ));
                 })
                 .id();
+            scrollbar(p, target);
+        });
+}
+
+/// A vertical scrollbar for `target`, shown only while its content overflows.
+pub(super) fn scrollbar(parent: &mut ChildSpawnerCommands, target: Entity) {
+    parent
+        .spawn((
+            Scrollbar::new(target, ControlOrientation::Vertical, 28.0),
+            Node {
+                width: px(8),
+                flex_shrink: 0.0,
+                border_radius: BorderRadius::all(px(4)),
+                ..default()
+            },
+            ThemedBackground(Token::Surface),
+        ))
+        .with_children(|p| {
             p.spawn((
-                LibraryScrollbar,
-                Scrollbar::new(target, ControlOrientation::Vertical, 28.0),
-                Node {
-                    width: px(8),
-                    flex_shrink: 0.0,
+                ScrollbarThumb {
                     border_radius: BorderRadius::all(px(4)),
                     ..default()
                 },
-                ThemedBackground(Token::Surface),
-            ))
-            .with_children(|p| {
-                p.spawn((
-                    ScrollbarThumb {
-                        border_radius: BorderRadius::all(px(4)),
-                        ..default()
-                    },
-                    ThemedBackground(Token::Muted),
-                ));
-            });
+                ThemedBackground(Token::Muted),
+            ));
         });
 }
 
 pub(super) fn sync_scrollbar(
-    library: Query<&ComputedNode, With<LibraryScroll>>,
-    mut bars: Query<&mut Node, With<LibraryScrollbar>>,
+    targets: Query<&ComputedNode>,
+    mut bars: Query<(&Scrollbar, &mut Node)>,
 ) {
-    let Ok(library) = library.single() else {
-        return;
-    };
-    // Removed from the layout rather than hidden, so cards use its width when
-    // everything fits.
-    let display = if library.content_size().y > library.size().y + 1.0 {
-        Display::Flex
-    } else {
-        Display::None
-    };
-    for mut node in &mut bars {
+    for (bar, mut node) in &mut bars {
+        let Ok(target) = targets.get(bar.target) else {
+            continue;
+        };
+        // Removed from the layout rather than hidden, so the content uses its
+        // width when everything fits.
+        let display = if target.content_size().y > target.size().y + 1.0 {
+            Display::Flex
+        } else {
+            Display::None
+        };
         set_if_neq!(node.display, display);
     }
 }

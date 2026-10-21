@@ -98,6 +98,12 @@ impl Plugin for NativeUiPlugin {
             .add_systems(Startup, setup.after(StartupSet::BuildWorld))
             .add_systems(
                 Update,
+                (dialogs::sync_switches, dialogs::sync_density)
+                    .after(dialogs::update_dialogs)
+                    .in_set(NativeLayout),
+            )
+            .add_systems(
+                Update,
                 (
                     dialogs::poll_file_dialog,
                     dialogs::update_dialogs,
@@ -203,7 +209,8 @@ enum Action {
     Flip,
     Randomize,
     Clear,
-    Boundary,
+    /// Chooses wrapping or fixed edges.
+    Edges(crate::board::BoundaryMode),
 }
 
 fn label(value: impl Into<String>, size: f32, color: Token) -> impl Bundle {
@@ -675,7 +682,7 @@ fn apply_action(action: Action, app: &mut GolApp) {
         Action::Flip => app.toggle_stamp_flip(),
         Action::Randomize => app.randomize_board(),
         Action::Clear => app.clear_board(),
-        Action::Boundary => app.toggle_boundary_mode(),
+        Action::Edges(mode) => app.set_boundary_mode(mode),
         Action::ResetEpoch => app.reset_epoch(),
         _ => {}
     }
@@ -691,6 +698,7 @@ type ButtonState<'a> = (
     &'a Children,
     &'a Name,
     &'a mut bevy::a11y::AccessibilityNode,
+    (Has<dialogs::Switch>, Has<dialogs::Segment>),
 );
 
 #[derive(SystemParam)]
@@ -736,8 +744,18 @@ fn sync(
         };
         set_if_neq!(node.display, display);
     }
-    for (entity, action, hovered, pressed, mut bg, mut border, children, name, mut accessible) in
-        &mut buttons
+    for (
+        entity,
+        action,
+        hovered,
+        pressed,
+        mut bg,
+        mut border,
+        children,
+        name,
+        mut accessible,
+        (switch, segment),
+    ) in &mut buttons
     {
         let accessible_label = match action {
             Action::Play => {
@@ -750,7 +768,6 @@ fn sync(
             _ => name.as_str(),
         };
         let accessible_label = match action {
-            Action::Boundary => format!("Edges: {}", sim.app.boundary_mode_label()),
             Action::EditRule => format!("Rule: {}", sim.app.rule_label()),
             _ => accessible_label.to_owned(),
         };
@@ -785,6 +802,7 @@ fn sync(
             Action::FillCanvas => board.fill_canvas,
             Action::Sidebar => layout.control_deck_visible,
             Action::Theme(choice) => *theme == *choice,
+            Action::Edges(mode) => sim.app.board.boundary_mode() == *mode,
             Action::RulePreset(index) => dialogs::RULE_PRESETS
                 .get(*index)
                 .is_some_and(|(_, rule)| sim.app.rule_label() == *rule),
@@ -800,6 +818,7 @@ fn sync(
                 | Action::Sidebar
                 | Action::RulePreset(_)
                 | Action::Theme(_)
+                | Action::Edges(_)
         ) {
             accessible.set_toggled(if selected {
                 accesskit::Toggled::True
@@ -807,6 +826,15 @@ fn sync(
                 accesskit::Toggled::False
             });
         }
+        // A switch row shows its state in the switch, and a segment sits flush
+        // in its group until chosen.
+        let resting = if switch {
+            Token::Panel
+        } else if segment {
+            Token::Field
+        } else {
+            Token::Surface
+        };
         bg.set_if_neq(ThemedBackground(if disabled {
             Token::Panel
         } else if *action == Action::Play {
@@ -817,7 +845,7 @@ fn sync(
             }
         } else if pressed || hovered.get() {
             Token::Hover
-        } else if selected {
+        } else if selected && !switch {
             Token::Selected
         } else if matches!(
             action,
@@ -825,12 +853,14 @@ fn sync(
         ) {
             Token::Field
         } else {
-            Token::Surface
+            resting
         }));
         border.set_if_neq(ThemedBorder(if focus.get() == Some(entity) {
             Token::Focus
-        } else if selected {
+        } else if selected && !switch {
             Token::Accent
+        } else if switch || segment {
+            resting
         } else {
             Token::Line
         }));
@@ -861,7 +891,6 @@ fn sync(
                     } else {
                         "Play".to_string()
                     }),
-                    Action::Boundary => Some(format!("Edges: {}", sim.app.boundary_mode_label())),
                     Action::EditRule => Some(sim.app.rule_label()),
                     _ => None,
                 };

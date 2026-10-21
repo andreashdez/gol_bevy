@@ -70,7 +70,12 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::Flip => "Flip stamp horizontally · F",
         Action::Randomize => "Randomize using the density and seed in Settings · R",
         Action::Clear => "Clear the board · X · undo with U",
-        Action::Boundary => "Wrap / fixed edges · M",
+        Action::Edges(crate::board::BoundaryMode::Wrap) => {
+            "Cells leaving one edge come back on the opposite edge · M switches"
+        }
+        Action::Edges(crate::board::BoundaryMode::Fixed) => {
+            "Cells beyond the edges count as dead · M switches"
+        }
         Action::Tool(EditTool::Draw) => "Draw cells with the left mouse button",
         Action::Tool(EditTool::Erase) => "Erase cells · right-click also erases",
         Action::Tool(EditTool::Stamp) => "Place the selected pattern on the board",
