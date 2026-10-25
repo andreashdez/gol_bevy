@@ -369,8 +369,11 @@ fn setup(
             GlobalZIndex(10),
         ))
         .with_children(|p| {
-            palette::preview(p);
+            // Search stays at the top; the stamp card appears under it, so
+            // choosing a stamp never moves the field.
             palette::search(p);
+            palette::preview(p);
+            palette::summary(p);
             palette::library(p);
         });
     commands

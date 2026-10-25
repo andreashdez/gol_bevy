@@ -39,8 +39,9 @@ The workspace group has icon toggles for the grid, cell age, and pattern palette
 whether they are on, plus Import / Export, a gear for Settings, and a ? for Help.
 Play / Pause, Step, Undo, and Redo are icon buttons too; tooltips give their names and shortcuts.
 
-The pattern library scrolls with the mouse wheel or its scrollbar; the
-stamp preview with its rotate/flip controls, and search stay visible while browsing. Scrolling
+The pattern library scrolls with the mouse wheel or its scrollbar; search and the
+stamp preview with its rotate/flip controls stay visible while browsing. The stamp
+preview appears under the search field, so selecting a stamp never moves it. Scrolling
 over the canvas zooms it. Randomize and Clear are always available in the toolbar.
 Draw, Erase, and Stamp live in a separate tool strip above the palette. Hiding the
 palette turns that strip into a narrow vertical rail, so editing tools remain available.

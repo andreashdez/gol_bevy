@@ -148,6 +148,10 @@ pub(super) fn search(parent: &mut ChildSpawnerCommands) {
                 },
             ));
         });
+}
+
+/// The match count, directly above the library it describes.
+pub(super) fn summary(parent: &mut ChildSpawnerCommands) {
     parent.spawn((
         SearchSummary,
         controls::TallLabel::default(),

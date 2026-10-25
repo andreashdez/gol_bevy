@@ -22,11 +22,12 @@ Most buttons show icons instead of words. Play turns into a pause icon while the
 The palette holds the editing tools and the pattern library, from top to bottom:
 
 - the **Draw**, **Erase**, and **Stamp** tools
-- a **stamp preview** of the selected pattern in its current orientation, with **Rotate** and **Flip** buttons, shown while a stamp is active
 - a slim **search field** that filters patterns by name, ignoring case
+- a **stamp preview** of the selected pattern in its current orientation, with **Rotate** and **Flip** buttons, shown while a stamp is active. It appears under the search field, so choosing a stamp never moves the field
+- the number of matching patterns
 - pattern **thumbnails**, with built-in and imported patterns in separate groups
 
-Only the thumbnails scroll, with the mouse wheel or the scrollbar; the tools, stamp preview, and search stay in place. Filtering the library keeps the current stamp selected, even if the filter hides it, and scrolls back to the first match.
+Only the thumbnails scroll, with the mouse wheel or the scrollbar; the tools, search, and stamp preview stay in place. Filtering the library keeps the current stamp selected, even if the filter hides it, and scrolls back to the first match.
 
 Press .keybinding {H} or click **Palette** to hide or show the palette. Hiding it gives the board the full width of the window. See [Drawing and stamps](editing.qd) for how the tools work.
 
