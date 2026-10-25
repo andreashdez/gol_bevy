@@ -7,7 +7,7 @@ use crate::{
     },
     shared::{
         BOARD_SIZE_MAX, BOARD_SIZE_MIN, BOARD_SIZE_PRESETS, BoardSettings, DiagnosticsOverlay,
-        HelpSection, command_key, help_sections,
+        HelpSection, Theme, command_key, help_sections,
     },
 };
 use bevy::{
@@ -53,7 +53,7 @@ pub(super) const RULE_PRESETS: [(&str, &str); 4] = [
 ];
 
 #[derive(Resource)]
-struct Drafts {
+pub(super) struct Drafts {
     name: String,
     /// The last workspace file saved or opened, where the next file dialog starts.
     workspace_path: Option<PathBuf>,
@@ -71,6 +71,9 @@ struct Drafts {
     return_focus: Option<Entity>,
     /// Settings opened from the status bar's rule, so the rulestring gets focus.
     rule_first: bool,
+    /// Rebuild the dialog so its fields show drafts changed from outside them,
+    /// such as an opened `.rle` file.
+    rebuild: bool,
 }
 
 impl Default for Drafts {
@@ -89,6 +92,7 @@ impl Default for Drafts {
             error: false,
             return_focus: None,
             rule_first: false,
+            rebuild: false,
         }
     }
 }
@@ -340,6 +344,11 @@ fn dialog_action(
         Action::ExportRle => export_rle(&mut state),
         Action::SaveWorkspace => request_save(&mut state),
         Action::OpenWorkspace => request_open(&mut state),
+        Action::OpenRle => {
+            if !file_dialog_busy(&mut state) {
+                request_file(&mut state, FileRequest::OpenRle);
+            }
+        }
         Action::ConfirmOpenWorkspace => confirm_open(&mut state),
         Action::CancelOpenWorkspace => {
             state.drafts.pending_open = None;
@@ -365,6 +374,8 @@ enum FileRequest {
     /// if playback continues while the user browses.
     Save(Box<Workspace>),
     Open,
+    /// An `.rle` file to load into the import fields.
+    OpenRle,
 }
 
 /// The native file dialog in progress, if any. It runs off the main thread so
@@ -409,7 +420,12 @@ fn request_file(state: &mut DialogState, request: FileRequest) {
     let file_name = previous
         .and_then(Path::file_name)
         .map_or_else(|| "workspace.golw".into(), |name| name.to_string_lossy());
-    let mut dialog = rfd::AsyncFileDialog::new().add_filter("Game of Life workspace", &["golw"]);
+    let mut dialog = match request {
+        FileRequest::OpenRle => rfd::AsyncFileDialog::new()
+            .add_filter("RLE pattern", &["rle"])
+            .add_filter("Text", &["txt"]),
+        _ => rfd::AsyncFileDialog::new().add_filter("Game of Life workspace", &["golw"]),
+    };
     if let Some(directory) = directory {
         dialog = dialog.set_directory(directory);
     }
@@ -417,7 +433,7 @@ fn request_file(state: &mut DialogState, request: FileRequest) {
     let chosen: std::pin::Pin<Box<dyn Future<Output = Option<rfd::FileHandle>> + Send>> =
         match request {
             FileRequest::Save(_) => Box::pin(dialog.set_file_name(file_name).save_file()),
-            FileRequest::Open => Box::pin(dialog.pick_file()),
+            FileRequest::Open | FileRequest::OpenRle => Box::pin(dialog.pick_file()),
         };
     let task =
         IoTaskPool::get().spawn(async move { chosen.await.map(|file| file.path().to_owned()) });
@@ -425,6 +441,7 @@ fn request_file(state: &mut DialogState, request: FileRequest) {
     state.drafts.feedback = match request {
         FileRequest::Save(_) => "Choose where to save the workspace.",
         FileRequest::Open => "Choose a workspace file to open.",
+        FileRequest::OpenRle => "Choose an RLE pattern file.",
     }
     .into();
     state.file_dialog.0 = Some((request, task));
@@ -449,11 +466,12 @@ fn finish_file_request(state: &mut DialogState, request: FileRequest, chosen: Op
         state.drafts.feedback = "No file was chosen.".into();
         return;
     };
-    let saving = matches!(request, FileRequest::Save(_));
+    let workspace_file = !matches!(request, FileRequest::OpenRle);
     let result = match request {
         FileRequest::Save(workspace) => workspace
             .write(&path)
-            .map(|()| format!("Workspace saved to {}.", path.display())),
+            .map(|()| format!("Workspace saved to {}.", path.display()))
+            .map_err(|error| format!("Could not save {}: {error}", path.display())),
         // Validate the whole file first, so only a usable workspace asks to replace yours.
         FileRequest::Open => Workspace::read(&path)
             .and_then(Workspace::decode)
@@ -461,20 +479,49 @@ fn finish_file_request(state: &mut DialogState, request: FileRequest, chosen: Op
                 state.drafts.pending_open = Some((path.clone(), decoded));
                 state.mode.dialog = Some(DialogKind::ConfirmOpen);
                 String::new()
-            }),
+            })
+            .map_err(|error| format!("Could not open {}: {error}", path.display())),
+        FileRequest::OpenRle => load_rle(state, &path),
     };
     match result {
         Ok(feedback) => {
-            state.drafts.workspace_path = Some(path);
+            // The next workspace dialog starts where the last workspace file was.
+            if workspace_file {
+                state.drafts.workspace_path = Some(path);
+            }
             state.drafts.error = false;
             state.drafts.feedback = feedback;
         }
         Err(error) => {
-            let verb = if saving { "save" } else { "open" };
             state.drafts.error = true;
-            state.drafts.feedback = format!("Could not {verb} {}: {error}", path.display());
+            state.drafts.feedback = error;
         }
     }
+}
+
+/// Puts a pattern file's text and name into the import fields, to preview
+/// before importing.
+fn load_rle(state: &mut DialogState, path: &Path) -> Result<String, String> {
+    let fail =
+        |error: &dyn std::fmt::Display| format!("Could not open {}: {error}", path.display());
+    let size = std::fs::metadata(path).map_err(|e| fail(&e))?.len();
+    if size > crate::patterns::MAX_RLE_BYTES as u64 {
+        return Err(fail(&"the file is larger than 8 MiB"));
+    }
+    let source = std::fs::read_to_string(path).map_err(|e| fail(&e))?;
+    let stem = path
+        .file_stem()
+        .map_or_else(|| "Imported pattern".into(), |stem| stem.to_string_lossy());
+    // A file that does not parse still loads, so its error shows in the preview.
+    state.drafts.name = crate::patterns::Pattern::from_named_rle(&stem, &source)
+        .map_or_else(|_| stem.into_owned(), |pattern| pattern.name);
+    state.drafts.source = source;
+    state.drafts.rebuild = true;
+    state.mode.dialog = Some(DialogKind::Import);
+    Ok(format!(
+        "Loaded {}. Check the preview, then import it.",
+        path.display()
+    ))
 }
 
 fn confirm_open(state: &mut DialogState) {
@@ -586,6 +633,9 @@ pub(super) fn update_dialogs(
         close(&mut state);
     }
     let desired = state.mode.dialog;
+    if std::mem::take(&mut state.drafts.rebuild) {
+        *rendered = None;
+    }
     if desired != *rendered {
         for root in &roots {
             commands.entity(root).despawn();
@@ -1086,6 +1136,100 @@ pub(super) fn sync_density(
     }
 }
 
+#[derive(Component)]
+pub(super) struct ImportPreviewText;
+
+/// Stable, so the preview can be spawned before its image exists.
+const IMPORT_PREVIEW: Handle<Image> =
+    bevy::asset::uuid_handle!("2f6d3b1e-8a4c-4e0b-9b7d-5c1a7e9f3d20");
+
+/// A thumbnail and summary of the RLE in the source field, updated as it changes.
+fn import_preview(parent: &mut ChildSpawnerCommands) {
+    parent
+        .spawn(Node {
+            align_items: AlignItems::Center,
+            column_gap: px(12),
+            flex_shrink: 0.0,
+            ..default()
+        })
+        .with_children(|p| {
+            p.spawn((
+                ImageNode::new(IMPORT_PREVIEW),
+                Node {
+                    width: px(64),
+                    height: px(64),
+                    flex_shrink: 0.0,
+                    border_radius: BorderRadius::all(px(6)),
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ));
+            p.spawn((ImportPreviewText, label("", 14.0, Token::Muted)));
+        });
+}
+
+/// What the preview says about `source`, and whether that is an error.
+fn import_summary(source: &str) -> (Option<crate::patterns::Pattern>, String, bool) {
+    if source.trim().is_empty() {
+        return (None, "Paste RLE above to see a preview.".into(), false);
+    }
+    match crate::patterns::Pattern::from_named_rle("", source) {
+        Ok(pattern) => {
+            let mut summary = format!(
+                "{} × {} · {} cells",
+                pattern.width,
+                pattern.height,
+                pattern.cells.len()
+            );
+            if !pattern.name.is_empty() {
+                summary = format!("{} · {summary}", pattern.name);
+            }
+            if let Some(rule) = pattern.rule {
+                summary.push_str(&format!(" · rule {rule}"));
+            }
+            (Some(pattern), summary, false)
+        }
+        Err(error) => (None, format!("Not valid RLE: {error}"), true),
+    }
+}
+
+/// Redraws the preview when the source or theme changes, or the dialog reopens.
+pub(super) fn sync_import_preview(
+    drafts: Res<Drafts>,
+    theme: Res<Theme>,
+    mut images: ResMut<Assets<Image>>,
+    mut texts: Query<(Ref<ImportPreviewText>, &mut Text, &mut ThemedText)>,
+    mut last: Local<Option<(u64, Theme)>>,
+) {
+    use std::hash::{Hash, Hasher};
+    let Some((_, _, _)) = texts.iter().next() else {
+        *last = None;
+        return;
+    };
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    drafts.source.hash(&mut hasher);
+    let key = (hasher.finish(), *theme);
+    let reopened = texts.iter().any(|(marker, _, _)| marker.is_added());
+    if *last == Some(key) && !reopened {
+        return;
+    }
+    *last = Some(key);
+    let (pattern, summary, error) = import_summary(&drafts.source);
+    let image = match &pattern {
+        Some(pattern) => {
+            super::thumbnail(&pattern.cells, pattern.width, pattern.height, theme.board())
+        }
+        None => super::thumbnail(&[], 1, 1, theme.board()),
+    };
+    let _ = images.insert(IMPORT_PREVIEW.id(), image);
+    for (_, mut text, mut color) in &mut texts {
+        if text.0 != summary {
+            text.0 = summary.clone();
+        }
+        color.set_if_neq(ThemedText(if error { Token::Error } else { Token::Muted }));
+    }
+}
+
 /// Width of the key caps beside each action, so the actions line up.
 const HELP_KEY_COLUMN: f32 = 132.0;
 
@@ -1201,15 +1345,15 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                 flex_grow: 1.0, min_width: px(0), overflow: Overflow::scroll_y(), min_height: px(0), ..default() })).with_children(|p| {
                 match kind {
                     DialogKind::Import => {
-                        p.spawn(label("Paste RLE to add a stamp to your palette. A rule in the header also updates the board rule.", 14.0, Token::Muted));
+                        heading(p, "Import", "Paste RLE or open an .rle file to add a stamp to your palette. A rule in the header also updates the board rule.");
+                        p.spawn(row()).with_children(|p| { button(p, "Open .rle file…", Action::OpenRle); });
                         field(p, "Pattern name", &drafts.name, Field::Name, false, true);
                         field(p, "RLE source", &drafts.source, Field::Source, true, false);
-                        button(p, "Import and select", Action::ImportSubmit);
-                        p.spawn(label("Export", 19.0, Token::Ink));
-                        p.spawn(label("Copy the live cells, cropped to their bounding box, as RLE with the board rule.", 14.0, Token::Muted));
-                        button(p, "Copy board as RLE", Action::ExportRle);
-                        p.spawn(label("Workspace files", 19.0, Token::Ink));
-                        p.spawn(label("Save your board and imported patterns to a .golw file, or open one to replace them. Opening asks first.", 14.0, Token::Muted));
+                        import_preview(p);
+                        p.spawn(row()).with_children(|p| { button(p, "Import and select", Action::ImportSubmit); });
+                        heading(p, "Export", "Copy the live cells, cropped to their bounding box, as RLE with the board rule.");
+                        p.spawn(row()).with_children(|p| { button(p, "Copy board as RLE", Action::ExportRle); });
+                        heading(p, "Workspace files", "Save your board and imported patterns to a .golw file, or open one to replace them. Opening asks first.");
                         p.spawn(row()).with_children(|p| {
                             button(p, "Save workspace…", Action::SaveWorkspace);
                             button(p, "Open workspace…", Action::OpenWorkspace);
@@ -1685,6 +1829,52 @@ mod tests {
             world.resource::<Simulation>().app.board.snapshot_cells(),
             original
         );
+    }
+
+    #[test]
+    fn the_import_preview_summarises_the_pasted_rle_or_says_what_is_wrong() {
+        let (pattern, summary, error) = import_summary("#N Glider\nx = 3, y = 3\nbo$2bo$3o!");
+        assert_eq!(pattern.map(|p| p.cells.len()), Some(5));
+        assert_eq!(summary, "Glider · 3 × 3 · 5 cells");
+        assert!(!error);
+        let (_, summary, _) = import_summary("x = 3, y = 1, rule = B36/S23\n3o!");
+        assert_eq!(summary, "3 × 1 · 3 cells · rule B36/S23");
+        let (pattern, _, error) = import_summary("x = 3, y = 3\nbo$2bo$4o!");
+        assert!(pattern.is_none() && error);
+        let (pattern, summary, error) = import_summary("  \n");
+        assert!(pattern.is_none() && !error);
+        assert_eq!(summary, "Paste RLE above to see a preview.");
+    }
+
+    #[test]
+    fn an_opened_rle_file_fills_the_import_fields_without_importing() {
+        let directory = crate::test_support::TestDirectory::new();
+        let named = directory.0.join("spaceship.rle");
+        std::fs::write(&named, "#N Lightweight\nx = 5, y = 4\nbo2bo$o4b$o3bo$4o!").unwrap();
+        let unnamed = directory.0.join("blinker.rle");
+        std::fs::write(&unnamed, "x = 3, y = 1\n3o!").unwrap();
+        let mut world = test_world(DialogKind::Import);
+        let patterns = world.resource::<Simulation>().app.pattern_count();
+
+        choose(&mut world, FileRequest::OpenRle, Some(&named));
+        let drafts = world.resource::<Drafts>();
+        assert!(!drafts.error);
+        assert_eq!(drafts.name, "Lightweight");
+        assert!(drafts.source.starts_with("#N Lightweight"));
+        assert!(drafts.rebuild, "the fields are rebuilt to show the file");
+        assert_eq!(drafts.workspace_path, None, "only workspace files set this");
+        assert_eq!(world.resource::<Simulation>().app.pattern_count(), patterns);
+
+        // Without a #N line, the file name names the pattern.
+        choose(&mut world, FileRequest::OpenRle, Some(&unnamed));
+        assert_eq!(world.resource::<Drafts>().name, "blinker");
+
+        // A file too large to import is refused before it is read.
+        let huge = directory.0.join("huge.rle");
+        std::fs::write(&huge, vec![b' '; crate::patterns::MAX_RLE_BYTES + 1]).unwrap();
+        choose(&mut world, FileRequest::OpenRle, Some(&huge));
+        assert!(world.resource::<Drafts>().error);
+        assert_eq!(world.resource::<Drafts>().name, "blinker");
     }
 
     #[test]

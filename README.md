@@ -120,6 +120,9 @@ missing or unreadable keep their defaults.
 cropped to their bounding box, with the board rule in the header. The result pastes
 back into Import, or into other Life tools such as Golly.
 
+Import also opens `.rle` files into its fields, and previews the pasted or loaded RLE (a
+thumbnail with its size, cell count, and rule) before you import it.
+
 **Workspace files** in Import / Export provide **Save workspace…** and **Open workspace…**,
 which use the system file dialog. It starts in your Documents folder, then wherever you
 last saved or opened a workspace, and asks before replacing an existing file. Saving

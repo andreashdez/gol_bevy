@@ -28,21 +28,26 @@ impl Pattern {
         })
     }
 
+    /// Parses `source`, named by its `#N` line or else `fallback`.
+    pub fn from_named_rle(fallback: &str, source: &str) -> Result<Self, PatternParseError> {
+        let parsed = parse_rle(source)?;
+        Ok(Self {
+            name: parsed.name.unwrap_or_else(|| fallback.to_owned()),
+            cells: parsed.cells,
+            width: parsed.width,
+            height: parsed.height,
+            rule: parsed.rule,
+        })
+    }
+
     /// Every file in `assets/patterns/`, named by its `#N` line or else its file
     /// name.
     pub fn builtins() -> Vec<Self> {
         BUILTIN_SOURCES
             .iter()
             .map(|&(stem, source)| {
-                let parsed = parse_rle(source)
-                    .unwrap_or_else(|err| panic!("assets/patterns/{stem}.rle: {err}"));
-                Self {
-                    name: parsed.name.unwrap_or_else(|| stem.to_owned()),
-                    cells: parsed.cells,
-                    width: parsed.width,
-                    height: parsed.height,
-                    rule: parsed.rule,
-                }
+                Self::from_named_rle(stem, source)
+                    .unwrap_or_else(|err| panic!("assets/patterns/{stem}.rle: {err}"))
             })
             .collect()
     }

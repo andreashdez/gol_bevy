@@ -100,7 +100,11 @@ impl Plugin for NativeUiPlugin {
             .add_systems(Startup, setup.after(StartupSet::BuildWorld))
             .add_systems(
                 Update,
-                (dialogs::sync_switches, dialogs::sync_density)
+                (
+                    dialogs::sync_switches,
+                    dialogs::sync_density,
+                    dialogs::sync_import_preview,
+                )
                     .after(dialogs::update_dialogs)
                     .in_set(NativeLayout),
             )
@@ -200,6 +204,8 @@ enum Action {
     ExportRle,
     SaveWorkspace,
     OpenWorkspace,
+    /// Loads an `.rle` file into the import fields.
+    OpenRle,
     ConfirmOpenWorkspace,
     CancelOpenWorkspace,
     ResetEpoch,
@@ -665,6 +671,7 @@ fn activate(
         | Action::ExportRle
         | Action::SaveWorkspace
         | Action::OpenWorkspace
+        | Action::OpenRle
         | Action::ConfirmOpenWorkspace
         | Action::CancelOpenWorkspace
         | Action::ApplyRandomize

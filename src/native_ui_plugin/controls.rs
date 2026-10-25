@@ -96,6 +96,7 @@ pub(super) fn hint(action: Action) -> &'static str {
             "Choose a file for the board, generation, rule, edges, speed, and imported patterns"
         }
         Action::OpenWorkspace => "Choose a workspace file to replace this one · asks first",
+        Action::OpenRle => "Load an .rle file into the fields above, to preview and import",
         Action::ConfirmOpenWorkspace => "Replace this workspace with the chosen file · clears undo",
         Action::CancelOpenWorkspace => "Keep the current workspace · Escape also cancels",
         Action::CloseDialog => "Close this dialog · Escape",
