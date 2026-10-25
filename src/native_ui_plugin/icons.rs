@@ -232,7 +232,6 @@ fn help(p: Vec2) -> f32 {
     (stem - 1.0).min(p.distance(vec2(12.0, 18.5)) - 1.4)
 }
 
-/// Four corner brackets, as on a camera viewfinder: the whole board in view.
 /// Shortest distance to any of the segments joining consecutive points.
 fn polyline(p: Vec2, points: &[Vec2]) -> f32 {
     points
@@ -297,6 +296,7 @@ fn stamp(p: Vec2) -> f32 {
         .min(segment(p, vec2(5.0, 21.0), vec2(19.0, 21.0)))
 }
 
+/// Four corner brackets, as on a camera viewfinder: the whole board in view.
 fn fit(p: Vec2) -> f32 {
     // Folding into one quadrant draws all four corners from one bracket.
     let q = vec2(12.0 - (p.x - 12.0).abs(), 12.0 - (p.y - 12.0).abs());
