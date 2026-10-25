@@ -198,6 +198,7 @@ type LayoutNode<'a> = (
         Has<MenuLabel>,
         Has<MoreButton>,
     ),
+    (Has<ToolIcon>, Has<ToolLabel>),
 );
 
 pub(super) fn sync_layout(
@@ -220,8 +221,23 @@ pub(super) fn sync_layout(
     if !collapsed {
         set_if_neq!(menu.open, false);
     }
-    for (mut node, toolbar, group, tabs, button, action, sidebar, tools, menu_parts) in &mut nodes {
+    for (mut node, toolbar, group, tabs, button, action, sidebar, tools, menu_parts, tool_parts) in
+        &mut nodes
+    {
         let (panel, item, menu_label, more) = menu_parts;
+        let (tool_icon, tool_label) = tool_parts;
+        // Beside the palette the tools are named; in the rail they are icons.
+        let rail = !layout.control_deck_visible;
+        if tool_icon || tool_label {
+            node.display = if tool_icon == rail {
+                Display::Flex
+            } else {
+                Display::None
+            };
+        }
+        if matches!(action, Some(Action::Tool(_))) {
+            node.width = if rail { Val::Auto } else { px(68) };
+        }
         if toolbar {
             node.display = Display::Grid;
             node.height = px(HEIGHT);

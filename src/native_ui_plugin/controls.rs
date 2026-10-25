@@ -291,14 +291,22 @@ pub(super) fn sync_overlays(
         let keyboard = view.focus_visible.0 && view.focus.get() == next;
         let show = candidate.is_some() && (overlay.elapsed >= 0.45 || keyboard);
         let rect = candidate.as_ref().map_or(Rect::default(), |c| c.2);
-        let left = rect
-            .min
-            .x
-            .min(window.width() - OVERLAY_WIDTH - 8.0)
-            .max(8.0);
-        // Open away from the nearest window edge, anchored to the control so the
-        // hint never depends on its own height.
-        let (top, bottom) = if rect.center().y < window.height() / 2.0 {
+        // Rail tools sit stacked at the window's left edge, so their hints open
+        // to the right instead of covering the next tool.
+        let in_rail = !view.layout.control_deck_visible && rect.max.x <= 16.0 + TOOL_RAIL_WIDTH;
+        let left = if in_rail {
+            rect.max.x + 8.0
+        } else {
+            rect.min
+                .x
+                .min(window.width() - OVERLAY_WIDTH - 8.0)
+                .max(8.0)
+        };
+        // Otherwise open away from the nearest window edge, anchored to the
+        // control so the hint never depends on its own height.
+        let (top, bottom) = if in_rail {
+            (px(rect.min.y), Val::Auto)
+        } else if rect.center().y < window.height() / 2.0 {
             (px(rect.max.y + 8.0), Val::Auto)
         } else {
             (Val::Auto, px(window.height() - rect.min.y + 8.0))

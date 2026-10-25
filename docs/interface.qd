@@ -29,7 +29,7 @@ The palette holds the editing tools and the pattern library, from top to bottom:
 
 Only the thumbnails scroll, with the mouse wheel or the scrollbar; the tools, search, and stamp preview stay in place. Filtering the library keeps the current stamp selected, even if the filter hides it, and scrolls back to the first match.
 
-Press .keybinding {H} or click **Palette** to hide or show the palette. Hiding it gives the board the full width of the window. See [Drawing and stamps](editing.qd) for how the tools work.
+Press .keybinding {H} or click **Palette** to hide or show the palette. Hiding it gives the board nearly the full width of the window: the tools become a slim rail of icons (a pencil, an eraser, and a stamp) along the left edge, whose tooltips name them. See [Drawing and stamps](editing.qd) for how the tools work.
 
 ## Board canvas
 

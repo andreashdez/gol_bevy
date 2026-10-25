@@ -44,7 +44,7 @@ stamp preview with its rotate/flip controls stay visible while browsing. The sta
 preview appears under the search field, so selecting a stamp never moves it. Scrolling
 over the canvas zooms it. Randomize and Clear are always available in the toolbar.
 Draw, Erase, and Stamp live in a separate tool strip above the palette. Hiding the
-palette turns that strip into a narrow vertical rail, so editing tools remain available.
+palette turns that strip into a slim vertical rail of icons, so editing tools remain available.
 The board has its own canvas beside the palette and between the toolbar and status
 bar. Startup, board-size changes, **Fit board**, and **V** fit the entire board into that space.
 The status bar's zoom stepper (**− 100% +**) zooms in steps; 100% means the whole-board

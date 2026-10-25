@@ -57,8 +57,10 @@ const TAB_ORDER_BOARD: i32 = 4;
 const SIDE: f32 = 256.0;
 const TOOL_STRIP_HEIGHT: f32 = 48.0;
 const TOOL_STRIP_SPACE: f32 = TOOL_STRIP_HEIGHT + 8.0;
-const TOOL_RAIL_WIDTH: f32 = 80.0;
-const TOOL_RAIL_HEIGHT: f32 = 144.0;
+/// The hidden palette's rail of icon-only tools: one 44 px button wide, and
+/// three 38 px buttons tall, with the strip's padding and border.
+const TOOL_RAIL_WIDTH: f32 = 56.0;
+const TOOL_RAIL_HEIGHT: f32 = 136.0;
 const UI_FONT: Handle<Font> = bevy::asset::uuid_handle!("67dfd7f0-b829-4a23-a5ae-3e416c5aba2d");
 
 #[derive(Resource, Default)]
@@ -262,6 +264,21 @@ fn icon_button(
     entity
 }
 
+/// The tool's icon, shown only in the rail the tools become when the palette is hidden.
+#[derive(Component)]
+struct ToolIcon;
+/// The tool's name, shown only beside the palette.
+#[derive(Component)]
+struct ToolLabel;
+
+fn tool_button(parent: &mut ChildSpawnerCommands, name: &str, icon: Icon, tool: EditTool) {
+    let entity = button_frame(parent, name, Action::Tool(tool));
+    parent.commands().entity(entity).with_children(|p| {
+        p.spawn((ToolIcon, icons::node(icon)));
+        p.spawn((ToolLabel, label(name, 14.0, Token::Ink)));
+    });
+}
+
 fn button_frame(parent: &mut ChildSpawnerCommands, name: &str, action: Action) -> Entity {
     parent
         .spawn((
@@ -338,9 +355,9 @@ fn setup(
             GlobalZIndex(10),
         ))
         .with_children(|p| {
-            button(p, "Draw", Action::Tool(EditTool::Draw));
-            button(p, "Erase", Action::Tool(EditTool::Erase));
-            button(p, "Stamp", Action::Tool(EditTool::Stamp));
+            tool_button(p, "Draw", Icon::Draw, EditTool::Draw);
+            tool_button(p, "Erase", Icon::Erase, EditTool::Erase);
+            tool_button(p, "Stamp", Icon::Stamp, EditTool::Stamp);
         });
     commands
         .spawn((

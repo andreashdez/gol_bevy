@@ -19,10 +19,13 @@ pub(super) enum Icon {
     Help,
     Fit,
     More,
+    Draw,
+    Erase,
+    Stamp,
 }
 
 impl Icon {
-    const ALL: [Icon; 12] = [
+    const ALL: [Icon; 15] = [
         Icon::Play,
         Icon::Pause,
         Icon::Step,
@@ -35,6 +38,9 @@ impl Icon {
         Icon::Help,
         Icon::Fit,
         Icon::More,
+        Icon::Draw,
+        Icon::Erase,
+        Icon::Stamp,
     ];
 
     /// Stable handles, so icons can be spawned before or without the asset.
@@ -78,6 +84,9 @@ impl Icon {
                 .map(|x| p.distance(vec2(x, 12.0)) - 2.0)
                 .into_iter()
                 .fold(f32::INFINITY, f32::min),
+            Icon::Draw => pencil(p) - HALF_STROKE,
+            Icon::Erase => eraser(p) - HALF_STROKE,
+            Icon::Stamp => stamp(p) - HALF_STROKE,
         }
     }
 
@@ -224,6 +233,70 @@ fn help(p: Vec2) -> f32 {
 }
 
 /// Four corner brackets, as on a camera viewfinder: the whole board in view.
+/// Shortest distance to any of the segments joining consecutive points.
+fn polyline(p: Vec2, points: &[Vec2]) -> f32 {
+    points
+        .windows(2)
+        .map(|pair| segment(p, pair[0], pair[1]))
+        .fold(f32::INFINITY, f32::min)
+}
+
+/// A pencil pointing to the bottom left: an outlined body, its tip, and a band
+/// near the end.
+fn pencil(p: Vec2) -> f32 {
+    let along = vec2(1.0, -1.0).normalize();
+    let across = vec2(1.0, 1.0).normalize() * 3.0;
+    let tip = vec2(4.0, 20.0);
+    let base = tip + along * 5.5;
+    let end = tip + along * 20.5;
+    let band = end - along * 3.5;
+    polyline(
+        p,
+        &[
+            tip,
+            base + across,
+            end + across,
+            end - across,
+            base - across,
+            tip,
+        ],
+    )
+    .min(segment(p, band + across, band - across))
+}
+
+/// Lucide's eraser: a tilted block with its rubber end marked off, on a line.
+fn eraser(p: Vec2) -> f32 {
+    let along = vec2(1.0, -1.0).normalize();
+    let across = vec2(1.0, 1.0).normalize();
+    let center = vec2(12.0, 11.0);
+    let q = p - center;
+    let block = rounded_box(
+        vec2(q.dot(along), q.dot(across)),
+        Vec2::ZERO,
+        vec2(8.5, 4.5),
+        1.5,
+    )
+    .abs();
+    let divider = center - along * 2.0;
+    block
+        .min(segment(p, divider + across * 4.5, divider - across * 4.5))
+        .min(segment(p, vec2(10.0, 21.0), vec2(21.0, 21.0)))
+}
+
+/// Lucide's stamp: a handle with a round knob, a wide base, and the line it prints.
+fn stamp(p: Vec2) -> f32 {
+    let knob = (p.distance(vec2(12.0, 5.0)) - 2.8).abs();
+    let handle = segment(p, vec2(10.0, 7.5), vec2(10.0, 13.0)).min(segment(
+        p,
+        vec2(14.0, 7.5),
+        vec2(14.0, 13.0),
+    ));
+    let base = rounded_box(p, vec2(12.0, 15.5), vec2(8.0, 2.5), 1.5).abs();
+    knob.min(handle)
+        .min(base)
+        .min(segment(p, vec2(5.0, 21.0), vec2(19.0, 21.0)))
+}
+
 fn fit(p: Vec2) -> f32 {
     // Folding into one quadrant draws all four corners from one bracket.
     let q = vec2(12.0 - (p.x - 12.0).abs(), 12.0 - (p.y - 12.0).abs());
@@ -261,6 +334,9 @@ mod tests {
             (Icon::Help, vec2(12.0, 18.5)),
             (Icon::Fit, vec2(20.0, 6.0)),
             (Icon::More, vec2(19.0, 12.0)),
+            (Icon::Draw, vec2(4.6, 19.4)),
+            (Icon::Erase, vec2(15.0, 21.0)),
+            (Icon::Stamp, vec2(12.0, 21.0)),
         ];
         for (icon, point) in inside {
             assert!(icon.distance(point) < -0.5, "{icon:?} at {point}");
