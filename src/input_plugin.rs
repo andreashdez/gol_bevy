@@ -8,8 +8,8 @@ use crate::{
         BINDING_SPEED_UP, BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_CONTROL_DECK,
         BINDING_TOGGLE_DIAGNOSTICS, BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, CAMERA_PAN_SPEED,
         CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay, EditFeedback,
-        GridOverlay, MainCamera, Simulation, TypedKeys, UiLayout, UpdateSet, collect_typed_keys,
-        world_to_cell,
+        GridOverlay, MainCamera, Simulation, TOOL_SHORTCUTS, TypedKeys, UiLayout, UpdateSet,
+        collect_typed_keys, world_to_cell,
     },
     ui_input::{UiInputCapture, canvas_keyboard_available},
 };
@@ -118,6 +118,11 @@ fn handle_keyboard(
     }
     if BINDING_TOGGLE_HELP.just_pressed(&keys, &typed) {
         sim.app.toggle_help();
+    }
+    for (binding, tool) in TOOL_SHORTCUTS {
+        if binding.just_pressed(&keys, &typed) {
+            sim.app.set_tool(tool);
+        }
     }
     if BINDING_CLEAR_STAMP.just_pressed(&keys, &typed) {
         sim.app.clear_selected_pattern();
@@ -525,5 +530,18 @@ mod tests {
         press(&mut app, KeyCode::KeyY, "Z");
         app.world_mut().run_system_once(handle_keyboard).unwrap();
         assert_ne!(rotation(&app), before);
+
+        // Digits pick tools, by the digit typed or by the key's position, since
+        // AZERTY layouts type `"` on the unshifted 3 key.
+        let tool = |app: &App| app.world().resource::<Simulation>().app.tool();
+        press(&mut app, KeyCode::Digit2, "2");
+        app.world_mut().run_system_once(handle_keyboard).unwrap();
+        assert_eq!(tool(&app), crate::app::EditTool::Erase);
+        press(&mut app, KeyCode::Digit3, "\"");
+        app.world_mut().run_system_once(handle_keyboard).unwrap();
+        assert_eq!(tool(&app), crate::app::EditTool::Stamp);
+        press(&mut app, KeyCode::Numpad1, "1");
+        app.world_mut().run_system_once(handle_keyboard).unwrap();
+        assert_eq!(tool(&app), crate::app::EditTool::Draw);
     }
 }

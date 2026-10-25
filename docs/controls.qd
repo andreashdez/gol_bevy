@@ -24,6 +24,9 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 
 | Key or mouse                                 | Action                                      |
 |----------------------------------------------|---------------------------------------------|
+| .keybinding {1}                              | Draw tool                                   |
+| .keybinding {2}                              | Erase tool                                  |
+| .keybinding {3}                              | Stamp tool                                  |
 | Left drag                                    | Draw or erase with the selected tool        |
 | Left click, with a stamp selected            | Place the pattern                           |
 | Right drag                                   | Erase                                       |

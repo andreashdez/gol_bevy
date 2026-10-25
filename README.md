@@ -163,6 +163,9 @@ just ci-local
 
 | Keys | Action |
 | --- | --- |
+| `1` | Draw tool |
+| `2` | Erase tool |
+| `3` | Stamp tool |
 | `Left drag` | Draw or erase with the tool |
 | `Right drag` | Erase |
 | `R` | Randomize the board |

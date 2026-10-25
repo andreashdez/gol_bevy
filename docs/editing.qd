@@ -1,7 +1,7 @@
 .docname {Drawing and stamps}
 .include {docs}
 
-You edit the board with three tools, chosen at the top of the pattern palette: **Draw**, **Erase**, and **Stamp**.
+You edit the board with three tools, chosen at the top of the pattern palette or with .keybinding {1}, .keybinding {2}, and .keybinding {3}: **Draw**, **Erase**, and **Stamp**. The digit keys work on layouts that need Shift for digits, such as AZERTY, too.
 
 ## Draw and erase
 
@@ -17,7 +17,7 @@ A stamp places a whole pattern with one click.
 2. Move the mouse over the board. A blue *ghost*, outlined with the stamp's footprint, shows exactly which cells will be placed. It has its own colour so it never passes for cells already on the board.
 3. Click to place the pattern. The stamp stays selected, so you can keep clicking to place copies.
 
-.keybinding {C} drops the stamp and goes back to the Draw tool. Clicking **Stamp** with no pattern selected picks the first one in the library. Switching to Draw or Erase hides the ghost but keeps the stamp selected, so clicking **Stamp** again brings it back.
+.keybinding {C} drops the stamp and goes back to the Draw tool. Clicking **Stamp**, or pressing .keybinding {3}, with no pattern selected picks the first one in the library. Switching to Draw or Erase hides the ghost but keeps the stamp selected, so clicking **Stamp** again brings it back.
 
 You can add your own patterns, either for the current session through [RLE import](patterns.qd#importing-a-pattern) or permanently as [built-in patterns](patterns.qd#built-in-patterns).
 

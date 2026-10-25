@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::app::App as GolApp;
+use crate::app::{App as GolApp, EditTool};
 use bevy::{ecs::schedule::SystemSet, prelude::*, window::Window};
 
 pub const CELL_SIZE: f32 = 12.0;
@@ -116,6 +116,33 @@ pub const BINDING_SLOW_DOWN: KeyBinding = KeyBinding {
     caps: &["−"],
     action: "Slow down",
 };
+
+// Digits accept the physical key too, so AZERTY layouts, which need Shift
+// for digits, can use the unshifted key.
+pub const BINDING_TOOL_DRAW: KeyBinding = KeyBinding {
+    chars: &["1"],
+    keys: &[KeyCode::Digit1],
+    caps: &["1"],
+    action: "Draw tool",
+};
+pub const BINDING_TOOL_ERASE: KeyBinding = KeyBinding {
+    chars: &["2"],
+    keys: &[KeyCode::Digit2],
+    caps: &["2"],
+    action: "Erase tool",
+};
+pub const BINDING_TOOL_STAMP: KeyBinding = KeyBinding {
+    chars: &["3"],
+    keys: &[KeyCode::Digit3],
+    caps: &["3"],
+    action: "Stamp tool",
+};
+/// Each tool with the shortcut that picks it.
+pub const TOOL_SHORTCUTS: [(KeyBinding, EditTool); 3] = [
+    (BINDING_TOOL_DRAW, EditTool::Draw),
+    (BINDING_TOOL_ERASE, EditTool::Erase),
+    (BINDING_TOOL_STAMP, EditTool::Stamp),
+];
 
 pub const BINDING_ROTATE_STAMP: KeyBinding = KeyBinding {
     chars: &["z"],
@@ -258,6 +285,9 @@ pub fn help_sections() -> [HelpSection; 5] {
         HelpSection {
             title: "Editing",
             entries: vec![
+                BINDING_TOOL_DRAW.into(),
+                BINDING_TOOL_ERASE.into(),
+                BINDING_TOOL_STAMP.into(),
                 entry(&["Left drag"], "Draw or erase with the tool"),
                 entry(&["Right drag"], "Erase"),
                 BINDING_RANDOMIZE.into(),

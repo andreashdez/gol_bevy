@@ -76,9 +76,9 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::Edges(crate::board::BoundaryMode::Fixed) => {
             "Cells beyond the edges count as dead · M switches"
         }
-        Action::Tool(EditTool::Draw) => "Draw cells with the left mouse button",
-        Action::Tool(EditTool::Erase) => "Erase cells · right-click also erases",
-        Action::Tool(EditTool::Stamp) => "Place the selected pattern on the board",
+        Action::Tool(EditTool::Draw) => "Draw · 1 · paint cells with the left mouse button",
+        Action::Tool(EditTool::Erase) => "Erase · 2 · clear cells; right-drag also erases",
+        Action::Tool(EditTool::Stamp) => "Stamp · 3 · place the selected pattern on the board",
         Action::Import => "Import RLE into your library, or copy the board as RLE",
         Action::Settings => "Board size, rule, randomization, theme, grid, cell age, and edges",
         Action::More => "Grid, cell age, palette, import / export, settings, and help",
