@@ -61,6 +61,14 @@ impl Plugin for InputPlugin {
     }
 }
 
+/// Cmd on macOS and Ctrl elsewhere start app shortcuts like undo and save.
+pub const COMMAND_KEYS: [KeyCode; 4] = [
+    KeyCode::SuperLeft,
+    KeyCode::SuperRight,
+    KeyCode::ControlLeft,
+    KeyCode::ControlRight,
+];
+
 fn handle_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     typed: Res<TypedKeys>,
@@ -70,16 +78,10 @@ fn handle_keyboard(
     mut ui_layout: ResMut<UiLayout>,
     mut feedback: ResMut<EditFeedback>,
 ) {
-    let command_keys = [
-        KeyCode::SuperLeft,
-        KeyCode::SuperRight,
-        KeyCode::ControlLeft,
-        KeyCode::ControlRight,
-    ];
     // Fast chords can press and release the modifier within one frame.
-    let command = keys.any_pressed(command_keys)
-        || keys.any_just_pressed(command_keys)
-        || keys.any_just_released(command_keys);
+    let command = keys.any_pressed(COMMAND_KEYS)
+        || keys.any_just_pressed(COMMAND_KEYS)
+        || keys.any_just_released(COMMAND_KEYS);
     if typed.just_typed("u") {
         feedback.undo(&mut sim.app);
         return;
@@ -259,6 +261,10 @@ fn handle_camera_pan(
     let Ok((mut camera_transform, projection)) = camera_q.single_mut() else {
         return;
     };
+    // S is a pan key, but Cmd/Ctrl+S saves.
+    if keys.any_pressed(COMMAND_KEYS) {
+        return;
+    }
 
     let mut direction = Vec3::ZERO;
     if BINDING_PAN_LEFT.pressed(&keys) {

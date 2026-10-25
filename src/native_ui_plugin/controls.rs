@@ -93,9 +93,19 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::EditRule => "The board's rule · click to change it in Settings",
         Action::ExportRle => "Copy the live cells to the clipboard as RLE",
         Action::SaveWorkspace => {
-            "Choose a file for the board, generation, rule, edges, speed, and imported patterns"
+            if cfg!(target_os = "macos") {
+                "Save the board, generation, rule, edges, speed, and imported patterns · Cmd+S"
+            } else {
+                "Save the board, generation, rule, edges, speed, and imported patterns · Ctrl+S"
+            }
         }
-        Action::OpenWorkspace => "Choose a workspace file to replace this one · asks first",
+        Action::OpenWorkspace => {
+            if cfg!(target_os = "macos") {
+                "Choose a workspace file to replace this one · asks first · Cmd+O"
+            } else {
+                "Choose a workspace file to replace this one · asks first · Ctrl+O"
+            }
+        }
         Action::OpenRle => "Load an .rle file into the fields above, to preview and import",
         Action::ConfirmOpenWorkspace => "Replace this workspace with the chosen file · clears undo",
         Action::CancelOpenWorkspace => "Keep the current workspace · Escape also cancels",
@@ -657,7 +667,7 @@ pub(super) fn sync_feedback(
     }
     for mut text in &mut texts {
         let value = if feedback.remaining > 0.0 {
-            feedback.message
+            feedback.message.as_ref()
         } else {
             ""
         };

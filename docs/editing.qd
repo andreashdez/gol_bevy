@@ -71,6 +71,8 @@ Resizing the board clears the undo and redo history, because old snapshots no lo
 
 ## Save and reopen workspaces
 
+.keybinding {Mod+S} saves and .keybinding {Mod+O} opens, from the board or with **Import / Export** or **Settings** open; results show in the dialog, or as a brief notice over the board.
+
 Open **Import / Export**, then use **Workspace files**. **Save workspace…** opens the
 system file dialog in your Documents folder, or wherever you last saved or opened a
 workspace. The dialog asks before replacing an existing file.

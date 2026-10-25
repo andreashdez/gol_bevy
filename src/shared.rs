@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{borrow::Cow, time::Duration};
 
 use crate::app::{App as GolApp, EditTool};
 use bevy::{ecs::schedule::SystemSet, prelude::*, window::Window};
@@ -321,6 +321,8 @@ pub fn help_sections() -> [HelpSection; 5] {
                 BINDING_TOGGLE_CONTROL_DECK.into(),
                 BINDING_TOGGLE_DIAGNOSTICS.into(),
                 BINDING_TOGGLE_HELP.into(),
+                entry(&["Mod+S"], "Save workspace"),
+                entry(&["Mod+O"], "Open workspace"),
                 BINDING_QUIT.into(),
             ],
         },
@@ -442,7 +444,7 @@ pub struct RedrawRequested(pub bool);
 /// Short, non-modal feedback shared by toolbar and keyboard edits.
 #[derive(Resource, Default)]
 pub struct EditFeedback {
-    pub message: &'static str,
+    pub message: Cow<'static, str>,
     pub remaining: f32,
 }
 
@@ -450,8 +452,8 @@ impl EditFeedback {
     /// Seconds a notice stays on screen. Brief, since it covers part of the board.
     const DURATION: f32 = 2.0;
 
-    pub fn show(&mut self, message: &'static str) {
-        self.message = message;
+    pub fn show(&mut self, message: impl Into<Cow<'static, str>>) {
+        self.message = message.into();
         self.remaining = Self::DURATION;
     }
 

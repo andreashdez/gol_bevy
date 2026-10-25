@@ -134,6 +134,8 @@ pub(super) struct DialogState<'w> {
     board: ResMut<'w, BoardSettings>,
     focus: ResMut<'w, InputFocus>,
     file_dialog: ResMut<'w, FileDialog>,
+    /// Where file results go when no dialog shows feedback, as after Cmd+S.
+    notice: ResMut<'w, crate::shared::EditFeedback>,
     /// Absent in tests, which must not touch the system clipboard.
     clipboard: Option<ResMut<'w, Clipboard>>,
 }
@@ -462,8 +464,7 @@ pub(super) fn poll_file_dialog(mut state: DialogState) {
 
 fn finish_file_request(state: &mut DialogState, request: FileRequest, chosen: Option<PathBuf>) {
     let Some(path) = chosen else {
-        state.drafts.error = false;
-        state.drafts.feedback = "No file was chosen.".into();
+        report(state, false, "No file was chosen.".into());
         return;
     };
     let workspace_file = !matches!(request, FileRequest::OpenRle);
@@ -489,13 +490,9 @@ fn finish_file_request(state: &mut DialogState, request: FileRequest, chosen: Op
             if workspace_file {
                 state.drafts.workspace_path = Some(path);
             }
-            state.drafts.error = false;
-            state.drafts.feedback = feedback;
+            report(state, false, feedback);
         }
-        Err(error) => {
-            state.drafts.error = true;
-            state.drafts.feedback = error;
-        }
+        Err(error) => report(state, true, error),
     }
 }
 
@@ -522,6 +519,69 @@ fn load_rle(state: &mut DialogState, path: &Path) -> Result<String, String> {
         "Loaded {}. Check the preview, then import it.",
         path.display()
     ))
+}
+
+/// Shows a result in the open dialog, or as a notice over the board when no
+/// dialog shows feedback.
+fn report(state: &mut DialogState, error: bool, feedback: String) {
+    if !matches!(
+        state.mode.dialog,
+        Some(DialogKind::Import | DialogKind::Settings)
+    ) && !feedback.is_empty()
+    {
+        state.notice.show(feedback.clone());
+    }
+    state.drafts.error = error;
+    state.drafts.feedback = feedback;
+}
+
+/// Cmd/Ctrl+S saves the workspace and Cmd/Ctrl+O opens one, from the board or
+/// from the Import / Export and Settings dialogs.
+pub(super) fn file_shortcuts(
+    keys: Res<ButtonInput<KeyCode>>,
+    typed: Res<crate::shared::TypedKeys>,
+    mut state: DialogState,
+) {
+    match file_shortcut(&keys, &typed, state.mode.dialog) {
+        Some(FileShortcut::Save) => request_save(&mut state),
+        Some(FileShortcut::Open) => request_open(&mut state),
+        None => {}
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum FileShortcut {
+    Save,
+    Open,
+}
+
+/// Which file shortcut was pressed, if any. Dialogs that show no file
+/// feedback, such as Help, leave them alone.
+fn file_shortcut(
+    keys: &ButtonInput<KeyCode>,
+    typed: &crate::shared::TypedKeys,
+    dialog: Option<DialogKind>,
+) -> Option<FileShortcut> {
+    let modifier = crate::input_plugin::COMMAND_KEYS;
+    // Fast chords can press and release the modifier within one frame.
+    let command = keys.any_pressed(modifier)
+        || keys.any_just_pressed(modifier)
+        || keys.any_just_released(modifier);
+    if !command
+        || !matches!(
+            dialog,
+            None | Some(DialogKind::Import | DialogKind::Settings)
+        )
+    {
+        return None;
+    }
+    if typed.just_typed("s") {
+        Some(FileShortcut::Save)
+    } else if typed.just_typed("o") {
+        Some(FileShortcut::Open)
+    } else {
+        None
+    }
 }
 
 fn confirm_open(state: &mut DialogState) {
@@ -1353,7 +1413,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         p.spawn(row()).with_children(|p| { button(p, "Import and select", Action::ImportSubmit); });
                         heading(p, "Export", "Copy the live cells, cropped to their bounding box, as RLE with the board rule.");
                         p.spawn(row()).with_children(|p| { button(p, "Copy board as RLE", Action::ExportRle); });
-                        heading(p, "Workspace files", "Save your board and imported patterns to a .golw file, or open one to replace them. Opening asks first.");
+                        heading(p, "Workspace files", &format!("Save your board and imported patterns to a .golw file, or open one to replace them. Opening asks first. {}+S saves and {}+O opens.", command_key(), command_key()));
                         p.spawn(row()).with_children(|p| {
                             button(p, "Save workspace…", Action::SaveWorkspace);
                             button(p, "Open workspace…", Action::OpenWorkspace);
@@ -1449,6 +1509,7 @@ mod tests {
         world.insert_resource(InputFocus::default());
         world.insert_resource(ButtonInput::<KeyCode>::default());
         world.init_resource::<FileDialog>();
+        world.init_resource::<crate::shared::EditFeedback>();
         world.add_observer(dialog_action);
         world
     }
@@ -1875,6 +1936,62 @@ mod tests {
         choose(&mut world, FileRequest::OpenRle, Some(&huge));
         assert!(world.resource::<Drafts>().error);
         assert_eq!(world.resource::<Drafts>().name, "blinker");
+    }
+
+    #[test]
+    fn a_save_from_the_board_reports_as_a_notice() {
+        let directory = crate::test_support::TestDirectory::new();
+        let path = directory.0.join("workspace.golw");
+        let mut world = test_world(DialogKind::Import);
+        world.resource_mut::<NativeUi>().dialog = None;
+        let request = save_request(&world);
+        choose(&mut world, request, Some(&path));
+        let notice = world.resource::<crate::shared::EditFeedback>();
+        assert!(notice.remaining > 0.0);
+        assert!(notice.message.starts_with("Workspace saved to"));
+        // With the dialog open, the result shows there instead.
+        world
+            .resource_mut::<crate::shared::EditFeedback>()
+            .remaining = 0.0;
+        world.resource_mut::<NativeUi>().dialog = Some(DialogKind::Import);
+        let request = save_request(&world);
+        choose(&mut world, request, Some(&path));
+        assert_eq!(
+            world.resource::<crate::shared::EditFeedback>().remaining,
+            0.0
+        );
+        assert!(
+            world
+                .resource::<Drafts>()
+                .feedback
+                .starts_with("Workspace saved to")
+        );
+    }
+
+    #[test]
+    fn cmd_or_ctrl_s_saves_and_o_opens_unless_a_dialog_without_feedback_is_open() {
+        let press = |modifier: Option<KeyCode>, key: &str| {
+            let mut keys = ButtonInput::<KeyCode>::default();
+            if let Some(modifier) = modifier {
+                keys.press(modifier);
+            }
+            let mut typed = crate::shared::TypedKeys::default();
+            typed.press(key);
+            (keys, typed)
+        };
+        for modifier in [KeyCode::SuperLeft, KeyCode::ControlRight] {
+            let (keys, typed) = press(Some(modifier), "s");
+            assert_eq!(file_shortcut(&keys, &typed, None), Some(FileShortcut::Save));
+            let (keys, typed) = press(Some(modifier), "O");
+            assert_eq!(
+                file_shortcut(&keys, &typed, Some(DialogKind::Import)),
+                Some(FileShortcut::Open)
+            );
+            assert_eq!(file_shortcut(&keys, &typed, Some(DialogKind::Help)), None);
+        }
+        // Plain S pans the camera instead.
+        let (keys, typed) = press(None, "s");
+        assert_eq!(file_shortcut(&keys, &typed, None), None);
     }
 
     #[test]

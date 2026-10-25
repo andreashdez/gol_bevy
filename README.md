@@ -123,8 +123,8 @@ back into Import, or into other Life tools such as Golly.
 Import also opens `.rle` files into its fields, and previews the pasted or loaded RLE (a
 thumbnail with its size, cell count, and rule) before you import it.
 
-**Workspace files** in Import / Export provide **Save workspace…** and **Open workspace…**,
-which use the system file dialog. It starts in your Documents folder, then wherever you
+**Workspace files** in Import / Export provide **Save workspace…** (**Cmd/Ctrl+S**) and
+**Open workspace…** (**Cmd/Ctrl+O**), which use the system file dialog. It starts in your Documents folder, then wherever you
 last saved or opened a workspace, and asks before replacing an existing file. Saving
 writes through a temporary file before replacing it. On Linux the file dialog comes
 from xdg-desktop-portal, so a portal backend (such as xdg-desktop-portal-gtk or -kde)
@@ -202,6 +202,8 @@ just ci-local
 | `H` | Show / hide the palette |
 | `F3` | Diagnostics |
 | `/` | Help |
+| `Cmd/Ctrl+S` | Save workspace |
+| `Cmd/Ctrl+O` | Open workspace |
 | `Q` | Quit |
 
 Board size is set in Settings: pick a preset (128², 256², 512², 1024²) or type exact dimensions, from 8 up to 2048 per side. The choice is saved between runs. **Fill canvas**, on by default, instead sizes the board to the canvas and keeps it matched as the window or palette changes. Resizing the board clears undo history, because old snapshots no longer fit; resizing the window does not, unless Fill canvas is on.
