@@ -287,12 +287,12 @@ mod tests {
             let board = theme.board();
             assert!(contrast(board.live, board.dead) >= 3.0, "{theme:?} cells");
             // Every age keeps cells visible, and trails stay faint enough to
-            // never pass for live cells.
+            // never pass for live cells or crowd them out.
             for age in 0..=u8::MAX {
                 let live = crate::render_plugin::live_shade(board, age);
                 let trail = crate::render_plugin::dead_shade(board, age);
                 assert!(contrast(live, board.dead) >= 3.0, "{theme:?} age {age}");
-                assert!(contrast(trail, board.dead) < 2.0, "{theme:?} trail {age}");
+                assert!(contrast(trail, board.dead) < 1.6, "{theme:?} trail {age}");
             }
             assert!(contrast(board.hover, board.dead) >= 3.0, "{theme:?} hover");
             // A stamp preview has its own hue, so it never passes for live cells.

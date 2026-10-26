@@ -57,7 +57,7 @@ const MATURE_AGE: u8 = 6;
 /// Generations after which a cell has the aged colour.
 const OLD_AGE: u8 = 60;
 /// Generations a trail takes to fade.
-const TRAIL_LENGTH: u8 = 12;
+const TRAIL_LENGTH: u8 = 6;
 /// Trails fade sooner than cells grow old, so past this age no colour changes.
 const SETTLED_AGE: u8 = OLD_AGE;
 const _: () = assert!(TRAIL_LENGTH <= SETTLED_AGE);

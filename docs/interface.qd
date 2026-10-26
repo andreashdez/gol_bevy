@@ -59,7 +59,7 @@ With **Cell age** on, which is the default, the board shows how cells change:
 
 - A cell born in the latest generation is brightest, and settles into the usual live colour over a few generations.
 - A cell that has stayed alive for a long time darkens to a deeper shade, so still lifes stand out from busy regions.
-- A cell that just died leaves a faint trail that fades over about a dozen generations, so you can see where gliders and other spaceships have been.
+- A cell that just died leaves a faint trail that fades over about six generations, so you can see where gliders and other spaceships have been.
 
 Cells you draw, stamp, or restore with undo show the plain live colour, and erased cells leave no trail. Switch it off with the **Cell age** toggle in the toolbar, or in [Settings](settings.qd#display), to see plain live and dead cells.
 
