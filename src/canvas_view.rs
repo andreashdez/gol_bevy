@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn fill_canvas_sizes_the_board_to_the_canvas_at_100_percent_and_follows_it() {
-        use crate::shared::CELL_SIZE;
+        use crate::shared::{CELL_SIZE, FILL_CELL_POINTS};
         let mut world = World::new();
         world.insert_resource(UiLayout::default());
         world.insert_resource(BoardSettings {
@@ -230,10 +230,13 @@ mod tests {
             .size();
             let settings = *world.resource::<BoardSettings>();
             assert_eq!((settings.cols, settings.rows), board_size_for_canvas(size));
-            // Fit lands at 100%, leaving less than a cell of gutter on the snug axis.
+            // At 100%, the fit, cells are `FILL_CELL_POINTS` across, leaving less
+            // than a cell of gutter on the snug axis.
             let fit = world.resource::<CanvasView>().fit_scale;
+            let target = CELL_SIZE / FILL_CELL_POINTS;
             assert!(
-                fit <= 1.0 && fit > 1.0 - 1.1 * CELL_SIZE / size.min_element(),
+                fit <= target * 1.0001
+                    && fit > target * (1.0 - 1.1 * FILL_CELL_POINTS / size.min_element()),
                 "{fit}"
             );
         };

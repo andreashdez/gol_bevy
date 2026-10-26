@@ -4,6 +4,9 @@ use crate::app::{App as GolApp, EditTool};
 use bevy::{ecs::schedule::SystemSet, prelude::*, window::Window};
 
 pub const CELL_SIZE: f32 = 12.0;
+/// On-screen size of a cell, in logical points, when the board is sized to the
+/// canvas or window. Smaller than `CELL_SIZE`, so the fitted view starts zoomed out.
+pub const FILL_CELL_POINTS: f32 = 4.0;
 pub const BG_COLOR: Color = Color::srgb(0.02, 0.02, 0.03);
 pub const CAMERA_ZOOM_STEP: f32 = 0.10;
 pub const CAMERA_ZOOM_MIN: f32 = 0.25;
@@ -674,7 +677,7 @@ pub fn camera_scale_to_fit_board(size: Vec2, cols: usize, rows: usize) -> f32 {
 
 /// The largest board that fits a canvas of `size` at 100%, the fitted zoom.
 pub fn board_size_for_canvas(size: Vec2) -> (usize, usize) {
-    let cells = (size / (CELL_SIZE * FIT_MARGIN)).floor();
+    let cells = (size / (FILL_CELL_POINTS * FIT_MARGIN)).floor();
     (cells.x.max(1.0) as usize, cells.y.max(1.0) as usize)
 }
 
@@ -682,8 +685,8 @@ pub fn board_size_for_canvas(size: Vec2) -> (usize, usize) {
 pub struct MainCamera;
 
 pub fn board_size_for_window(window: &Window) -> (usize, usize) {
-    let cols = (window.width() / CELL_SIZE).floor() as usize;
-    let rows = (window.height() / CELL_SIZE).floor() as usize;
+    let cols = (window.width() / FILL_CELL_POINTS).floor() as usize;
+    let rows = (window.height() / FILL_CELL_POINTS).floor() as usize;
     (cols.max(1), rows.max(1))
 }
 
