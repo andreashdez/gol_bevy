@@ -61,6 +61,10 @@ const TOOL_STRIP_SPACE: f32 = TOOL_STRIP_HEIGHT + 8.0;
 /// three 38 px buttons tall, with the strip's padding and border.
 const TOOL_RAIL_WIDTH: f32 = 56.0;
 const TOOL_RAIL_HEIGHT: f32 = 136.0;
+/// Library rows are short, with a wide thumbnail, since most patterns are wider
+/// than they are tall. The texture has two texels per point, for Retina displays.
+const ROW_THUMBNAIL: Vec2 = Vec2::new(64.0, 32.0);
+const ROW_THUMBNAIL_TEXELS: UVec2 = UVec2::new(128, 64);
 const UI_FONT: Handle<Font> = bevy::asset::uuid_handle!("67dfd7f0-b829-4a23-a5ae-3e416c5aba2d");
 
 #[derive(Resource, Default)]
@@ -112,6 +116,8 @@ impl Plugin for NativeUiPlugin {
             .add_systems(
                 Update,
                 (
+                    // First, so the rest of the layout sees the palette's state this frame.
+                    toolbar::collapse_palette,
                     dialogs::poll_file_dialog,
                     dialogs::update_dialogs,
                     sync,
@@ -966,11 +972,14 @@ fn sync_palette(
                 let Some(pattern) = sim.app.pattern_at(index) else {
                     continue;
                 };
-                let preview = images.add(thumbnail(
+                let preview = images.add(thumbnail_sized(
                     &pattern.cells,
                     pattern.width,
                     pattern.height,
                     theme.board(),
+                    ROW_THUMBNAIL_TEXELS,
+                    4.0,
+                    14.0,
                 ));
                 p.spawn((
                     WidgetButton,
@@ -983,8 +992,7 @@ fn sync_palette(
                     ThemedBorder(Token::Line),
                     Node {
                         width: percent(100),
-                        min_height: px(66),
-                        padding: UiRect::all(px(8)),
+                        padding: UiRect::axes(px(8), px(6)),
                         column_gap: px(10),
                         align_items: AlignItems::Center,
                         border: UiRect::all(px(1)),
@@ -997,8 +1005,8 @@ fn sync_palette(
                     p.spawn((
                         ImageNode::new(preview),
                         Node {
-                            width: px(44),
-                            height: px(44),
+                            width: px(ROW_THUMBNAIL.x),
+                            height: px(ROW_THUMBNAIL.y),
                             flex_shrink: 0.0,
                             ..default()
                         },
@@ -1007,14 +1015,14 @@ fn sync_palette(
                     p.spawn((
                         Node {
                             flex_direction: FlexDirection::Column,
-                            row_gap: px(5),
+                            row_gap: px(3),
                             min_width: px(0),
                             ..default()
                         },
                         Pickable::IGNORE,
                     ))
                     .with_children(|p| {
-                        p.spawn(label(&pattern.name, 15.0, Token::Ink));
+                        p.spawn(label(&pattern.name, 14.0, Token::Ink));
                         p.spawn(label(
                             format!(
                                 "{} × {} · {} cells",
@@ -1039,11 +1047,26 @@ fn thumbnail(
     height: usize,
     colors: &crate::shared::BoardColors,
 ) -> Image {
+    thumbnail_sized(cells, width, height, colors, UVec2::splat(64), 6.0, 10.0)
+}
+
+/// Draws the pattern centred in a `canvas`-sized texture, at least `margin`
+/// texels from its edges, with cells at most `max_cell` texels across.
+fn thumbnail_sized(
+    cells: &[(usize, usize)],
+    width: usize,
+    height: usize,
+    colors: &crate::shared::BoardColors,
+    canvas: UVec2,
+    margin: f32,
+    max_cell: f32,
+) -> Image {
     let live = crate::render_plugin::color_to_texel(colors.live);
+    let (canvas_width, canvas_height) = (canvas.x as usize, canvas.y as usize);
     let mut image = Image::new_fill(
         Extent3d {
-            width: 64,
-            height: 64,
+            width: canvas.x,
+            height: canvas.y,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
@@ -1052,22 +1075,25 @@ fn thumbnail(
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     );
     image.sampler = ImageSampler::nearest();
-    let scale = (52.0 / width.max(height).max(1) as f32).min(10.0);
+    let scale = ((canvas.x as f32 - 2.0 * margin) / width.max(1) as f32)
+        .min((canvas.y as f32 - 2.0 * margin) / height.max(1) as f32)
+        .min(max_cell);
     // Leave a one-pixel gap between cells only where cells are big enough to spare it.
     let cell = if scale >= 3.0 {
         (scale - 1.0) as usize
     } else {
         scale.ceil() as usize
     };
-    let x_pad = (64.0 - width as f32 * scale) / 2.0;
-    let y_pad = (64.0 - height as f32 * scale) / 2.0;
+    let x_pad = (canvas.x as f32 - width as f32 * scale) / 2.0;
+    let y_pad = (canvas.y as f32 - height as f32 * scale) / 2.0;
     if let Some(data) = &mut image.data {
         for &(x, y) in cells {
             let left = (x_pad + x as f32 * scale) as usize;
             let top = (y_pad + height.saturating_sub(y + 1) as f32 * scale) as usize;
-            for py in top..(top + cell).min(64) {
-                for px in left..(left + cell).min(64) {
-                    data[(py * 64 + px) * 4..(py * 64 + px) * 4 + 4].copy_from_slice(&live);
+            for py in top..(top + cell).min(canvas_height) {
+                for px in left..(left + cell).min(canvas_width) {
+                    let offset = (py * canvas_width + px) * 4;
+                    data[offset..offset + 4].copy_from_slice(&live);
                 }
             }
         }
@@ -1497,6 +1523,67 @@ mod tests {
     }
 
     #[test]
+    fn the_palette_collapses_only_as_the_window_crosses_the_breakpoint() {
+        let mut world = World::new();
+        world.init_resource::<UiLayout>();
+        let window = world
+            .spawn((
+                Window {
+                    resolution: bevy::window::WindowResolution::new(
+                        toolbar::COLLAPSE_BELOW_WIDTH as u32 - 1,
+                        600,
+                    ),
+                    ..default()
+                },
+                PrimaryWindow,
+            ))
+            .id();
+        let collapse = world.register_system(toolbar::collapse_palette);
+        let visible = |world: &World| world.resource::<UiLayout>().control_deck_visible;
+        world.run_system(collapse).unwrap();
+        assert!(!visible(&world), "a narrow first window starts collapsed");
+
+        // Shown by hand while narrow, it is not hidden again on the next frame.
+        world.resource_mut::<UiLayout>().toggle_control_deck();
+        world.run_system(collapse).unwrap();
+        assert!(visible(&world));
+
+        world.resource_mut::<UiLayout>().toggle_control_deck();
+        world
+            .get_mut::<Window>(window)
+            .unwrap()
+            .resolution
+            .set(toolbar::COLLAPSE_BELOW_WIDTH, 600.0);
+        world.run_system(collapse).unwrap();
+        assert!(!visible(&world), "hidden by hand, widening keeps it hidden");
+    }
+
+    #[test]
+    fn row_thumbnails_scale_wide_patterns_to_the_wide_texture() {
+        let colors = Theme::Dark.board();
+        let live = crate::render_plugin::color_to_texel(colors.live);
+        // A 36 × 9 row of live cells, as wide as the Gosper glider gun.
+        let cells: Vec<_> = (0..36).map(|x| (x, 4)).collect();
+        let image = thumbnail_sized(&cells, 36, 9, colors, ROW_THUMBNAIL_TEXELS, 4.0, 14.0);
+        let data = image.data.unwrap();
+        let width = ROW_THUMBNAIL_TEXELS.x as usize;
+        let lit = |x: usize, y: usize| data[(y * width + x) * 4..(y * width + x) * 4 + 4] == live;
+        // The cells' texel row, rather than a gap between rows of cells.
+        let row = (0..ROW_THUMBNAIL_TEXELS.y as usize)
+            .max_by_key(|&y| (0..width).filter(|&x| lit(x, y)).count())
+            .unwrap();
+        let first = (0..width).find(|&x| lit(x, row)).unwrap();
+        let last = (0..width).rfind(|&x| lit(x, row)).unwrap();
+        let span = last - first + 1;
+        // Width bounds the scale, so the pattern spans most of the texture.
+        assert!(span > width * 3 / 4, "{span}");
+        assert!(
+            !lit(0, row) && !lit(width - 1, row),
+            "the margin stays clear"
+        );
+    }
+
+    #[test]
     fn native_actions_share_edit_history_and_playback() {
         let mut app = GolApp::new(30, 30);
         let glider = crate::app::PatternKind::Glider.builtin_index().unwrap();
@@ -1557,6 +1644,7 @@ mod tests {
                 let size = Vec2::new(width, 420.0);
                 let layout = UiLayout {
                     control_deck_visible: visible,
+                    ..default()
                 };
                 let canvas = canvas_rect(size, &layout);
                 // One status bar row at every width, down to the minimum window.
@@ -1576,6 +1664,7 @@ mod tests {
                 size,
                 &UiLayout {
                     control_deck_visible: sidebar,
+                    ..default()
                 },
             )
             .iter()

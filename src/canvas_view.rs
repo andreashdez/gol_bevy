@@ -139,6 +139,7 @@ mod tests {
         for control_deck_visible in [true, false] {
             let layout = UiLayout {
                 control_deck_visible,
+                ..Default::default()
             };
             let rect = canvas_rect(size, &layout);
             let fit = camera_scale_to_fit_board(rect.size(), BOARD_SIZE_MAX, BOARD_SIZE_MAX);

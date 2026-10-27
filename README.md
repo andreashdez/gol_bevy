@@ -33,7 +33,8 @@ palette, editing tools, live status, and import/settings/help/diagnostics dialog
 
 The toolbar is a single 64-pixel row, grouped into playback, board edits, and workspace
 controls. Below 900 pixels wide, the workspace controls move into a menu behind a **⋯**
-button at the right end.
+button at the right end, and the pattern palette folds into its rail of tool icons. It comes
+back when the window is wide again, unless you showed or hid it yourself in between.
 Resizing preserves keyboard focus and the camera view relative to the fitted board.
 The workspace group has icon toggles for the grid, cell age, and pattern palette, which show
 whether they are on, plus Import / Export, a gear for Settings, and a ? for Help.

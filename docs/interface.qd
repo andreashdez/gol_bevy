@@ -25,11 +25,13 @@ The palette holds the editing tools and the pattern library, from top to bottom:
 - a slim **search field** that filters patterns by name, ignoring case
 - a **stamp preview** of the selected pattern in its current orientation, with **Rotate** and **Flip** buttons, shown while a stamp is active. It appears under the search field, so choosing a stamp never moves the field
 - the number of matching patterns
-- pattern **thumbnails**, with built-in and imported patterns in separate groups
+- one compact row per pattern, with a wide **thumbnail**, its name, and its size and cell count; built-in and imported patterns are in separate groups
 
 Only the thumbnails scroll, with the mouse wheel or the scrollbar; the tools, search, and stamp preview stay in place. Filtering the library keeps the current stamp selected, even if the filter hides it, and scrolls back to the first match.
 
 Press .keybinding {H} or click **Palette** to hide or show the palette. Hiding it gives the board nearly the full width of the window: the tools become a slim rail of icons (a pencil, an eraser, and a stamp) along the left edge, whose tooltips name them. See [Drawing and stamps](editing.qd) for how the tools work.
+
+Below 900 pixels wide the palette hides itself the same way, so the board keeps most of a narrow window, and it comes back once the window is wide again. Showing or hiding it yourself in between takes precedence, and Settings remember your choice rather than the narrow window's.
 
 ## Board canvas
 

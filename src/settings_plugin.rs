@@ -224,7 +224,7 @@ impl SettingsState<'_> {
             return None;
         }
         Some(PersistedSettings {
-            palette: self.ui_layout.control_deck_visible,
+            palette: self.ui_layout.control_deck_preferred(),
             board: (self.board_settings.cols, self.board_settings.rows),
             fill_canvas: self.board_settings.fill_canvas,
             simulation: SimulationSettings::of(sim),
@@ -669,6 +669,9 @@ mod persistence_tests {
         app.set_randomize_settings(RandomizeSettings::new(70, Some(u64::MAX)).unwrap());
         let mut world = World::new();
         layout.control_deck_visible = true;
+        // A palette hidden only for a narrow window is still saved as shown.
+        layout.set_narrow(true);
+        assert!(!layout.control_deck_visible);
         board.set(128, 64);
         board.fill_canvas = true;
         world.insert_resource(layout);
@@ -690,6 +693,7 @@ mod persistence_tests {
 
         let mut loaded_layout = UiLayout {
             control_deck_visible: false,
+            ..Default::default()
         };
         let mut loaded_board = BoardSettings::default();
         let mut loaded_grid = GridOverlay { enabled: false };

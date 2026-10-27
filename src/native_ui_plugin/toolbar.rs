@@ -201,6 +201,25 @@ type LayoutNode<'a> = (
     (Has<ToolIcon>, Has<ToolLabel>),
 );
 
+/// Narrow windows hide the palette with the workspace controls, so the board
+/// keeps most of the width; widening brings it back. Acts only as the width
+/// crosses the breakpoint, so the palette can still be shown while narrow.
+pub(super) fn collapse_palette(
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut layout: ResMut<UiLayout>,
+    mut was_narrow: Local<Option<bool>>,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let narrow = window.width() < COLLAPSE_BELOW_WIDTH;
+    if *was_narrow != Some(narrow) {
+        // Startup counts as a crossing, so a narrow first window starts collapsed.
+        *was_narrow = Some(narrow);
+        layout.set_narrow(narrow);
+    }
+}
+
 pub(super) fn sync_layout(
     windows: Query<&Window, With<PrimaryWindow>>,
     layout: Res<UiLayout>,

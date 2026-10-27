@@ -366,19 +366,43 @@ pub fn controls_markdown() -> String {
 #[derive(Resource)]
 pub struct UiLayout {
     pub control_deck_visible: bool,
+    /// Hidden because the window got narrow, not by the user, so it returns
+    /// once the window is wide again.
+    pub control_deck_auto_hidden: bool,
 }
 
 impl Default for UiLayout {
     fn default() -> Self {
         Self {
             control_deck_visible: true,
+            control_deck_auto_hidden: false,
         }
     }
 }
 
 impl UiLayout {
+    /// A choice by the user, which a later change in width no longer undoes.
     pub fn toggle_control_deck(&mut self) {
         self.control_deck_visible = !self.control_deck_visible;
+        self.control_deck_auto_hidden = false;
+    }
+
+    /// Whether the user wants the palette, whatever the window width; this is
+    /// what settings save.
+    pub fn control_deck_preferred(&self) -> bool {
+        self.control_deck_visible || self.control_deck_auto_hidden
+    }
+
+    /// Call when the window crosses the narrow breakpoint: narrowing hides the
+    /// palette, and widening brings back a palette that narrowing hid.
+    pub fn set_narrow(&mut self, narrow: bool) {
+        if narrow && self.control_deck_visible {
+            self.control_deck_visible = false;
+            self.control_deck_auto_hidden = true;
+        } else if !narrow && self.control_deck_auto_hidden {
+            self.control_deck_visible = true;
+            self.control_deck_auto_hidden = false;
+        }
     }
 }
 
@@ -721,7 +745,7 @@ pub fn world_to_cell(world: Vec2, cols: usize, rows: usize) -> Option<(usize, us
 #[cfg(test)]
 mod tests {
     use super::{
-        BOARD_SIZE_MAX, BOARD_SIZE_MIN, BoardSettings, CAMERA_ZOOM_MAX, CELL_SIZE,
+        BOARD_SIZE_MAX, BOARD_SIZE_MIN, BoardSettings, CAMERA_ZOOM_MAX, CELL_SIZE, UiLayout,
         camera_scale_to_fit_board, controls_markdown,
     };
     use bevy::window::{Window, WindowResolution};
@@ -731,6 +755,29 @@ mod tests {
             resolution: WindowResolution::new(width, height),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_narrow_window_hides_the_palette_until_it_is_wide_again() {
+        let mut layout = UiLayout::default();
+        layout.set_narrow(true);
+        assert!(!layout.control_deck_visible);
+        assert!(layout.control_deck_preferred(), "the preference is kept");
+        layout.set_narrow(false);
+        assert!(layout.control_deck_visible);
+
+        // Shown again while narrow, it stays; hidden by the user, it stays hidden.
+        layout.set_narrow(true);
+        layout.toggle_control_deck();
+        assert!(layout.control_deck_visible);
+        layout.toggle_control_deck();
+        layout.set_narrow(false);
+        assert!(!layout.control_deck_visible && !layout.control_deck_preferred());
+
+        // A palette that was already hidden is not brought back by widening.
+        layout.set_narrow(true);
+        layout.set_narrow(false);
+        assert!(!layout.control_deck_visible);
     }
 
     #[test]
