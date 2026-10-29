@@ -99,6 +99,7 @@ impl Plugin for NativeUiPlugin {
                     speed::edit
                         .after(bevy::text::EditableTextSystems)
                         .before(bevy::ui::UiSystems::PostLayout),
+                    speed::sync_fill.before(bevy::ui::UiSystems::Layout),
                 ),
             )
             .add_systems(Startup, setup.after(StartupSet::BuildWorld))
@@ -124,7 +125,6 @@ impl Plugin for NativeUiPlugin {
                     sync_palette,
                     palette::filter,
                     palette::sync_preview,
-                    controls::sync_speed,
                     speed::capture_scrub,
                     speed::sync_scrubber,
                     speed::sync_chevrons,
@@ -189,6 +189,8 @@ enum Action {
     ZoomIn,
     ZoomOut,
     SpeedAdjust(i8),
+    /// Toggles ∞, maximum speed.
+    MaxSpeed,
     Sidebar,
     Import,
     Help,
@@ -701,6 +703,7 @@ fn apply_action(action: Action, app: &mut GolApp) {
     match action {
         Action::Play => app.toggle_running(),
         Action::SpeedAdjust(step) => controls::step_speed(app, step),
+        Action::MaxSpeed => controls::toggle_max_speed(app),
         Action::Step => app.increment_epoch(),
         Action::Undo => {
             app.undo();
@@ -815,7 +818,9 @@ fn sync(
             Action::SpeedAdjust(step) if *step < 0 => {
                 !sim.app.is_max_speed() && sim.app.tick_rate_ms() >= 1000
             }
-            Action::SpeedAdjust(_) => sim.app.is_max_speed(),
+            Action::SpeedAdjust(_) => {
+                sim.app.is_max_speed() || controls::fixed_rate(&sim.app) >= controls::MAX_FIXED_RATE
+            }
             _ => false,
         };
         if disabled {
@@ -832,6 +837,7 @@ fn sync(
                     && sim.app.selected_pattern_index() == Some(*index)
             }
             Action::Grid => grid.enabled,
+            Action::MaxSpeed => sim.app.is_max_speed(),
             Action::CellAge => cell_age.enabled,
             Action::FillCanvas => board.fill_canvas,
             Action::Sidebar => layout.control_deck_visible,
@@ -846,6 +852,7 @@ fn sync(
             action,
             Action::Tool(_)
                 | Action::Pattern(_)
+                | Action::MaxSpeed
                 | Action::Grid
                 | Action::CellAge
                 | Action::FillCanvas
@@ -869,28 +876,37 @@ fn sync(
         } else {
             Token::Surface
         };
-        bg.set_if_neq(ThemedBackground(if disabled {
-            Token::Panel
-        } else if *action == Action::Play {
-            if pressed {
-                Token::AccentPressed
+        bg.set_if_neq(ThemedBackground(
+            if matches!(action, Action::SpeedAdjust(_)) && (disabled || !(pressed || hovered.get()))
+            {
+                // The speed's steps sit on its fill, which shows through until one is hovered.
+                Token::Clear
+            } else if disabled {
+                Token::Panel
+            } else if *action == Action::Play || (*action == Action::MaxSpeed && selected) {
+                if pressed {
+                    Token::AccentPressed
+                } else {
+                    Token::Accent
+                }
+            } else if pressed || hovered.get() {
+                Token::Hover
+            } else if selected && !switch {
+                Token::Selected
+            } else if matches!(action, Action::ZoomIn | Action::ZoomOut) {
+                Token::Field
+            } else if *action == Action::MaxSpeed {
+                // Off, it sits clear in the speed field.
+                Token::Clear
             } else {
-                Token::Accent
-            }
-        } else if pressed || hovered.get() {
-            Token::Hover
-        } else if selected && !switch {
-            Token::Selected
-        } else if matches!(
-            action,
-            Action::SpeedAdjust(_) | Action::ZoomIn | Action::ZoomOut
-        ) {
-            Token::Field
-        } else {
-            resting
-        }));
+                resting
+            },
+        ));
         border.set_if_neq(ThemedBorder(if focus.get() == Some(entity) {
             Token::Focus
+        } else if *action == Action::MaxSpeed {
+            // Its left border divides it from the fixed rates, on or off.
+            Token::Line
         } else if selected && !switch {
             Token::Accent
         } else if switch || segment {
@@ -900,7 +916,7 @@ fn sync(
         }));
         let ink = if disabled {
             Token::Muted
-        } else if *action == Action::Play {
+        } else if *action == Action::Play || (*action == Action::MaxSpeed && selected) {
             Token::OnAccent
         } else {
             Token::Ink
@@ -1530,7 +1546,7 @@ mod tests {
             .spawn((
                 Window {
                     resolution: bevy::window::WindowResolution::new(
-                        toolbar::COLLAPSE_BELOW_WIDTH as u32 - 1,
+                        toolbar::PALETTE_COLLAPSE_BELOW_WIDTH as u32 - 1,
                         600,
                     ),
                     ..default()
@@ -1553,7 +1569,7 @@ mod tests {
             .get_mut::<Window>(window)
             .unwrap()
             .resolution
-            .set(toolbar::COLLAPSE_BELOW_WIDTH, 600.0);
+            .set(toolbar::PALETTE_COLLAPSE_BELOW_WIDTH, 600.0);
         world.run_system(collapse).unwrap();
         assert!(!visible(&world), "hidden by hand, widening keeps it hidden");
     }
@@ -1599,7 +1615,7 @@ mod tests {
     }
 
     #[test]
-    fn speed_buttons_step_the_displayed_rate_with_limits_and_infinity_last() {
+    fn speed_buttons_step_the_displayed_rate_with_limits_and_infinity_toggles() {
         let mut app = GolApp::new(8, 8);
         app.set_tick_rate_ms(100);
         apply_action(Action::SpeedAdjust(1), &mut app);
@@ -1614,6 +1630,8 @@ mod tests {
         assert_eq!(app.tick_rate_ms(), 1000);
         app.set_tick_rate_ms(25);
         apply_action(Action::SpeedAdjust(1), &mut app);
+        assert!(!app.is_max_speed());
+        apply_action(Action::MaxSpeed, &mut app);
         assert!(app.is_max_speed());
         apply_action(Action::SpeedAdjust(-1), &mut app);
         assert!(!app.is_max_speed());

@@ -15,16 +15,17 @@ Resetting the generation counter leaves the cells as they are.
 
 ## Speed
 
-Speed is shown in generations per second (gen/s) in the toolbar's speed field. It ranges from 1 to 40 gen/s, and one step past 40 is **∞**, maximum speed.
+Speed is shown in generations per second in the toolbar's speed field, for example `40 gen/s`. It ranges from 1 to 40 gen/s, or **∞**, maximum speed. A green fill behind the number shows how far along that range the speed is, up to the **∞** toggle at the field's right end, which it reaches at 40 gen/s.
 
-- Click **‹** or **›** beside the field to change the speed by 1 gen/s. **›** at 40 gen/s goes to ∞, and **‹** at ∞ returns to 40.
-- Drag sideways on the field to scrub through the speeds; hold .keybinding {Shift} for finer control. Dragging past 40 reaches ∞. .keybinding {Esc} during a drag restores the previous speed.
-- Click the field to type a speed from 1 to 40, decimals included, or `∞`. Since ∞ is hard to type, `max` and `inf` work too. .keybinding {Enter} applies it, and .keybinding {Esc} cancels.
+- Click **∞** to switch maximum speed on. The toggle lights up and the fill fills the field. Click it again to return to the speed you had before.
+- Click **‹** or **›** to change the speed by 1 gen/s, within 1 to 40. They appear while you hover over the field, or when you reach them with .keybinding {Tab}. **‹** at ∞ returns to 40.
+- Drag sideways on the field to scrub through the speeds; hold .keybinding {Shift} for finer control. A drag stays within 1 to 40; one that starts at ∞ leaves it as soon as it goes left, and comes back to ∞ if it returns past 40. .keybinding {Esc} during a drag restores the previous speed.
+- Click the field to type a speed from 1 to 40, decimals included, or `∞`. Since ∞ is hard to type, `max` and `inf` work too. The unit is hidden while you type, and typing it, as in `20 gen/s`, is fine too. .keybinding {Enter} applies it, and .keybinding {Esc} cancels.
 - Press .keybinding {plus} to speed up and .keybinding {minus} to slow down while the board has keyboard focus. Each press changes the time between generations by 25 ms. .keybinding {plus} at 40 gen/s also goes to ∞, and .keybinding {minus} at ∞ returns to 40.
 
 ### Max speed
 
-At ∞, each frame runs as many generations as fit in about 8 ms, up to 1024, and leaves the rest of the frame for drawing and input. A readout under the field shows the rate actually achieved while running, which depends on the board size and how busy it is.
+At ∞, each frame runs as many generations as fit in about 8 ms, up to 1024, and leaves the rest of the frame for drawing and input. While it runs, the field shows the rate actually achieved instead of ∞, which depends on the board size and how busy it is; paused, it shows ∞ again. Editing the field starts from ∞ either way.
 
 ### Catching up after a stall
 

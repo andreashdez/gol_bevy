@@ -15,8 +15,6 @@ pub(super) struct TallLabel {
     pub always_show: bool,
 }
 #[derive(Component)]
-pub(super) struct SpeedLabel;
-#[derive(Component)]
 pub(super) struct ZoomLabel;
 #[derive(Component)]
 pub(super) struct FeedbackOverlay;
@@ -62,7 +60,8 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::ZoomIn => "Zoom in · or scroll over the canvas · middle-drag to pan",
         Action::ZoomOut => "Zoom out · or scroll over the canvas · middle-drag to pan",
         Action::SpeedAdjust(step) if step < 0 => "Decrease speed by 1 gen/s · ∞ steps back to 40",
-        Action::SpeedAdjust(_) => "Increase speed by 1 gen/s · past 40 is ∞, as fast as possible",
+        Action::SpeedAdjust(_) => "Increase speed by 1 gen/s, up to 40",
+        Action::MaxSpeed => "∞ · run as fast as possible · click again to return to the set speed",
         Action::Sidebar => "Show / hide the palette · H",
         Action::Help => "Controls and tips · /",
         Action::Diagnostics => "Simulation diagnostics · F3",
@@ -141,10 +140,11 @@ pub(super) fn navigate(
     }
 }
 
-/// The fastest fixed rate. One step further is ∞, maximum speed.
+/// The fastest fixed rate. Past it is only ∞, maximum speed.
 pub(super) const MAX_FIXED_RATE: f32 = 40.0;
 
-/// Steps the rate by 1 gen/s, with ∞ as the stop after the fastest fixed rate.
+/// Steps the rate by 1 gen/s within 1–40. ∞ has its own toggle, so only
+/// stepping down leaves it, to the fastest fixed rate.
 pub(super) fn step_speed(app: &mut GolApp, step: i8) {
     if app.is_max_speed() {
         if step < 0 {
@@ -153,10 +153,15 @@ pub(super) fn step_speed(app: &mut GolApp, step: i8) {
         return;
     }
     let rate = (fixed_rate(app) * 10.0).round() / 10.0;
-    if step > 0 && rate >= MAX_FIXED_RATE {
-        app.set_max_speed();
+    app.set_tick_rate_ms(rate_to_ms(rate + f32::from(step)));
+}
+
+/// ∞ on or off. Off returns to the fixed rate set before, which ∞ keeps.
+pub(super) fn toggle_max_speed(app: &mut GolApp) {
+    if app.is_max_speed() {
+        app.set_tick_rate_ms(app.tick_rate_ms());
     } else {
-        app.set_tick_rate_ms(rate_to_ms(rate + f32::from(step)));
+        app.set_max_speed();
     }
 }
 
@@ -166,29 +171,6 @@ pub(super) fn rate_to_ms(rate: f32) -> u64 {
 
 pub(super) fn fixed_rate(app: &GolApp) -> f32 {
     1000.0 / app.tick_rate_ms() as f32
-}
-
-pub(super) fn sync_speed(
-    sim: Res<Simulation>,
-    mut labels: Query<(&mut Text, &mut Node), With<SpeedLabel>>,
-) {
-    let measured = sim.rate.per_second();
-    let shown = if sim.app.is_running() && measured > 0.0 {
-        format!("{measured:.0}/s")
-    } else {
-        "— gen/s".to_owned()
-    };
-    if let Ok((mut label, mut node)) = labels.single_mut() {
-        set_if_neq!(label.0, shown);
-        set_if_neq!(
-            node.display,
-            if sim.app.is_max_speed() {
-                Display::Flex
-            } else {
-                Display::None
-            }
-        );
-    }
 }
 
 pub(super) fn overlays(commands: &mut Commands) {
@@ -816,19 +798,28 @@ mod tests {
     }
 
     #[test]
-    fn infinity_is_the_stop_after_the_fastest_rate_for_chevrons_and_keys_alike() {
+    fn infinity_has_its_own_toggle_and_the_chevrons_stay_within_the_fixed_rates() {
         let mut app = GolApp::new(8, 8);
         app.set_tick_rate_ms(rate_to_ms(MAX_FIXED_RATE));
         step_speed(&mut app, 1);
+        assert!(!app.is_max_speed());
+        assert_eq!(fixed_rate(&app), MAX_FIXED_RATE);
+        // Toggling ∞ off returns to the rate set before it.
+        app.set_tick_rate_ms(100);
+        toggle_max_speed(&mut app);
         assert!(app.is_max_speed());
-        // Nothing lies past ∞, and stepping down returns to the fastest rate.
+        toggle_max_speed(&mut app);
+        assert!(!app.is_max_speed());
+        assert_eq!(app.tick_rate_ms(), 100);
+        // Stepping down from ∞ returns to the fastest rate.
+        toggle_max_speed(&mut app);
         step_speed(&mut app, 1);
         assert!(app.is_max_speed());
         step_speed(&mut app, -1);
         assert!(!app.is_max_speed());
         assert_eq!(fixed_rate(&app), MAX_FIXED_RATE);
 
-        // The + and - keys take the same path through ∞.
+        // The + and - keys still go through ∞, which has no key of its own.
         app.speed_up();
         assert!(app.is_max_speed());
         app.slow_down();

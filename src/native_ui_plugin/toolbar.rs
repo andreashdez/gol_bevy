@@ -5,11 +5,15 @@ use bevy::{ecs::system::SystemParam, input_focus::FocusCause};
 
 pub(super) const HEIGHT: f32 = 64.0;
 /// Below this width the workspace controls collapse into the menu.
-pub(super) const COLLAPSE_BELOW_WIDTH: f32 = 900.0;
+pub(super) const COLLAPSE_BELOW_WIDTH: f32 = 1000.0;
+/// Below this width the palette folds into its rail, so the board keeps most of
+/// the window. It concerns the canvas, not the toolbar, so it has its own width.
+pub(super) const PALETTE_COLLAPSE_BELOW_WIDTH: f32 = 900.0;
 
 /// Column budgets for the playback and board edit groups, with a little slack.
-/// With the workspace controls, one row needs 900 px.
-const PLAYBACK_WIDTH: f32 = 232.0;
+/// With the workspace controls, one row needs 1000 px; collapsed, it fits the
+/// 680 px minimum window.
+const PLAYBACK_WIDTH: f32 = 336.0;
 const EDITING_WIDTH: f32 = 252.0;
 const MENU_WIDTH: f32 = 220.0;
 
@@ -201,8 +205,8 @@ type LayoutNode<'a> = (
     (Has<ToolIcon>, Has<ToolLabel>),
 );
 
-/// Narrow windows hide the palette with the workspace controls, so the board
-/// keeps most of the width; widening brings it back. Acts only as the width
+/// Narrow windows hide the palette, so the board keeps most of the width;
+/// widening brings it back. Acts only as the width
 /// crosses the breakpoint, so the palette can still be shown while narrow.
 pub(super) fn collapse_palette(
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -212,7 +216,7 @@ pub(super) fn collapse_palette(
     let Ok(window) = windows.single() else {
         return;
     };
-    let narrow = window.width() < COLLAPSE_BELOW_WIDTH;
+    let narrow = window.width() < PALETTE_COLLAPSE_BELOW_WIDTH;
     if *was_narrow != Some(narrow) {
         // Startup counts as a crossing, so a narrow first window starts collapsed.
         *was_narrow = Some(narrow);

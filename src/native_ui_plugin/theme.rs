@@ -25,6 +25,8 @@ pub(super) enum Token {
     /// Dims the workspace behind a dialog. Blending is linear, so it needs a
     /// high alpha to look clearly darker.
     Scrim,
+    /// Nothing, for controls that show what lies behind them until hovered.
+    Clear,
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
@@ -145,6 +147,7 @@ impl Colors {
             Token::Focus => self.focus,
             Token::Error => self.error,
             Token::Scrim => self.scrim,
+            Token::Clear => Color::NONE,
         }
     }
 }

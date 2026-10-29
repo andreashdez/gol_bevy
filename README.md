@@ -32,9 +32,9 @@ The interface uses native Bevy UI throughout: playback controls, a searchable pa
 palette, editing tools, live status, and import/settings/help/diagnostics dialogs.
 
 The toolbar is a single 64-pixel row, grouped into playback, board edits, and workspace
-controls. Below 900 pixels wide, the workspace controls move into a menu behind a **⋯**
-button at the right end, and the pattern palette folds into its rail of tool icons. It comes
-back when the window is wide again, unless you showed or hid it yourself in between.
+controls. Below 1000 pixels wide, the workspace controls move into a menu behind a **⋯**
+button at the right end. Below 900 pixels, the pattern palette also folds into its rail of tool
+icons. It comes back when the window is wide again, unless you showed or hid it yourself in between.
 Resizing preserves keyboard focus and the camera view relative to the fitted board.
 The workspace group has icon toggles for the grid, cell age, and pattern palette, which show
 whether they are on, plus Import / Export, a gear for Settings, and a ? for Help.
@@ -59,16 +59,21 @@ Search patterns by name; built-in and imported patterns have separate groups. Th
 stamp preview shows the orientation that will be placed, including rotation and
 horizontal flip. Filtering the library keeps the current stamp selected.
 
-Speed runs from 1 to 40 gen/s, and its last stop is **∞**: as many generations as fit
-in about 8 ms per frame. The chevrons beside the number decrease or increase speed by
-1 gen/s; **›** at 40 goes to ∞ and **‹** at ∞ returns to 40, like **+** and **-** on the
-keyboard. Drag sideways on the numeric speed field to scrub, past 40 to reach ∞;
-hold Shift for finer adjustments. Escape during a drag restores the previous speed.
+Speed runs from 1 to 40 gen/s, or **∞**: as many generations as fit in about 8 ms per
+frame. The field shows the speed with its unit (`40 gen/s`), over a fill that shows how
+far along the range it is and reaches the **∞** toggle at the field's right end at 40.
+Click **∞** to switch maximum speed on, which highlights it and fills the field, and again
+to return to the speed set before. The chevrons, shown while you hover over the field or
+tab to them, decrease or increase speed by 1 gen/s within 1–40; **‹** at ∞ returns to 40.
+On the keyboard, **+** at 40 goes to ∞ and **-** at ∞ returns to 40. Drag sideways on the
+numeric speed field to scrub; hold Shift for finer adjustments. A drag stays within
+1–40 gen/s, and one that starts at ∞ leaves it once it goes left. Escape during a drag
+restores the previous speed.
 Click the field to enter a rate from 1–40 gen/s, including decimals, or `∞` (`max`
-and `inf` work too): Enter applies it, Escape cancels, and leaving the field applies
+and `inf` work too); the unit is hidden while editing and may be typed. Enter applies it, Escape cancels, and leaving the field applies
 a valid edited value. Invalid values leave the simulation speed unchanged. Fixed speeds
-use millisecond intervals, so the field shows the closest achievable rate. At ∞, a
-small readout under the field shows the rate actually achieved while running.
+use millisecond intervals, so the field shows the closest achievable rate. At ∞, the
+field shows the rate actually achieved while running, and ∞ again when paused.
 Hover or focus buttons for shortcut hints. Search and speed field focus block
 board shortcuts; Escape returns keyboard control to the canvas.
 
