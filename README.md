@@ -8,8 +8,6 @@ The full documentation is at <https://andreashdez.github.io/gol_bevy/>.
 
 ![Game of Life screenshot](docs/media/screenshot.png)
 
-![Game of Life demo](docs/media/demo.gif)
-
 ## Download
 
 Each tagged release on the [GitHub Releases page](https://github.com/andreashdez/gol_bevy/releases)

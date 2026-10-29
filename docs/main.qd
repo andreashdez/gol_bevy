@@ -17,8 +17,6 @@
 - **Keyboard and screen reader friendly**: Tab navigation, focus handling, and accessible names on every control.
 - **Settings that persist**: palette visibility, board size, rule, edges, speed, grid, cell age, and theme are restored on the next launch.
 
-!(100%)[gol-bevy demo](media/demo.gif)
-
 ## Where to start
 
 | If you want to…                   | Read                                         |
