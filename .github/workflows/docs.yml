@@ -24,8 +24,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: quarkdown-labs/setup-quarkdown@v1
-        with:
-          quarkdown-version: '2.6.4'
       - run: quarkdown c main.qd --strict --clean -o "$RUNNER_TEMP/site"
         working-directory: docs
       - uses: actions/configure-pages@v6
