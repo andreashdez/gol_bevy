@@ -79,9 +79,10 @@ From left to right:
 - The generation counter.
 - The number of living cells, and how the latest generation changed it: `+12`, `−12`, or `±0` for a stable population. The change disappears after an edit, undo, or counter reset, since it no longer describes the board. Once the board [settles](simulation.qd#when-the-board-settles), `stable` or `period 2` takes its place; hover over it to see the generation that began.
 - The rule. Click it to open [Settings](settings.qd#rule) with the rulestring ready to edit.
+- The [edge mode](simulation.qd#edges), **Wrap edges** or **Fixed edges**, from 850 pixels wide. Click it to switch, like .keybinding {M}.
 - The cell under the pointer, as `(x, y)` counted from the top-left cell `(0, 0)`, while the pointer is over the board.
 
-From 960 pixels wide, the status bar also shows the board size and edge mode. Numbers use tabular digits and keep the widest size they have reached, so the readouts stay close together without shifting as digits change. Clearing or resizing the board, or resetting the generation counter, lets them shrink back to fit. The zoom controls sit at the right end. The status bar is a single 48-pixel row at every window size.
+From 960 pixels wide, the status bar also shows the board size. Numbers use tabular digits and keep the widest size they have reached, so the readouts stay close together without shifting as digits change. Clearing or resizing the board, or resetting the generation counter, lets them shrink back to fit. The zoom controls sit at the right end. The status bar is a single 48-pixel row at every window size.
 
 Clear, randomize, undo, and redo show a notice at the bottom left of the canvas for two seconds. Undoable actions include the **U** shortcut. These notices do not intercept drawing or panning.
 

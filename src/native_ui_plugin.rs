@@ -232,6 +232,8 @@ enum Action {
     Clear,
     /// Chooses wrapping or fixed edges.
     Edges(crate::board::BoundaryMode),
+    /// Switches between wrapping and fixed edges, from the status bar.
+    ToggleEdges,
 }
 
 fn label(value: impl Into<String>, size: f32, color: Token) -> impl Bundle {
@@ -485,6 +487,7 @@ fn setup(
                     p.spawn(controls::number(Readout::Change, 12.0, Token::Muted));
                 });
                 button(p, "Rule", Action::EditRule);
+                button(p, "Edges", Action::ToggleEdges);
                 p.spawn(controls::number(Readout::Pointer, 12.0, Token::Muted));
                 p.spawn((label("", 12.0, Token::Muted), Readout::Board));
             });
@@ -733,6 +736,7 @@ fn apply_action(action: Action, app: &mut GolApp) {
         Action::Randomize => app.randomize_board(),
         Action::Clear => app.clear_board(),
         Action::Edges(mode) => app.set_boundary_mode(mode),
+        Action::ToggleEdges => app.toggle_boundary_mode(),
         Action::ResetEpoch => app.reset_epoch(),
         Action::PauseWhenSettled => app.set_pause_when_settled(!app.pause_when_settled()),
         _ => {}
@@ -820,6 +824,7 @@ fn sync(
         };
         let accessible_label = match action {
             Action::EditRule => format!("Rule: {}", sim.app.rule_label()),
+            Action::ToggleEdges => format!("Edges: {}", sim.app.boundary_mode_label()),
             _ => accessible_label.to_owned(),
         };
         if accessible.label() != Some(accessible_label.as_str()) {
@@ -959,6 +964,7 @@ fn sync(
                         "Play".to_string()
                     }),
                     Action::EditRule => Some(sim.app.rule_label()),
+                    Action::ToggleEdges => Some(format!("{} edges", sim.app.boundary_mode_label())),
                     _ => None,
                 };
                 if let Some(value) = replacement
@@ -1654,6 +1660,17 @@ mod tests {
         assert!(!app.is_max_speed());
         assert_eq!(app.tick_rate_ms(), 25);
         assert_eq!(app.board.live_cells_count(), 0);
+    }
+
+    #[test]
+    fn the_status_bar_edges_button_switches_both_ways() {
+        use crate::board::BoundaryMode;
+        let mut app = GolApp::new(8, 8);
+        assert_eq!(app.board.boundary_mode(), BoundaryMode::Wrap);
+        apply_action(Action::ToggleEdges, &mut app);
+        assert_eq!(app.board.boundary_mode(), BoundaryMode::Fixed);
+        apply_action(Action::ToggleEdges, &mut app);
+        assert_eq!(app.board.boundary_mode(), BoundaryMode::Wrap);
     }
 
     #[test]

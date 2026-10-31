@@ -95,6 +95,7 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::Theme(_) => "Switch the colours of the board and interface · saved automatically",
         Action::ApplyRule => "Use the rulestring above, written in B/S notation",
         Action::EditRule => "The board's rule · click to change it in Settings",
+        Action::ToggleEdges => "Switch between wrapping and fixed edges · M",
         Action::ExportRle => "Copy the live cells to the clipboard as RLE",
         Action::SaveWorkspace => {
             if cfg!(target_os = "macos") {
@@ -498,10 +499,7 @@ pub(super) fn sync_status(
                 .0
                 .map(|(col, row)| format!("({col}, {})", rows - 1 - row))
                 .unwrap_or_default(),
-            Readout::Board => format!(
-                "{cols} × {rows} cells   ·   {} edges",
-                sim.app.boundary_mode_label()
-            ),
+            Readout::Board => format!("{cols} × {rows} cells"),
         };
         if text.0 != value {
             text.0 = value;
@@ -569,8 +567,9 @@ pub(super) fn zoom_stepper(parent: &mut ChildSpawnerCommands) {
         });
 }
 
-/// From this width the status bar has room for the board size and edge mode,
-/// even with a 2048 × 2048 board and seven-digit counts.
+/// From this width the status bar has room for the edges button, and from the
+/// next for the board size too, even with seven-digit counts on a 2048 × 2048 board.
+const EDGES_BUTTON_MIN_WIDTH: f32 = 850.0;
 const BOARD_READOUT_MIN_WIDTH: f32 = 960.0;
 
 pub(super) fn sync_footer(
@@ -591,6 +590,16 @@ pub(super) fn sync_footer(
             set_if_neq!(
                 node.display,
                 if window.width() >= BOARD_READOUT_MIN_WIDTH {
+                    Display::Flex
+                } else {
+                    Display::None
+                }
+            );
+        }
+        if matches!(action, Some(Action::ToggleEdges)) {
+            set_if_neq!(
+                node.display,
+                if window.width() >= EDGES_BUTTON_MIN_WIDTH {
                     Display::Flex
                 } else {
                     Display::None
