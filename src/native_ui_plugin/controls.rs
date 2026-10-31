@@ -63,7 +63,6 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::SpeedAdjust(step) if step < 0 => "Decrease speed by 1 gen/s · ∞ steps back to 40",
         Action::SpeedAdjust(_) => "Increase speed by 1 gen/s, up to 40",
         Action::MaxSpeed => "∞ · run as fast as possible · click again to return to the set speed",
-        Action::Sidebar => "Show / hide the palette · H",
         Action::Help => "Controls and tips · /",
         Action::Diagnostics => "Simulation diagnostics · F3",
         Action::Rotate => "Rotate stamp 90° clockwise · Z",
@@ -78,16 +77,16 @@ pub(super) fn hint(action: Action) -> &'static str {
         }
         Action::Tool(EditTool::Draw) => "Draw · 1 · paint cells with the left mouse button",
         Action::Tool(EditTool::Erase) => "Erase · 2 · clear cells; right-drag also erases",
-        Action::Tool(EditTool::Stamp) => "Stamp · 3 · place the selected pattern on the board",
+        Action::Tool(EditTool::Stamp) => {
+            "Stamp · 3 · pick a pattern and place it on the board · H hides the palette"
+        }
         Action::Import => "Add an RLE pattern to your library, or open a workspace file",
         Action::Export => "Copy the board as RLE, or save a workspace file",
         Action::Settings => "Board size, rule, randomization, theme, grid, cell age, and edges",
-        Action::More => "Grid, cell age, palette, import, export, settings, and help",
+        Action::More => "Grid, cell age, import, export, settings, and help",
         Action::ApplyRandomize => "Use this density and optional seed for future randomizations",
         Action::RandomizeNow => "Apply the density and seed, then replace the board · undo with U",
-        Action::FillCanvas => {
-            "Size the board to fill the canvas, and follow it when the window or palette changes"
-        }
+        Action::FillCanvas => "Size the board to fill the canvas, and follow the window's size",
         Action::PauseWhenSettled => {
             "Pause when the board stops changing, or starts repeating with a period up to 128"
         }
@@ -290,22 +289,14 @@ pub(super) fn sync_overlays(
         let keyboard = view.focus_visible.0 && view.focus.get() == next;
         let show = candidate.is_some() && (overlay.elapsed >= 0.45 || keyboard);
         let rect = candidate.as_ref().map_or(Rect::default(), |c| c.2);
-        // Rail tools sit stacked at the window's left edge, so their hints open
-        // to the right instead of covering the next tool.
-        let in_rail = !view.layout.control_deck_visible && rect.max.x <= 16.0 + TOOL_RAIL_WIDTH;
-        let left = if in_rail {
-            rect.max.x + 8.0
-        } else {
-            rect.min
-                .x
-                .min(window.width() - OVERLAY_WIDTH - 8.0)
-                .max(8.0)
-        };
-        // Otherwise open away from the nearest window edge, anchored to the
-        // control so the hint never depends on its own height.
-        let (top, bottom) = if in_rail {
-            (px(rect.min.y), Val::Auto)
-        } else if rect.center().y < window.height() / 2.0 {
+        let left = rect
+            .min
+            .x
+            .min(window.width() - OVERLAY_WIDTH - 8.0)
+            .max(8.0);
+        // Open away from the nearest window edge, anchored to the control so
+        // the hint never depends on its own height.
+        let (top, bottom) = if rect.center().y < window.height() / 2.0 {
             (px(rect.max.y + 8.0), Val::Auto)
         } else {
             (Val::Auto, px(window.height() - rect.min.y + 8.0))
@@ -678,6 +669,7 @@ pub(super) fn feedback_overlay(commands: &mut Commands) {
 
 pub(super) fn sync_feedback(
     time: Res<Time>,
+    sim: Res<Simulation>,
     mut feedback: ResMut<EditFeedback>,
     view: ViewState,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -688,7 +680,14 @@ pub(super) fn sync_feedback(
     let Ok(window) = windows.single() else {
         return;
     };
-    let canvas = canvas_rect(window.size(), &view.layout);
+    let canvas = canvas_rect(window.size());
+    // Beside an open palette, which floats over this corner of the canvas.
+    let left = 12.0
+        + if sim.app.palette_shown() {
+            palette_rect(window.size()).max.x
+        } else {
+            canvas.min.x
+        };
     for mut node in &mut nodes {
         set_if_neq!(
             node.display,
@@ -698,9 +697,9 @@ pub(super) fn sync_feedback(
                 Display::None
             }
         );
-        set_if_neq!(node.left, px(canvas.min.x + 12.0));
+        set_if_neq!(node.left, px(left));
         set_if_neq!(node.bottom, px(window.height() - canvas.max.y + 8.0));
-        set_if_neq!(node.max_width, px((canvas.width() - 24.0).max(0.0)));
+        set_if_neq!(node.max_width, px((canvas.max.x - left - 12.0).max(0.0)));
     }
     for mut text in &mut texts {
         let value = if feedback.remaining > 0.0 {
@@ -821,7 +820,6 @@ mod tests {
         world.init_resource::<EditFeedback>();
         world.init_resource::<Time>();
         world.init_resource::<NativeUi>();
-        world.init_resource::<UiLayout>();
         world.insert_resource(GridOverlay { enabled: false });
         world.init_resource::<CellAge>();
         world.init_resource::<crate::shared::BoardSettings>();
@@ -850,7 +848,6 @@ mod tests {
         view.fit_scale = 2.5;
         world.insert_resource(view);
         world.insert_resource(Simulation::new(GolApp::new(8, 8)));
-        world.insert_resource(UiLayout::default());
         world.add_observer(navigate);
         let camera = world.spawn((Camera2d, crate::shared::MainCamera)).id();
         world.get_mut::<Transform>(camera).unwrap().translation = Vec3::new(90.0, -40.0, 10.0);

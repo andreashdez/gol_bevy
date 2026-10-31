@@ -145,7 +145,6 @@ fn image(coverage: &[u8], width: usize, height: usize) -> Image {
 #[derive(SystemParam)]
 pub(super) struct MapState<'w, 's> {
     windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
-    layout: Res<'w, UiLayout>,
     sim: Res<'w, Simulation>,
     time: Res<'w, Time>,
     mouse: Res<'w, ButtonInput<MouseButton>>,
@@ -176,7 +175,7 @@ pub(super) fn sync(
         return;
     };
     let (cols, rows) = state.sim.app.board.size();
-    let canvas = canvas_rect(window.size(), &state.layout);
+    let canvas = canvas_rect(window.size());
     let board = board_rect(cols, rows);
     let centre = transform.translation.truncate();
     let view = Rect::from_center_size(centre, canvas.size() * ortho.scale);

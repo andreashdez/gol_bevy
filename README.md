@@ -26,26 +26,27 @@ has ready-to-run builds, so no Rust toolchain is needed: unpack the archive for 
 cargo run
 ```
 
-The interface uses native Bevy UI throughout: playback controls, a searchable pattern
-palette, editing tools, live status, and import/settings/help/diagnostics dialogs.
+The interface uses native Bevy UI throughout: playback controls, editing tools, a searchable
+pattern palette, live status, and import/settings/help/diagnostics dialogs.
 
-The toolbar is a single 64-pixel row, grouped into playback, board edits, and workspace
-controls. Below 900 pixels wide, the workspace controls move into a menu behind a **⋯**
-button at the right end, and the pattern palette folds into its rail of tool icons. The palette
-comes back when the window is wide again, unless you showed or hid it yourself in between.
+The toolbar is a single 64-pixel row, grouped into playback, drawing tools, board edits, and
+workspace controls. Below 1010 pixels wide, the workspace controls move into a menu behind a
+**⋯** button at the right end.
 Resizing preserves keyboard focus and the camera view relative to the fitted board.
-The workspace group has icon toggles for the grid, cell age, and pattern palette, which show
-whether they are on, plus arrows into and out of a tray for Import and Export, a gear for
-Settings, and a ? for Help. Every toolbar button is an icon, including a die for Randomize and a
-bin for Clear; tooltips give their names and shortcuts.
+The workspace group has icon toggles for the grid and cell age, which show whether they are on,
+plus arrows into and out of a tray for Import and Export, a gear for Settings, and a ? for Help.
+Every toolbar button is an icon, including a pencil, an eraser, and a stamp for the tools, a die
+for Randomize, and a bin for Clear; tooltips give their names and shortcuts.
+
+The pattern palette floats over the left of the canvas while the Stamp tool is active. Draw,
+Erase, and **C** close it. **H** hides it while you keep stamping, to reach the cells under it, and
+choosing Stamp again brings it back. It never changes the canvas, so it never resizes the board.
 
 The pattern library scrolls with the mouse wheel or its scrollbar; search and the
 stamp preview with its rotate/flip controls stay visible while browsing. The stamp
 preview appears under the search field, so selecting a stamp never moves it. Scrolling
 over the canvas zooms it. Randomize and Clear are always available in the toolbar.
-Draw, Erase, and Stamp live in a separate tool strip above the palette. Hiding the
-palette turns that strip into a slim vertical rail of icons, so editing tools remain available.
-The board has its own canvas beside the palette and between the toolbar and status
+The board has its own canvas between the toolbar and status
 bar. Startup, board-size changes, **Fit board**, and **V** fit the entire board into that space.
 The status bar's zoom stepper (**− 100% +**) zooms in steps; 100% means the whole-board
 fit, and the corner-brackets button beside it is **Fit board**. Middle-button dragging
@@ -117,7 +118,7 @@ of other random operations. Density is a probability per cell, so the resulting
 population is approximate; 0% clears the board and 100% fills it. Randomization
 keeps the current rule, boundary mode, and generation counter.
 
-Palette visibility, board size, rule, boundary mode, speed, pause when settled, randomization preferences, the grid, cell age, and the theme are saved between runs
+Board size, rule, boundary mode, speed, pause when settled, randomization preferences, the grid, cell age, and the theme are saved between runs
 in `settings.toml`, in a `gol-bevy` folder in the platform's settings location:
 
 - Linux: `$XDG_CONFIG_HOME`, or `~/.config` if that is unset
@@ -218,16 +219,16 @@ just ci-local
 | Keys | Action |
 | --- | --- |
 | `T` | Show / hide the grid |
-| `H` | Show / hide the palette |
+| `H` | Show / hide the palette while stamping |
 | `F3` | Diagnostics |
 | `/` | Help |
 | `Cmd/Ctrl+S` | Save workspace |
 | `Cmd/Ctrl+O` | Open workspace |
 | `Q` | Quit |
 
-Board size is set in Settings: pick a preset (128², 256², 512², 1024²) or type exact dimensions, from 8 up to 2048 per side. The choice is saved between runs. **Fill canvas**, on by default, instead sizes the board to the canvas and keeps it matched as the window or palette changes. Resizing the board clears undo history, because old snapshots no longer fit; resizing the window does not, unless Fill canvas is on.
+Board size is set in Settings: pick a preset (128², 256², 512², 1024²) or type exact dimensions, from 8 up to 2048 per side. The choice is saved between runs. **Fill canvas**, on by default, instead sizes the board to the canvas and keeps it matched as the window changes. Resizing the board clears undo history, because old snapshots no longer fit; resizing the window does not, unless Fill canvas is on.
 
-The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools stay available independently of the pattern palette; rotate and flip controls appear in the palette for stamps. Use the Pattern palette toggle to show or hide the library. Grid and Cell age are available in the toolbar and Settings. Cell age, on by default, brightens newborn cells, deepens long-lived ones, and leaves fading trails where cells died. The status bar shows a green Running or neutral Paused pill, the generation, the population with its change over the latest generation (for example `842 alive −12`) or how the board settled (`842 alive period 2`) and, from 900 pixels wide, a line of the population over the last 256 generations, the rule, which opens Settings at the rulestring when clicked, the boundary mode from 850 pixels wide, which switches when clicked like **M**, and the cell under the pointer, plus board dimensions when space allows. Numbers use tabular digits and keep their widest size until the board is cleared or resized, so readouts stay close without shifting. The status
+The playback toolbar shows speed in generations per second. Rotate and flip controls appear in the palette for stamps. Grid and Cell age are available in the toolbar and Settings. Cell age, on by default, brightens newborn cells, deepens long-lived ones, and leaves fading trails where cells died. The status bar shows a green Running or neutral Paused pill, the generation, the population with its change over the latest generation (for example `842 alive −12`) or how the board settled (`842 alive period 2`) and, from 900 pixels wide, a line of the population over the last 256 generations, the rule, which opens Settings at the rulestring when clicked, the boundary mode from 850 pixels wide, which switches when clicked like **M**, and the cell under the pointer, plus board dimensions when space allows. Numbers use tabular digits and keep their widest size until the board is cleared or resized, so readouts stay close without shifting. The status
 bar stays a single row at every window size. The active rule preset is highlighted in
 Settings. Clear, randomize, undo, and redo show brief feedback, including the undo
 shortcut where applicable. Diagnostics open from Settings or F3 and start hidden.
@@ -242,7 +243,7 @@ Runtime flow from `src/main.rs`:
 main
   -> DefaultPlugins + resources
   -> RenderPlugin (world setup, board texture/grid/wall/preview rendering)
-  -> SettingsPlugin (palette visibility, board size, rule, boundary, speed, and grid persistence)
+  -> SettingsPlugin (board size, rule, boundary, speed, and grid persistence)
   -> UiInputPlugin (UI regions, modal capture, and keyboard focus)
   -> CanvasViewPlugin (canvas viewport and board framing)
   -> NativeUiPlugin (native toolbar + palette + import/settings/help/diagnostics dialogs)

@@ -13,9 +13,9 @@ Resizing keeps the cells that fit in the new size, fits the board into view, and
 
 ### Fill canvas
 
-The **Fill canvas** switch is on by default. It sizes the board to the canvas, so **Fit board** shows it edge to edge at 100% with no empty border. While it is on, the board follows the canvas: resizing the window, or showing or hiding the palette, resizes the board too.
+The **Fill canvas** switch is on by default. It sizes the board to the canvas, so **Fit board** shows it edge to edge at 100% with no empty border. While it is on, the board follows the canvas: resizing the window resizes the board too. The palette floats over the canvas, so it has no effect on the board.
 
-> Warning: Like any resize, a canvas change keeps only the cells that fit and clears the undo history. Shrinking the window, or showing the palette, removes cells beyond the new right and top edges.
+> Warning: Like any resize, a canvas change keeps only the cells that fit and clears the undo history. Shrinking the window removes cells beyond the new right and top edges.
 
 Switch it off to keep the current size from then on; with it off, resizing the window only changes how much of the board you can see. Applying a size also switches it off. Settings files saved before Fill canvas existed keep their saved size.
 
@@ -53,7 +53,6 @@ These settings are saved whenever they change, and restored on the next launch:
 
 | Setting        | Saved as                             |
 |----------------|--------------------------------------|
-| Palette shown  | `palette`                            |
 | Board size     | `board_cols`, `board_rows`           |
 | Fill canvas    | `fill_canvas`                        |
 | Grid           | `grid`                               |
@@ -89,7 +88,6 @@ Set the `GOL_BEVY_CONFIG_DIR` environment variable to use another folder on any 
 A typical file:
 
 ```toml "settings.toml"
-palette = true
 board_cols = 256
 board_rows = 256
 fill_canvas = false
@@ -106,7 +104,6 @@ random_density_percent = 25
 
 | Key             | Values                                                    |
 |-----------------|-----------------------------------------------------------|
-| `palette`       | `true` or `false`                                         |
 | `board_cols`, `board_rows` | Whole numbers, clamped to 8–2048. Both must be present |
 | `fill_canvas`   | `true` or `false`; with `true`, the saved size is replaced by the canvas's at startup |
 | `grid`          | `true` or `false`                                         |
@@ -125,4 +122,4 @@ You can edit the file while the app is closed. Entries that are missing or can't
 
 Earlier versions saved settings as `ui_layout.toml`, and before that in `~/.config/gol-bevy` on every platform. If `settings.toml` doesn't exist yet, gol-bevy reads `ui_layout.toml` from the same folder, or else from `~/.config/gol-bevy`, and the first save writes `settings.toml`. Old files are left alone, so you can delete them afterwards.
 
-Old files saved a `layout_preset` instead of `palette`: `"minimal"` hides the palette, and `"full"` or `"compact"` shows it.
+Old files may also hold `palette` or `layout_preset`. These are ignored now, since the palette follows the Stamp tool.

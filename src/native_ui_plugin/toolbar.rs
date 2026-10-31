@@ -5,15 +5,13 @@ use bevy::{ecs::system::SystemParam, input_focus::FocusCause};
 
 pub(super) const HEIGHT: f32 = 64.0;
 /// Below this width the workspace controls collapse into the menu.
-pub(super) const COLLAPSE_BELOW_WIDTH: f32 = 900.0;
-/// Below this width the palette folds into its rail, so the board keeps most of
-/// the window. It concerns the canvas, not the toolbar, so it has its own width.
-pub(super) const PALETTE_COLLAPSE_BELOW_WIDTH: f32 = 900.0;
+pub(super) const COLLAPSE_BELOW_WIDTH: f32 = 1010.0;
 
-/// Column budgets for the playback and board edit groups, with a little slack.
-/// With the workspace controls, one row needs 900 px; collapsed, it fits the
-/// 680 px minimum window.
+/// Column budgets for the groups before the workspace controls, with a little
+/// slack. With those controls, one row needs 1010 px; collapsed, it fits the
+/// 800 px minimum window.
 const PLAYBACK_WIDTH: f32 = 378.0;
+const TOOLS_WIDTH: f32 = 140.0;
 const EDITING_WIDTH: f32 = 180.0;
 const MENU_WIDTH: f32 = 220.0;
 
@@ -23,6 +21,7 @@ pub(super) struct Toolbar;
 #[derive(Component, Clone, Copy)]
 pub(super) enum Group {
     Playback,
+    Tools,
     Editing,
     Workspace,
 }
@@ -101,6 +100,7 @@ pub(super) fn spawn(commands: &mut Commands) {
         .with_children(|p| {
             for (group, name) in [
                 (Group::Playback, "Playback"),
+                (Group::Tools, "Drawing tools"),
                 (Group::Editing, "Board edits"),
                 (Group::Workspace, "Workspace"),
             ] {
@@ -122,6 +122,11 @@ pub(super) fn spawn(commands: &mut Commands) {
                         icon_button(p, "Reset to start", Icon::Reset, Action::ResetToStart);
                         icon_button(p, "Step", Icon::Step, Action::Step);
                         speed::spawn(p);
+                    }
+                    Group::Tools => {
+                        icon_button(p, "Draw", Icon::Draw, Action::Tool(EditTool::Draw));
+                        icon_button(p, "Erase", Icon::Erase, Action::Tool(EditTool::Erase));
+                        icon_button(p, "Stamp", Icon::Stamp, Action::Tool(EditTool::Stamp));
                     }
                     Group::Editing => {
                         icon_button(p, "Randomize", Icon::Randomize, Action::Randomize);
@@ -150,7 +155,6 @@ pub(super) fn spawn(commands: &mut Commands) {
                         .with_children(|p| {
                             menu_item(p, "Grid", Icon::Grid, Action::Grid);
                             menu_item(p, "Cell age", Icon::CellAge, Action::CellAge);
-                            menu_item(p, "Pattern palette", Icon::Palette, Action::Sidebar);
                             menu_item(p, "Import", Icon::Import, Action::Import);
                             menu_item(p, "Export", Icon::Export, Action::Export);
                             menu_item(p, "Settings", Icon::Gear, Action::Settings);
@@ -169,79 +173,41 @@ type LayoutNode<'a> = (
     Option<&'a mut TabGroup>,
     Has<ToolbarButton>,
     Option<&'a Action>,
-    Has<Sidebar>,
-    Has<ToolStrip>,
     (
         Has<MenuPanel>,
         Has<MenuItem>,
         Has<MenuLabel>,
         Has<MoreButton>,
     ),
-    (Has<ToolIcon>, Has<ToolLabel>),
 );
-
-/// Narrow windows hide the palette, so the board keeps most of the width;
-/// widening brings it back. Acts only as the width
-/// crosses the breakpoint, so the palette can still be shown while narrow.
-pub(super) fn collapse_palette(
-    windows: Query<&Window, With<PrimaryWindow>>,
-    mut layout: ResMut<UiLayout>,
-    mut was_narrow: Local<Option<bool>>,
-) {
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let narrow = window.width() < PALETTE_COLLAPSE_BELOW_WIDTH;
-    if *was_narrow != Some(narrow) {
-        // Startup counts as a crossing, so a narrow first window starts collapsed.
-        *was_narrow = Some(narrow);
-        layout.set_narrow(narrow);
-    }
-}
 
 pub(super) fn sync_layout(
     windows: Query<&Window, With<PrimaryWindow>>,
-    layout: Res<UiLayout>,
     mut menu: ResMut<WorkspaceMenu>,
     mut nodes: Query<LayoutNode>,
-    mut previous_layout: Local<Option<(f32, bool)>>,
+    mut previous_width: Local<Option<f32>>,
 ) {
     let Ok(window) = windows.single() else {
         return;
     };
-    let current = (window.width(), layout.control_deck_visible);
-    if *previous_layout == Some(current) {
+    if *previous_width == Some(window.width()) {
         return;
     }
-    *previous_layout = Some(current);
+    *previous_width = Some(window.width());
     let collapsed = window.width() < COLLAPSE_BELOW_WIDTH;
     set_if_neq!(menu.collapsed, collapsed);
     if !collapsed {
         set_if_neq!(menu.open, false);
     }
-    for (mut node, toolbar, group, tabs, button, action, sidebar, tools, menu_parts, tool_parts) in
-        &mut nodes
-    {
+    for (mut node, toolbar, group, tabs, button, action, menu_parts) in &mut nodes {
         let (panel, item, menu_label, more) = menu_parts;
-        let (tool_icon, tool_label) = tool_parts;
-        // Beside the palette the tools are named; in the rail they are icons.
-        let rail = !layout.control_deck_visible;
-        if tool_icon || tool_label {
-            node.display = if tool_icon == rail {
-                Display::Flex
-            } else {
-                Display::None
-            };
-        }
-        if matches!(action, Some(Action::Tool(_))) {
-            node.width = if rail { Val::Auto } else { px(68) };
-        }
         if toolbar {
             node.display = Display::Grid;
             node.height = px(HEIGHT);
             // Explicit group budgets leave space for all toolbar controls.
             let columns = vec![
                 GridTrack::px(PLAYBACK_WIDTH),
+                GridTrack::px(TOOLS_WIDTH),
                 GridTrack::px(EDITING_WIDTH),
                 GridTrack::flex(1.0),
             ];
@@ -251,14 +217,15 @@ pub(super) fn sync_layout(
         }
         if let Some(group) = group {
             let (column, order) = match group {
-                Group::Playback => (1, -3),
-                Group::Editing => (2, -2),
-                Group::Workspace => (3, -1),
+                Group::Playback => (1, -4),
+                Group::Tools => (2, -3),
+                Group::Editing => (3, -2),
+                Group::Workspace => (4, -1),
             };
             node.grid_column = GridPlacement::start(column);
             node.grid_row = GridPlacement::start(1);
-            // Only the edits are set apart; the workspace controls sit at the far end.
-            let divider = matches!(group, Group::Editing);
+            // The workspace controls need no divider; they sit at the far end.
+            let divider = matches!(group, Group::Tools | Group::Editing);
             node.border = UiRect::left(px(if divider { 1.0 } else { 0.0 }));
             node.padding = UiRect::left(px(if divider { 12.0 } else { 0.0 }));
             node.justify_content = if matches!(group, Group::Workspace) {
@@ -275,28 +242,6 @@ pub(super) fn sync_layout(
             if action == Some(&Action::Play) {
                 node.min_width = px(64);
             }
-        }
-        if sidebar {
-            node.top = px(HEIGHT + 16.0 + TOOL_STRIP_SPACE);
-        }
-        if tools {
-            node.top = px(HEIGHT + 16.0);
-            node.width = px(if layout.control_deck_visible {
-                SIDE
-            } else {
-                TOOL_RAIL_WIDTH
-            });
-            node.height = px(if layout.control_deck_visible {
-                TOOL_STRIP_HEIGHT
-            } else {
-                TOOL_RAIL_HEIGHT
-            });
-            node.flex_direction = if layout.control_deck_visible {
-                FlexDirection::Row
-            } else {
-                FlexDirection::Column
-            };
-            node.row_gap = px(6);
         }
         if panel {
             // A dropdown under the More button, right-aligned with it.

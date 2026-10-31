@@ -23,9 +23,7 @@ mod theme;
 mod toolbar;
 use crate::{
     app::{App as GolApp, EditTool},
-    shared::{
-        CellAge, EditFeedback, GridOverlay, Simulation, StartupSet, Theme, UiLayout, UpdateSet,
-    },
+    shared::{CellAge, EditFeedback, GridOverlay, Simulation, StartupSet, Theme, UpdateSet},
     ui_input::{BoardFocus, KeyboardFocus, UiInputRegions, UiInputSet},
 };
 use bevy::{
@@ -51,18 +49,11 @@ use theme::{ThemedBackground, ThemedBorder, ThemedImage, ThemedText, Token};
 const STATUS_BAR_HEIGHT: f32 = 48.0;
 
 /// Tab follows the layout: the toolbar's groups (negative orders), then the
-/// tools, the palette, the status bar, and the board last.
-const TAB_ORDER_TOOLS: i32 = 1;
-const TAB_ORDER_PALETTE: i32 = 2;
-const TAB_ORDER_STATUS_BAR: i32 = 3;
-const TAB_ORDER_BOARD: i32 = 4;
+/// palette, the status bar, and the board last.
+const TAB_ORDER_PALETTE: i32 = 1;
+const TAB_ORDER_STATUS_BAR: i32 = 2;
+const TAB_ORDER_BOARD: i32 = 3;
 const SIDE: f32 = 256.0;
-const TOOL_STRIP_HEIGHT: f32 = 48.0;
-const TOOL_STRIP_SPACE: f32 = TOOL_STRIP_HEIGHT + 8.0;
-/// The hidden palette's rail of icon-only tools: one 44 px button wide, and
-/// three 38 px buttons tall, with the strip's padding and border.
-const TOOL_RAIL_WIDTH: f32 = 56.0;
-const TOOL_RAIL_HEIGHT: f32 = 136.0;
 /// Library rows are short, with a wide thumbnail, since most patterns are wider
 /// than they are tall. The texture has two texels per point, for Retina displays.
 const ROW_THUMBNAIL: Vec2 = Vec2::new(64.0, 32.0);
@@ -120,8 +111,6 @@ impl Plugin for NativeUiPlugin {
             .add_systems(
                 Update,
                 (
-                    // First, so the rest of the layout sees the palette's state this frame.
-                    toolbar::collapse_palette,
                     dialogs::poll_file_dialog,
                     dialogs::update_dialogs,
                     sync,
@@ -140,6 +129,7 @@ impl Plugin for NativeUiPlugin {
                     controls::sync_feedback,
                     publish_input_regions,
                     release_pointer_focus,
+                    release_palette_focus,
                     sync_board_focus,
                 )
                     .chain()
@@ -154,8 +144,6 @@ impl Plugin for NativeUiPlugin {
 struct NativeRoot;
 #[derive(Component)]
 struct Sidebar;
-#[derive(Component)]
-struct ToolStrip;
 #[derive(Component)]
 struct Palette;
 #[derive(Component)]
@@ -197,7 +185,6 @@ enum Action {
     SpeedAdjust(i8),
     /// Toggles ∞, maximum speed.
     MaxSpeed,
-    Sidebar,
     Import,
     Export,
     Help,
@@ -289,31 +276,11 @@ fn icon_button(
     entity
 }
 
-/// The tool's icon, shown only in the rail the tools become when the palette is hidden.
-#[derive(Component)]
-struct ToolIcon;
-/// The tool's name, shown only beside the palette.
-#[derive(Component)]
-struct ToolLabel;
-
-fn tool_button(parent: &mut ChildSpawnerCommands, name: &str, icon: Icon, tool: EditTool) {
-    let entity = button_frame(parent, name, Action::Tool(tool));
-    parent.commands().entity(entity).with_children(|p| {
-        p.spawn((ToolIcon, icons::node(icon)));
-        p.spawn((ToolLabel, label(name, 14.0, Token::Ink)));
-    });
-}
-
 fn button_frame(parent: &mut ChildSpawnerCommands, name: &str, action: Action) -> Entity {
     parent
         .spawn((
             Node {
                 padding: UiRect::axes(px(12), px(9)),
-                width: if matches!(action, Action::Tool(_)) {
-                    px(68)
-                } else {
-                    Val::Auto
-                },
                 min_width: if action == Action::Play {
                     px(72)
                 } else {
@@ -355,38 +322,6 @@ fn setup(
     commands
         .spawn((
             NativeRoot,
-            ToolStrip,
-            TabGroup {
-                order: TAB_ORDER_TOOLS,
-                ..default()
-            },
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(16),
-                top: px(toolbar::HEIGHT + 16.0),
-                width: px(SIDE),
-                height: px(TOOL_STRIP_HEIGHT),
-                padding: UiRect::all(px(4)),
-                column_gap: px(6),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                border: UiRect::all(px(1)),
-                border_radius: BorderRadius::all(px(8)),
-                ..default()
-            },
-            ThemedBackground(Token::Panel),
-            ThemedBorder(Token::Line),
-            accessibility::named_node(accesskit::Role::Toolbar, "Drawing tools"),
-            GlobalZIndex(10),
-        ))
-        .with_children(|p| {
-            tool_button(p, "Draw", Icon::Draw, EditTool::Draw);
-            tool_button(p, "Erase", Icon::Erase, EditTool::Erase);
-            tool_button(p, "Stamp", Icon::Stamp, EditTool::Stamp);
-        });
-    commands
-        .spawn((
-            NativeRoot,
             Sidebar,
             TabGroup {
                 order: TAB_ORDER_PALETTE,
@@ -395,8 +330,8 @@ fn setup(
             Node {
                 position_type: PositionType::Absolute,
                 left: px(16),
-                top: px(toolbar::HEIGHT + 16.0 + TOOL_STRIP_SPACE),
-                bottom: px(64),
+                top: px(toolbar::HEIGHT + 16.0),
+                bottom: px(STATUS_BAR_HEIGHT + 16.0),
                 width: px(SIDE),
                 padding: UiRect::all(px(10)),
                 flex_direction: FlexDirection::Column,
@@ -562,10 +497,25 @@ fn release_pointer_focus(
     }
 }
 
+/// A palette that closes gives up the keyboard, so nothing hidden keeps focus.
+fn release_palette_focus(
+    sim: Res<Simulation>,
+    mut focus: ResMut<InputFocus>,
+    palettes: Query<(), With<Sidebar>>,
+    parents: Query<&ChildOf>,
+) {
+    if !sim.app.palette_shown()
+        && focus
+            .get()
+            .is_some_and(|e| parents.iter_ancestors(e).any(|a| palettes.contains(a)))
+    {
+        focus.clear();
+    }
+}
+
 /// Outlines the canvas while keyboard navigation leaves the keyboard on the board.
 fn sync_board_focus(
     windows: Query<&Window, With<PrimaryWindow>>,
-    layout: Res<UiLayout>,
     keyboard: KeyboardFocus,
     focus_visible: Res<InputFocusVisible>,
     regions: Res<UiInputRegions>,
@@ -575,7 +525,7 @@ fn sync_board_focus(
     let Ok(window) = windows.single() else {
         return;
     };
-    let rect = canvas_rect(window.size(), &layout);
+    let rect = canvas_rect(window.size());
     for mut node in &mut areas {
         set_if_neq!(node.left, px(rect.min.x));
         set_if_neq!(node.top, px(rect.min.y));
@@ -592,54 +542,32 @@ fn sync_board_focus(
     }
 }
 
+/// Where the palette floats over the canvas.
+fn palette_rect(size: Vec2) -> Rect {
+    let min = Vec2::new(16.0, toolbar::HEIGHT + 16.0);
+    let max = Vec2::new(16.0 + SIDE, size.y - STATUS_BAR_HEIGHT - 16.0);
+    Rect::from_corners(min, max.max(min))
+}
+
 /// Logical rectangles shared by layout and input routing; gaps remain canvas.
-pub fn panel_rects(size: Vec2, layout: &UiLayout) -> Vec<Rect> {
-    let top = toolbar::HEIGHT;
-    let bottom = STATUS_BAR_HEIGHT;
+fn panel_rects(size: Vec2, palette: bool) -> Vec<Rect> {
     let mut rects = vec![
-        Rect::new(0.0, 0.0, size.x, top),
-        Rect::new(0.0, (size.y - bottom).max(0.0), size.x, size.y),
-        Rect::new(
-            16.0,
-            top + 16.0,
-            16.0 + if layout.control_deck_visible {
-                SIDE
-            } else {
-                TOOL_RAIL_WIDTH
-            },
-            top + 16.0
-                + if layout.control_deck_visible {
-                    TOOL_STRIP_HEIGHT
-                } else {
-                    TOOL_RAIL_HEIGHT
-                },
-        ),
+        Rect::new(0.0, 0.0, size.x, toolbar::HEIGHT),
+        Rect::new(0.0, (size.y - STATUS_BAR_HEIGHT).max(0.0), size.x, size.y),
     ];
-    if layout.control_deck_visible && size.y > top + bottom + 32.0 {
-        rects.push(Rect::new(
-            16.0,
-            top + 16.0 + TOOL_STRIP_SPACE,
-            SIDE + 16.0,
-            size.y - bottom - 16.0,
-        ));
+    if palette {
+        rects.push(palette_rect(size));
     }
     rects
 }
 
 /// The board is clipped to this workspace; the UI camera still covers the window.
-pub fn canvas_rect(size: Vec2, layout: &UiLayout) -> Rect {
-    // The palette keeps its 16 px window margin; the canvas only needs a thin
-    // gap, so the board gets as much of the window as possible.
+/// The palette floats over it rather than beside it, because with Fill canvas on,
+/// a canvas that changes size resizes the board, cropping its cells.
+pub fn canvas_rect(size: Vec2) -> Rect {
     const GAP: f32 = 8.0;
-    let left = 16.0
-        + GAP
-        + if layout.control_deck_visible {
-            SIDE
-        } else {
-            TOOL_RAIL_WIDTH
-        };
     let max = (size - Vec2::new(GAP, STATUS_BAR_HEIGHT + GAP)).max(Vec2::ONE);
-    let min = Vec2::new(left, toolbar::HEIGHT + GAP)
+    let min = Vec2::new(GAP, toolbar::HEIGHT + GAP)
         .min(max - Vec2::ONE)
         .max(Vec2::ZERO);
     Rect::from_corners(min, max)
@@ -647,7 +575,7 @@ pub fn canvas_rect(size: Vec2, layout: &UiLayout) -> Rect {
 
 fn publish_input_regions(
     windows: Query<&Window, With<PrimaryWindow>>,
-    layout: Res<UiLayout>,
+    sim: Res<Simulation>,
     state: Res<NativeUi>,
     menu: Res<toolbar::WorkspaceMenu>,
     minimap: Res<minimap::MinimapArea>,
@@ -658,7 +586,7 @@ fn publish_input_regions(
     regions.modal = state.dialog.is_some() || menu.open;
     regions.panels = windows
         .single()
-        .map(|window| panel_rects(window.size(), &layout))
+        .map(|window| panel_rects(window.size(), sim.app.palette_shown()))
         .unwrap_or_default();
     regions.panels.extend(minimap.0);
 }
@@ -675,7 +603,6 @@ fn activate(
     actions: Query<&Action>,
     mut sim: ResMut<Simulation>,
     mut view: ViewToggles,
-    mut layout: ResMut<UiLayout>,
     mut feedback: ResMut<EditFeedback>,
     mut theme: ResMut<Theme>,
 ) {
@@ -710,7 +637,6 @@ fn activate(
         | Action::RandomizeNow => {}
         Action::Grid => view.grid.enabled = !view.grid.enabled,
         Action::CellAge => view.cell_age.enabled = !view.cell_age.enabled,
-        Action::Sidebar => layout.toggle_control_deck(),
         Action::Theme(choice) => {
             theme.set_if_neq(*choice);
         }
@@ -767,7 +693,6 @@ type ButtonState<'a> = (
 #[derive(SystemParam)]
 struct ViewState<'w> {
     mode: Res<'w, NativeUi>,
-    layout: Res<'w, UiLayout>,
     grid: Res<'w, GridOverlay>,
     cell_age: Res<'w, CellAge>,
     board: Res<'w, crate::shared::BoardSettings>,
@@ -776,7 +701,12 @@ struct ViewState<'w> {
     theme: Res<'w, Theme>,
 }
 
-type RootNode<'a> = (&'a mut Node, Has<Sidebar>, Has<toolbar::Toolbar>);
+type RootNode<'a> = (
+    &'a mut Node,
+    &'a mut Visibility,
+    Has<Sidebar>,
+    Has<toolbar::Toolbar>,
+);
 
 fn sync(
     mut commands: Commands,
@@ -789,7 +719,6 @@ fn sync(
 ) {
     let ViewState {
         mode: _,
-        layout,
         grid,
         cell_age,
         board,
@@ -797,8 +726,9 @@ fn sync(
         focus_visible: _,
         theme,
     } = view;
-    for (mut node, sidebar, toolbar) in &mut roots {
-        let display = if sidebar && !layout.control_deck_visible {
+    let palette = sim.app.palette_shown();
+    for (mut node, mut visibility, sidebar, toolbar) in &mut roots {
+        let display = if sidebar && !palette {
             Display::None
         } else if toolbar {
             Display::Grid
@@ -806,6 +736,14 @@ fn sync(
             Display::Flex
         };
         set_if_neq!(node.display, display);
+        // Tab walks whatever is visible, even in a node removed from the layout.
+        if sidebar {
+            visibility.set_if_neq(if palette {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            });
+        }
     }
     for (
         entity,
@@ -842,7 +780,6 @@ fn sync(
             Action::ResetToStart => !sim.app.can_reset_to_start(),
             Action::Undo => !sim.app.can_undo(),
             Action::Redo => !sim.app.can_redo(),
-            Action::Rotate | Action::Flip => sim.app.tool() != EditTool::Stamp,
             Action::SpeedAdjust(step) if *step < 0 => {
                 !sim.app.is_max_speed() && sim.app.tick_rate_ms() >= 1000
             }
@@ -869,7 +806,6 @@ fn sync(
             Action::CellAge => cell_age.enabled,
             Action::FillCanvas => board.fill_canvas,
             Action::PauseWhenSettled => sim.app.pause_when_settled(),
-            Action::Sidebar => layout.control_deck_visible,
             Action::Theme(choice) => *theme == *choice,
             Action::Edges(mode) => sim.app.board.boundary_mode() == *mode,
             Action::RulePreset(index) => dialogs::RULE_PRESETS
@@ -886,7 +822,6 @@ fn sync(
                 | Action::CellAge
                 | Action::FillCanvas
                 | Action::PauseWhenSettled
-                | Action::Sidebar
                 | Action::RulePreset(_)
                 | Action::Theme(_)
                 | Action::Edges(_)
@@ -1220,7 +1155,6 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<Assets<Font>>();
         world.init_resource::<Assets<Image>>();
-        world.init_resource::<UiLayout>();
         world.init_resource::<InputFocus>();
         world.spawn((Window::default(), PrimaryWindow));
         world.run_system_once(setup).unwrap();
@@ -1236,8 +1170,6 @@ mod tests {
             while let Some(e) = current {
                 let found = if world.get::<toolbar::Group>(e).is_some() {
                     Some("toolbar")
-                } else if world.get::<ToolStrip>(e).is_some() {
-                    Some("tools")
                 } else if world.get::<Sidebar>(e).is_some() {
                     Some("palette")
                 } else if world.get::<Footer>(e).is_some() {
@@ -1278,10 +1210,7 @@ mod tests {
                 visited.push(here);
             }
         }
-        assert_eq!(
-            visited,
-            ["toolbar", "tools", "palette", "status bar", "board"]
-        );
+        assert_eq!(visited, ["toolbar", "palette", "status bar", "board"]);
     }
 
     #[test]
@@ -1296,7 +1225,6 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<Assets<Font>>();
         world.init_resource::<Assets<Image>>();
-        world.init_resource::<UiLayout>();
         world.init_resource::<InputFocus>();
         world.init_resource::<InputFocusVisible>();
         world.init_resource::<UiInputRegions>();
@@ -1346,10 +1274,7 @@ mod tests {
         assert!(!outlined(&mut world, Some(board), false, false));
         assert!(!outlined(&mut world, Some(board), true, true));
         assert!(!outlined(&mut world, Some(button), true, false));
-        let rect = canvas_rect(
-            world.get::<Window>(window).unwrap().size(),
-            &UiLayout::default(),
-        );
+        let rect = canvas_rect(world.get::<Window>(window).unwrap().size());
         let mut areas = world.query_filtered::<&Node, With<BoardArea>>();
         let node = areas.single(&world).unwrap();
         assert_eq!((node.left, node.width), (px(rect.min.x), px(rect.width())));
@@ -1386,7 +1311,6 @@ mod tests {
         world.init_resource::<Assets<Image>>();
         world.insert_resource(Simulation::new(GolApp::new(8, 8)));
         world.init_resource::<NativeUi>();
-        world.init_resource::<UiLayout>();
         world.insert_resource(GridOverlay { enabled: false });
         world.init_resource::<CellAge>();
         world.init_resource::<crate::shared::BoardSettings>();
@@ -1426,51 +1350,83 @@ mod tests {
     }
 
     #[test]
-    fn hiding_the_palette_keeps_tools_visible_and_reflows_without_a_resize() {
+    fn the_palette_shows_only_while_stamping_and_leaves_the_toolbar_alone() {
         use bevy::ecs::system::RunSystemOnce;
         let mut world = World::new();
         world.init_resource::<Assets<Font>>();
         world.init_resource::<Assets<Image>>();
         world.insert_resource(Simulation::new(GolApp::new(8, 8)));
         world.init_resource::<NativeUi>();
-        world.init_resource::<UiLayout>();
         world.insert_resource(GridOverlay { enabled: false });
         world.init_resource::<CellAge>();
         world.init_resource::<crate::shared::BoardSettings>();
         world.init_resource::<InputFocus>();
         world.init_resource::<InputFocusVisible>();
         world.init_resource::<Theme>();
-        world.init_resource::<toolbar::WorkspaceMenu>();
-        world.spawn((Window::default(), PrimaryWindow));
         world.run_system_once(setup).unwrap();
-        let mut schedule = Schedule::default();
-        schedule.add_systems((sync, toolbar::sync_layout).chain());
-        schedule.run(&mut world);
-        world.resource_mut::<UiLayout>().control_deck_visible = false;
-        schedule.run(&mut world);
-        let (_, tools) = world
-            .query_filtered::<(&Children, &Node), With<ToolStrip>>()
-            .single(&world)
-            .unwrap();
-        assert_eq!(tools.display, Display::Flex);
-        assert_eq!(tools.flex_direction, FlexDirection::Column);
-        assert_eq!(tools.width, px(TOOL_RAIL_WIDTH));
-        assert_eq!(
-            world
-                .query_filtered::<&Node, With<Sidebar>>()
-                .single(&world)
-                .unwrap()
-                .display,
-            Display::None
-        );
-        world.resource_mut::<UiLayout>().control_deck_visible = true;
-        schedule.run(&mut world);
+        let shown = |world: &mut World| {
+            world.run_system_once(sync).unwrap();
+            let (node, visibility) = world
+                .query_filtered::<(&Node, &Visibility), With<Sidebar>>()
+                .single(world)
+                .unwrap();
+            // Tab skips hidden nodes, but not ones merely out of the layout.
+            assert_eq!(
+                node.display != Display::None,
+                *visibility != Visibility::Hidden
+            );
+            node.display != Display::None
+        };
+        let change = |world: &mut World, edit: fn(&mut GolApp)| {
+            edit(&mut world.resource_mut::<Simulation>().app);
+        };
+        assert!(!shown(&mut world));
+        change(&mut world, |app| app.set_tool(EditTool::Stamp));
+        assert!(shown(&mut world));
+        change(&mut world, GolApp::toggle_palette);
+        assert!(!shown(&mut world));
+        change(&mut world, |app| app.set_tool(EditTool::Erase));
+        assert!(!shown(&mut world));
+
+        // Every tool is a toolbar button, so the palette can close without hiding one.
+        let groups = world
+            .query_filtered::<&ChildOf, With<Action>>()
+            .iter(&world)
+            .map(ChildOf::parent)
+            .collect::<Vec<_>>();
         let tools = world
-            .query_filtered::<&Node, With<ToolStrip>>()
-            .single(&world)
+            .query::<(Entity, &toolbar::Group)>()
+            .iter(&world)
+            .find_map(|(e, group)| matches!(group, toolbar::Group::Tools).then_some(e))
             .unwrap();
-        assert_eq!(tools.flex_direction, FlexDirection::Row);
-        assert_eq!(tools.width, px(SIDE));
+        assert_eq!(groups.iter().filter(|&&e| e == tools).count(), 3);
+    }
+
+    #[test]
+    fn a_closing_palette_gives_up_keyboard_focus() {
+        use bevy::{ecs::system::RunSystemOnce, input_focus::FocusCause};
+        let mut world = World::new();
+        let mut app = GolApp::new(8, 8);
+        app.set_tool(EditTool::Stamp);
+        world.insert_resource(Simulation::new(app));
+        world.init_resource::<InputFocus>();
+        let palette = world.spawn(Sidebar).id();
+        let row = world.spawn(ChildOf(palette)).id();
+        let other = world.spawn_empty().id();
+        let focused = |world: &mut World, entity| {
+            world
+                .resource_mut::<InputFocus>()
+                .set(entity, FocusCause::Navigated);
+            world.run_system_once(release_palette_focus).unwrap();
+            world.resource::<InputFocus>().get()
+        };
+        assert_eq!(focused(&mut world, row), Some(row));
+        world
+            .resource_mut::<Simulation>()
+            .app
+            .set_tool(EditTool::Draw);
+        assert_eq!(focused(&mut world, other), Some(other));
+        assert_eq!(focused(&mut world, row), None);
     }
 
     #[test]
@@ -1481,7 +1437,6 @@ mod tests {
         world.init_resource::<Assets<Image>>();
         world.insert_resource(Simulation::new(GolApp::new(8, 8)));
         world.init_resource::<NativeUi>();
-        world.init_resource::<UiLayout>();
         world.init_resource::<toolbar::WorkspaceMenu>();
         world.init_resource::<InputFocus>();
         world.init_resource::<InputFocusVisible>();
@@ -1571,42 +1526,6 @@ mod tests {
     }
 
     #[test]
-    fn the_palette_collapses_only_as_the_window_crosses_the_breakpoint() {
-        let mut world = World::new();
-        world.init_resource::<UiLayout>();
-        let window = world
-            .spawn((
-                Window {
-                    resolution: bevy::window::WindowResolution::new(
-                        toolbar::PALETTE_COLLAPSE_BELOW_WIDTH as u32 - 1,
-                        600,
-                    ),
-                    ..default()
-                },
-                PrimaryWindow,
-            ))
-            .id();
-        let collapse = world.register_system(toolbar::collapse_palette);
-        let visible = |world: &World| world.resource::<UiLayout>().control_deck_visible;
-        world.run_system(collapse).unwrap();
-        assert!(!visible(&world), "a narrow first window starts collapsed");
-
-        // Shown by hand while narrow, it is not hidden again on the next frame.
-        world.resource_mut::<UiLayout>().toggle_control_deck();
-        world.run_system(collapse).unwrap();
-        assert!(visible(&world));
-
-        world.resource_mut::<UiLayout>().toggle_control_deck();
-        world
-            .get_mut::<Window>(window)
-            .unwrap()
-            .resolution
-            .set(toolbar::PALETTE_COLLAPSE_BELOW_WIDTH, 600.0);
-        world.run_system(collapse).unwrap();
-        assert!(!visible(&world), "hidden by hand, widening keeps it hidden");
-    }
-
-    #[test]
     fn row_thumbnails_scale_wide_patterns_to_the_wide_texture() {
         let colors = Theme::Dark.board();
         let live = crate::render_plugin::color_to_texel(colors.live);
@@ -1683,61 +1602,69 @@ mod tests {
     }
 
     #[test]
-    fn toolbar_keeps_one_row_and_input_regions_match_the_canvas() {
-        let layout = UiLayout::default();
-        let narrow = Vec2::new(toolbar::COLLAPSE_BELOW_WIDTH - 1.0, 800.0);
-        let wide = Vec2::new(toolbar::COLLAPSE_BELOW_WIDTH, 800.0);
-        assert_eq!(
-            canvas_rect(narrow, &layout).min.y,
-            canvas_rect(wide, &layout).min.y
-        );
-        let below_toolbar = Vec2::new(500.0, toolbar::HEIGHT + 20.0);
-        for size in [narrow, wide] {
-            assert!(
-                !panel_rects(size, &layout)
-                    .iter()
-                    .any(|r| r.contains(below_toolbar))
-            );
-            assert!(canvas_rect(size, &layout).contains(below_toolbar));
-        }
-        for width in [680.0, 999.0, 1000.0, 1039.0, 1040.0, 1200.0, 1600.0] {
-            for visible in [true, false] {
-                let size = Vec2::new(width, 420.0);
-                let layout = UiLayout {
-                    control_deck_visible: visible,
-                    ..default()
-                };
-                let canvas = canvas_rect(size, &layout);
-                // One status bar row at every width, down to the minimum window.
-                assert_eq!(canvas.max.y, size.y - STATUS_BAR_HEIGHT - 8.0);
-                for panel in panel_rects(size, &layout) {
-                    assert!(canvas.intersect(panel).is_empty());
-                }
+    fn the_palette_floats_over_the_canvas_without_changing_it() {
+        for size in [Vec2::new(800.0, 420.0), Vec2::new(1600.0, 900.0)] {
+            let canvas = canvas_rect(size);
+            // One status bar row at every width, down to the minimum window.
+            assert_eq!(canvas.max.y, size.y - STATUS_BAR_HEIGHT - 8.0);
+            for panel in panel_rects(size, false) {
+                assert!(canvas.intersect(panel).is_empty());
             }
+            let palette = palette_rect(size);
+            assert!(!canvas.intersect(palette).is_empty());
+            assert!(palette.height() > 0.0);
         }
     }
 
     #[test]
-    fn chrome_captures_clicks_but_canvas_and_hidden_palette_do_not() {
-        let size = Vec2::new(768.0, 600.0);
-        let contains = |sidebar, pos| {
-            panel_rects(
-                size,
-                &UiLayout {
-                    control_deck_visible: sidebar,
-                    ..default()
-                },
-            )
-            .iter()
-            .any(|r| r.contains(pos))
+    fn the_canvas_takes_clicks_except_under_an_open_palette() {
+        let size = Vec2::new(800.0, 600.0);
+        let captured = |palette, pos| panel_rects(size, palette).iter().any(|r| r.contains(pos));
+        let toolbar = Vec2::new(300.0, 40.0);
+        let status_bar = Vec2::new(500.0, 590.0);
+        let under_palette = Vec2::new(40.0, 210.0);
+        let beside_palette = Vec2::new(400.0, 300.0);
+        for palette in [true, false] {
+            assert!(captured(palette, toolbar));
+            assert!(captured(palette, status_bar));
+            assert!(!captured(palette, beside_palette));
+            assert_eq!(captured(palette, under_palette), palette);
+        }
+        // The size of a very short window cannot turn the rectangle inside out.
+        assert!(palette_rect(Vec2::new(800.0, 10.0)).height() == 0.0);
+    }
+
+    #[test]
+    fn an_edit_notice_moves_beside_an_open_palette() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.insert_resource(Simulation::new(GolApp::new(8, 8)));
+        world.init_resource::<EditFeedback>();
+        world.init_resource::<Time>();
+        world.init_resource::<NativeUi>();
+        world.insert_resource(GridOverlay { enabled: false });
+        world.init_resource::<CellAge>();
+        world.init_resource::<crate::shared::BoardSettings>();
+        world.init_resource::<InputFocus>();
+        world.init_resource::<InputFocusVisible>();
+        world.init_resource::<Theme>();
+        let window = world.spawn((Window::default(), PrimaryWindow)).id();
+        let notice = world
+            .spawn((controls::FeedbackOverlay, Node::default()))
+            .id();
+        let left = |world: &mut World| {
+            world.run_system_once(controls::sync_feedback).unwrap();
+            let Val::Px(left) = world.get::<Node>(notice).unwrap().left else {
+                panic!("the notice is placed in pixels");
+            };
+            left
         };
-        assert!(contains(true, Vec2::new(300.0, 40.0)));
-        assert!(contains(true, Vec2::new(40.0, 150.0)));
-        assert!(contains(false, Vec2::new(40.0, 150.0)));
-        assert!(contains(true, Vec2::new(40.0, 210.0)));
-        assert!(contains(true, Vec2::new(500.0, 590.0)));
-        assert!(!contains(true, Vec2::new(400.0, 300.0)));
-        assert!(contains(false, Vec2::new(40.0, 210.0)));
-        assert!(!contains(false, Vec2::new(40.0, 300.0)));
+        let size = world.get::<Window>(window).unwrap().size();
+        assert_eq!(left(&mut world), canvas_rect(size).min.x + 12.0);
+        world
+            .resource_mut::<Simulation>()
+            .app
+            .set_tool(EditTool::Stamp);
+        assert_eq!(left(&mut world), palette_rect(size).max.x + 12.0);
     }
 }

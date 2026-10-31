@@ -9,7 +9,7 @@ The board is a grid of cells, each either alive or dead. Every generation, each 
 
 ## 1. Place a glider
 
-1. Press .keybinding {G} to select the glider stamp. You can also click **Glider** in the pattern palette on the left.
+1. Click **Stamp** (the third drawing tool in the toolbar) or press .keybinding {3}. The pattern palette opens on the left. Click **Glider** in it.
 2. Move the mouse over the board. A translucent preview shows where the glider will land.
 3. Click to place it. Click again elsewhere to place more.
 

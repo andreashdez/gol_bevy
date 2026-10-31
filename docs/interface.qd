@@ -1,41 +1,41 @@
 .docname {The interface}
 .include {docs}
 
-The window has four parts: the toolbar at the top, the pattern palette on the left, the board canvas in the middle, and the status bar at the bottom. All of them are built with native Bevy UI.
+The window has three parts: the toolbar at the top, the board canvas in the middle, and the status bar at the bottom. While you stamp, the pattern palette floats over the left of the canvas. All of them are built with native Bevy UI.
 
 ## Toolbar
 
-The toolbar is a single 64-pixel row at every window size. It has three groups, with a subtle divider before the board edits:
+The toolbar is a single 64-pixel row at every window size. It has four groups, with subtle dividers around the drawing tools:
 
 - **Playback:** Play / Pause, Reset to start, Step, and the speed field, with its **∞** toggle for maximum speed (see [Playback and rules](simulation.qd#speed))
+- **Drawing tools:** **Draw** (a pencil), **Erase** (an eraser), and **Stamp** (a stamp); the active tool has a green outline
 - **Board edits:** **Randomize** (a die), **Clear** (a bin), Undo, and Redo; history buttons are disabled when unavailable
-- **Workspace:** the **Grid**, **Cell age**, and **Pattern palette** toggles, **Import** and **Export** (arrows into and out of a tray), **Settings** (a gear), and **Help** (a question mark), at the right end
+- **Workspace:** the **Grid** and **Cell age** toggles, **Import** and **Export** (arrows into and out of a tray), **Settings** (a gear), and **Help** (a question mark), at the right end
 
-Below 900 pixels wide, the workspace controls move into a menu behind a **More** button (**⋯**) at the right end, where each one is labelled. Choosing an item, clicking outside the menu, or pressing .keybinding {Escape} closes it, and the click that closes it does not draw on the board. From the keyboard, the menu opens with its first item focused. Tab order follows the layout: the toolbar, the tools, the palette,
+Below 1010 pixels wide, the workspace controls move into a menu behind a **More** button (**⋯**) at the right end, where each one is labelled. Choosing an item, clicking outside the menu, or pressing .keybinding {Escape} closes it, and the click that closes it does not draw on the board. From the keyboard, the menu opens with its first item focused. Tab order follows the layout: the toolbar, the palette while it is open,
 the status bar, and last the board, which is outlined when it has keyboard focus.
 Resizing retains the focused control, camera pan, and zoom relative to the fitted board.
 
-Every toolbar button shows an icon instead of a word. Play turns into a pause icon while the simulation runs. The Grid, Cell age, and Pattern palette toggles have a green outline while they are on. Hover over or focus a button to see its name and shortcut. Screen readers announce icon buttons by name, and the toggles as on or off.
+Every toolbar button shows an icon instead of a word. Play turns into a pause icon while the simulation runs. The Grid and Cell age toggles have a green outline while they are on. Hover over or focus a button to see its name and shortcut. Screen readers announce icon buttons by name, and the toggles as on or off.
 
 ## Pattern palette
 
-The palette holds the editing tools and the pattern library, from top to bottom:
+The palette holds the pattern library. It opens over the left of the canvas when you choose the **Stamp** tool or import a pattern, and stays open while you place stamps. From top to bottom, it has:
 
-- the **Draw**, **Erase**, and **Stamp** tools
 - a slim **search field** that filters patterns by name, ignoring case
 - a **stamp preview** of the selected pattern in its current orientation, with **Rotate** and **Flip** buttons, shown while a stamp is active. It appears under the search field, so choosing a stamp never moves the field
 - the number of matching patterns
 - one compact row per pattern, with a wide **thumbnail**, its name, and its size and cell count; built-in and imported patterns are in separate groups
 
-Only the thumbnails scroll, with the mouse wheel or the scrollbar; the tools, search, and stamp preview stay in place. Filtering the library keeps the current stamp selected, even if the filter hides it, and scrolls back to the first match.
+Only the thumbnails scroll, with the mouse wheel or the scrollbar; search and the stamp preview stay in place. Filtering the library keeps the current stamp selected, even if the filter hides it, and scrolls back to the first match.
 
-Press .keybinding {H} or click **Palette** to hide or show the palette. Hiding it gives the board nearly the full width of the window: the tools become a slim rail of icons (a pencil, an eraser, and a stamp) along the left edge, whose tooltips name them. See [Drawing and stamps](editing.qd) for how the tools work.
+Choosing **Draw** or **Erase**, or pressing .keybinding {C}, closes the palette. To reach cells under it while you keep stamping, press .keybinding {H}; press it again or choose **Stamp** to bring the palette back. See [Drawing and stamps](editing.qd) for how the tools work.
 
-Below 900 pixels wide the palette hides itself the same way, so the board keeps most of a narrow window, and it comes back once the window is wide again. Showing or hiding it yourself in between takes precedence, and Settings remember your choice rather than the narrow window's.
+The palette floats over the canvas, so opening or closing it never changes the canvas or the board. Clicks and scrolling over it stay in the palette.
 
 ## Board canvas
 
-The board has its own canvas beside the palette and between the toolbar and status bar. Drawing and stamp previews stay inside it, including on Retina displays.
+The board has its own canvas between the toolbar and status bar. Drawing and stamp previews stay inside it, including on Retina displays.
 
 | Action                         | How                                                       |
 |--------------------------------|-----------------------------------------------------------|
@@ -45,7 +45,7 @@ The board has its own canvas beside the palette and between the toolbar and stat
 
 The canvas leaves only a thin gap around the board, and a fitted board leaves only 1% of the canvas free on each side in the direction it fills, just enough to keep the fixed-edge walls visible. [Fill canvas](settings.qd#fill-canvas), on by default, sizes the board to the canvas so there is no border on either axis.
 
-The board is fitted into the canvas on startup, after a board size change, and when you press .keybinding {V} or click **Fit board**. When the window size changes or the palette is shown or hidden, the view keeps its pan position and its zoom relative to the fitted view.
+The board is fitted into the canvas on startup, after a board size change, and when you press .keybinding {V} or click **Fit board**. When the window size changes, the view keeps its pan position and its zoom relative to the fitted view.
 
 The zoom percentage is relative to **Fit board** (100%). Middle-button panning must start on the canvas and stops when the pointer enters a control or leaves the window.
 

@@ -14,7 +14,6 @@ pub(super) enum Icon {
     Redo,
     Grid,
     CellAge,
-    Palette,
     Gear,
     Help,
     Fit,
@@ -30,7 +29,7 @@ pub(super) enum Icon {
 }
 
 impl Icon {
-    const ALL: [Icon; 20] = [
+    const ALL: [Icon; 19] = [
         Icon::Play,
         Icon::Pause,
         Icon::Step,
@@ -38,7 +37,6 @@ impl Icon {
         Icon::Redo,
         Icon::Grid,
         Icon::CellAge,
-        Icon::Palette,
         Icon::Gear,
         Icon::Help,
         Icon::Fit,
@@ -81,13 +79,6 @@ impl Icon {
             Icon::Redo => undo(vec2(24.0 - p.x, p.y)) - HALF_STROKE,
             Icon::Grid => grid(p) - HALF_STROKE,
             Icon::CellAge => cell_age(p),
-            // Lucide's panel-left: a window with a sidebar.
-            Icon::Palette => {
-                rounded_box(p, vec2(12.0, 12.0), vec2(9.0, 8.0), 2.0)
-                    .abs()
-                    .min(segment(p, vec2(9.0, 4.0), vec2(9.0, 20.0)))
-                    - HALF_STROKE
-            }
             Icon::Gear => gear(p),
             Icon::Help => help(p),
             Icon::Fit => fit(p) - HALF_STROKE,
@@ -424,7 +415,6 @@ mod tests {
             (Icon::Redo, vec2(14.0, 9.0)),
             (Icon::Grid, vec2(4.0 + 16.0 / 3.0, 12.0)),
             (Icon::CellAge, vec2(18.5, 5.5)),
-            (Icon::Palette, vec2(9.0, 12.0)),
             (Icon::Gear, vec2(12.0, 6.5)),
             (Icon::Help, vec2(12.0, 18.5)),
             (Icon::Fit, vec2(20.0, 6.0)),

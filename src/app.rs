@@ -113,6 +113,8 @@ pub struct App {
     library_revision: u64,
     randomize_settings: RandomizeSettings,
     tool: EditTool,
+    /// The palette was hidden by hand, while stamping, to reach the cells under it.
+    palette_hidden: bool,
     undo_history: VecDeque<EditSnapshot>,
     redo_history: VecDeque<EditSnapshot>,
     stroke_active: bool,
@@ -153,6 +155,7 @@ impl App {
             library_revision: 0,
             randomize_settings: RandomizeSettings::default(),
             tool: EditTool::Draw,
+            palette_hidden: false,
             undo_history: VecDeque::new(),
             redo_history: VecDeque::new(),
             stroke_active: false,
@@ -465,6 +468,7 @@ impl App {
         self.library_revision = self.library_revision.wrapping_add(1);
         self.selected_pattern = Some(self.patterns.len() - 1);
         self.tool = EditTool::Stamp;
+        self.palette_hidden = false;
         self.needs_redraw = true;
         Ok(PatternImport { applied_rule })
     }
@@ -547,6 +551,7 @@ impl App {
 
     pub fn clear_selected_pattern(&mut self) {
         self.tool = EditTool::Draw;
+        self.palette_hidden = false;
         if self.selected_pattern.take().is_some() {
             self.needs_redraw = true;
         }
@@ -694,13 +699,28 @@ impl App {
         self.tool
     }
 
+    /// Choosing a tool, even the one in use, shows the palette again if it was
+    /// hidden: it is how a pointer brings the palette back.
     pub fn set_tool(&mut self, tool: EditTool) {
         self.end_stroke();
         self.tool = tool;
+        self.palette_hidden = false;
         if tool == EditTool::Stamp && self.selected_pattern.is_none() && !self.patterns.is_empty() {
             self.selected_pattern = Some(0);
         }
         self.needs_redraw = true;
+    }
+
+    /// The palette shows while stamping, unless hidden by hand.
+    pub fn palette_shown(&self) -> bool {
+        self.tool == EditTool::Stamp && !self.palette_hidden
+    }
+
+    /// Only stamping has a palette to show or hide.
+    pub fn toggle_palette(&mut self) {
+        if self.tool == EditTool::Stamp {
+            self.palette_hidden = !self.palette_hidden;
+        }
     }
 
     pub fn pattern_at(&self, index: usize) -> Option<&Pattern> {
@@ -835,6 +855,45 @@ mod tests {
         stamp_centered(&mut app, PatternKind::Blinker);
         let cells = app.board.snapshot_cells();
         (app, cells)
+    }
+
+    #[test]
+    fn the_palette_follows_the_stamp_tool_and_can_be_hidden_while_stamping() {
+        let mut app = App::new(16, 16);
+        assert!(!app.palette_shown());
+        app.toggle_palette();
+        app.set_tool(EditTool::Stamp);
+        assert!(app.palette_shown(), "there was nothing to hide before");
+        assert!(app.has_selected_pattern());
+
+        // Hidden, it stays hidden through stamping and a change of stamp.
+        app.toggle_palette();
+        assert!(!app.palette_shown());
+        app.place_selected_pattern_at(8, 8);
+        app.rotate_stamp_clockwise();
+        app.select_pattern_index(1);
+        assert!(!app.palette_shown());
+        app.toggle_palette();
+        assert!(app.palette_shown());
+
+        // Choosing Stamp again brings it back, as does importing a pattern.
+        app.toggle_palette();
+        app.set_tool(EditTool::Stamp);
+        assert!(app.palette_shown());
+        app.toggle_palette();
+        app.import_rle_pattern("Dot", "x = 1, y = 1\no!").unwrap();
+        assert!(app.palette_shown());
+
+        // Leaving the tool closes it, and coming back opens it, however it was left.
+        app.toggle_palette();
+        app.clear_selected_pattern();
+        assert!(!app.palette_shown());
+        app.set_tool(EditTool::Stamp);
+        assert!(app.palette_shown());
+        app.toggle_palette();
+        app.set_tool(EditTool::Draw);
+        app.select_pattern_index(0);
+        assert!(app.palette_shown());
     }
 
     #[test]
