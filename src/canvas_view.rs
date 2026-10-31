@@ -2,7 +2,7 @@
 use crate::{
     native_ui_plugin::canvas_rect,
     shared::{
-        BoardSettings, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, MainCamera, UiLayout, UpdateSet,
+        BoardSettings, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, MainCamera, UpdateSet,
         board_size_for_canvas, camera_scale_to_fit_board,
     },
 };
@@ -56,7 +56,6 @@ fn physical_viewport(rect: Rect, scale: f32, target: UVec2) -> Viewport {
 
 fn update_viewport(
     windows: Query<&Window, With<PrimaryWindow>>,
-    layout: Res<UiLayout>,
     mut settings: ResMut<BoardSettings>,
     mut view: ResMut<CanvasView>,
     mut cameras: Query<(&mut Camera, &mut Projection, &mut Transform), With<MainCamera>>,
@@ -71,7 +70,7 @@ fn update_viewport(
     let Ok((mut camera, mut projection, mut transform)) = cameras.single_mut() else {
         return;
     };
-    let rect = canvas_rect(window.size(), &layout);
+    let rect = canvas_rect(window.size());
     let viewport = Some(physical_viewport(rect, window.scale_factor(), physical));
     if camera
         .viewport
@@ -133,30 +132,21 @@ mod tests {
     };
 
     #[test]
-    fn the_largest_board_fits_at_the_minimum_window_size_with_or_without_the_palette() {
+    fn the_largest_board_fits_at_the_minimum_window_size() {
         use crate::shared::{BOARD_SIZE_MAX, CELL_SIZE};
-        let size = Vec2::new(680.0, 420.0);
-        for control_deck_visible in [true, false] {
-            let layout = UiLayout {
-                control_deck_visible,
-                ..Default::default()
-            };
-            let rect = canvas_rect(size, &layout);
-            let fit = camera_scale_to_fit_board(rect.size(), BOARD_SIZE_MAX, BOARD_SIZE_MAX);
-            assert!(rect.min.cmpge(Vec2::ZERO).all());
-            assert!(rect.max.cmple(size).all());
-            assert!(fit * rect.size().min_element() >= BOARD_SIZE_MAX as f32 * CELL_SIZE);
-            for panel in crate::native_ui_plugin::panel_rects(size, &layout) {
-                assert!(rect.intersect(panel).is_empty());
-            }
-        }
+        let size = Vec2::new(800.0, 420.0);
+        let rect = canvas_rect(size);
+        let fit = camera_scale_to_fit_board(rect.size(), BOARD_SIZE_MAX, BOARD_SIZE_MAX);
+        assert!(rect.min.cmpge(Vec2::ZERO).all());
+        assert!(rect.max.cmple(size).all());
+        assert!(fit * rect.size().min_element() >= BOARD_SIZE_MAX as f32 * CELL_SIZE);
     }
 
     #[test]
     fn viewport_rounding_stays_inside_retina_and_fractional_targets() {
         for scale in [1.0, 1.25, 2.0] {
             let target = UVec2::new(1108, 738);
-            let rect = canvas_rect(target.as_vec2() / scale, &UiLayout::default());
+            let rect = canvas_rect(target.as_vec2() / scale);
             let v = physical_viewport(rect, scale, target);
             assert!(v.physical_size.min_element() > 0);
             assert!((v.physical_position + v.physical_size).cmple(target).all());
@@ -172,7 +162,6 @@ mod tests {
     #[test]
     fn layout_resize_preserves_pan_and_relative_zoom_but_board_resize_fits() {
         let mut world = World::new();
-        world.insert_resource(UiLayout::default());
         world.insert_resource(BoardSettings {
             cols: 128,
             rows: 128,
@@ -187,7 +176,6 @@ mod tests {
             o.scale = original_fit * 0.5;
         }
         world.get_mut::<Transform>(camera).unwrap().translation.x = 123.0;
-        world.resource_mut::<UiLayout>().control_deck_visible = false;
         world
             .get_mut::<Window>(window)
             .unwrap()
@@ -213,7 +201,6 @@ mod tests {
     fn fill_canvas_sizes_the_board_to_the_canvas_at_100_percent_and_follows_it() {
         use crate::shared::{CELL_SIZE, FILL_CELL_POINTS};
         let mut world = World::new();
-        world.insert_resource(UiLayout::default());
         world.insert_resource(BoardSettings {
             cols: 64,
             rows: 64,
@@ -224,11 +211,7 @@ mod tests {
         world.spawn((Camera2d, MainCamera));
         let check = |world: &mut World| {
             world.run_system_once(update_viewport).unwrap();
-            let size = canvas_rect(
-                world.get::<Window>(window).unwrap().size(),
-                &UiLayout::default(),
-            )
-            .size();
+            let size = canvas_rect(world.get::<Window>(window).unwrap().size()).size();
             let settings = *world.resource::<BoardSettings>();
             assert_eq!((settings.cols, settings.rows), board_size_for_canvas(size));
             // At 100%, the fit, cells are `FILL_CELL_POINTS` across, leaving less

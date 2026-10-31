@@ -1,7 +1,7 @@
 //! Persisted workspace settings, independent of the UI implementation.
 use crate::{
     board::{BoundaryMode, RandomizeSettings, Rule},
-    shared::{BoardSettings, CellAge, GridOverlay, Simulation, StartupSet, Theme, UiLayout},
+    shared::{BoardSettings, CellAge, GridOverlay, Simulation, StartupSet, Theme},
 };
 use bevy::prelude::*;
 use bevy::{
@@ -15,8 +15,7 @@ const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 pub struct SettingsPlugin;
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<UiLayout>()
-            .init_resource::<BoardSettings>()
+        app.init_resource::<BoardSettings>()
             .init_resource::<Theme>()
             .init_resource::<CellAge>()
             .add_systems(
@@ -45,7 +44,6 @@ struct SettingsPersistence {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct PersistedSettings {
-    palette: bool,
     board: (usize, usize),
     fill_canvas: bool,
     simulation: SimulationSettings,
@@ -62,6 +60,7 @@ struct SimulationSettings {
     boundary: Option<BoundaryMode>,
     tick_rate_ms: Option<u64>,
     max_speed: Option<bool>,
+    pause_when_settled: Option<bool>,
     random_density_percent: Option<u8>,
     random_seed: Option<u64>,
 }
@@ -73,6 +72,7 @@ impl SimulationSettings {
             boundary: Some(sim.app.board.boundary_mode()),
             tick_rate_ms: Some(sim.app.tick_rate_ms()),
             max_speed: Some(sim.app.is_max_speed()),
+            pause_when_settled: Some(sim.app.pause_when_settled()),
             random_density_percent: Some(sim.app.randomize_settings().density_percent()),
             random_seed: sim.app.randomize_settings().seed(),
         }
@@ -96,12 +96,14 @@ impl SimulationSettings {
         if self.max_speed == Some(true) {
             sim.app.set_max_speed();
         }
+        if let Some(pause) = self.pause_when_settled {
+            sim.app.set_pause_when_settled(pause);
+        }
     }
 }
 
 #[derive(Default)]
 struct ParsedSettings {
-    palette: Option<bool>,
     board: Option<(usize, usize)>,
     fill_canvas: Option<bool>,
     simulation: SimulationSettings,
@@ -112,7 +114,6 @@ struct ParsedSettings {
 
 fn setup_settings_persistence(
     mut commands: Commands,
-    mut ui_layout: ResMut<UiLayout>,
     mut board_settings: ResMut<BoardSettings>,
     mut grid: ResMut<GridOverlay>,
     mut cell_age: ResMut<CellAge>,
@@ -134,7 +135,6 @@ fn setup_settings_persistence(
 
     let simulation = load_settings(
         &source,
-        &mut ui_layout,
         &mut board_settings,
         &mut grid,
         &mut cell_age,
@@ -160,7 +160,6 @@ fn apply_simulation_settings(settings: Res<SimulationSettings>, sim: Option<ResM
 /// settings that have to wait for the simulation.
 fn load_settings(
     path: &std::path::Path,
-    ui_layout: &mut UiLayout,
     board_settings: &mut BoardSettings,
     grid: &mut GridOverlay,
     cell_age: &mut CellAge,
@@ -169,9 +168,6 @@ fn load_settings(
     match std::fs::read_to_string(path) {
         Ok(contents) => {
             let settings = parse_settings_from_toml(&contents);
-            if let Some(visible) = settings.palette {
-                ui_layout.control_deck_visible = visible;
-            }
             // Left unset, startup falls back to a board that fills the window.
             if let Some((cols, rows)) = settings.board {
                 board_settings.set(cols, rows);
@@ -208,7 +204,6 @@ fn load_settings(
 /// Resources used to capture a complete settings snapshot.
 #[derive(SystemParam)]
 struct SettingsState<'w> {
-    ui_layout: Res<'w, UiLayout>,
     board_settings: Res<'w, BoardSettings>,
     grid: Res<'w, GridOverlay>,
     cell_age: Res<'w, CellAge>,
@@ -224,7 +219,6 @@ impl SettingsState<'_> {
             return None;
         }
         Some(PersistedSettings {
-            palette: self.ui_layout.control_deck_preferred(),
             board: (self.board_settings.cols, self.board_settings.rows),
             fill_canvas: self.board_settings.fill_canvas,
             simulation: SimulationSettings::of(sim),
@@ -279,8 +273,7 @@ fn persist_settings(
 
     let simulation = current.simulation;
     let mut contents = format!(
-        "palette = {}\nboard_cols = {}\nboard_rows = {}\nfill_canvas = {}\ngrid = {}\ncell_age = {}\ntheme = \"{}\"\n",
-        current.palette,
+        "board_cols = {}\nboard_rows = {}\nfill_canvas = {}\ngrid = {}\ncell_age = {}\ntheme = \"{}\"\n",
         current.board.0,
         current.board.1,
         current.fill_canvas,
@@ -302,6 +295,9 @@ fn persist_settings(
     }
     if let Some(max_speed) = simulation.max_speed {
         contents.push_str(&format!("max_speed = {max_speed}\n"));
+    }
+    if let Some(pause) = simulation.pause_when_settled {
+        contents.push_str(&format!("pause_when_settled = {pause}\n"));
     }
     if let Some(density) = simulation.random_density_percent {
         contents.push_str(&format!("random_density_percent = {density}\n"));
@@ -339,16 +335,6 @@ fn parse_settings_from_toml(contents: &str) -> ParsedSettings {
         let value = unquote(raw_value.trim());
 
         match key.trim() {
-            "palette" => parsed.palette = value.parse::<bool>().ok(),
-            // Older files saved a layout preset; only "minimal" hid the palette.
-            "layout_preset" => {
-                let visible = match value {
-                    "full" | "compact" => Some(true),
-                    "minimal" => Some(false),
-                    _ => None,
-                };
-                parsed.palette = parsed.palette.or(visible);
-            }
             "board_cols" => cols = value.parse::<usize>().ok(),
             "board_rows" => rows = value.parse::<usize>().ok(),
             "fill_canvas" => parsed.fill_canvas = value.parse::<bool>().ok(),
@@ -359,6 +345,9 @@ fn parse_settings_from_toml(contents: &str) -> ParsedSettings {
             "boundary_mode" => parsed.simulation.boundary = boundary_from_storage_str(value),
             "tick_rate_ms" => parsed.simulation.tick_rate_ms = value.parse::<u64>().ok(),
             "max_speed" => parsed.simulation.max_speed = value.parse::<bool>().ok(),
+            "pause_when_settled" => {
+                parsed.simulation.pause_when_settled = value.parse::<bool>().ok()
+            }
             "random_density_percent" => {
                 parsed.simulation.random_density_percent =
                     value.parse::<u8>().ok().filter(|&density| density <= 100)
@@ -481,7 +470,6 @@ mod persistence_tests {
     }
 
     fn populate_world(world: &mut World, path: PathBuf) {
-        world.init_resource::<UiLayout>();
         world.insert_resource(BoardSettings {
             cols: 16,
             rows: 16,
@@ -638,21 +626,12 @@ mod persistence_tests {
             "layout_preset = \"minimal\"\nboard_cols = 512\nboard_rows = 256\n",
         )
         .unwrap();
-        let mut layout = UiLayout::default();
         let mut board = BoardSettings::default();
         let mut grid = GridOverlay { enabled: false };
         let mut cell_age = CellAge::default();
         let mut theme = Theme::default();
         // A file from before the simulation settings were saved leaves them alone.
-        let legacy = load_settings(
-            &path,
-            &mut layout,
-            &mut board,
-            &mut grid,
-            &mut cell_age,
-            &mut theme,
-        );
-        assert!(!layout.control_deck_visible);
+        let legacy = load_settings(&path, &mut board, &mut grid, &mut cell_age, &mut theme);
         assert_eq!((board.cols, board.rows), (512, 256));
         assert!(!board.fill_canvas);
         assert_eq!(legacy, SimulationSettings::default());
@@ -666,15 +645,11 @@ mod persistence_tests {
         app.toggle_boundary_mode();
         app.set_tick_rate_ms(100);
         app.set_max_speed();
+        app.set_pause_when_settled(true);
         app.set_randomize_settings(RandomizeSettings::new(70, Some(u64::MAX)).unwrap());
         let mut world = World::new();
-        layout.control_deck_visible = true;
-        // A palette hidden only for a narrow window is still saved as shown.
-        layout.set_narrow(true);
-        assert!(!layout.control_deck_visible);
         board.set(128, 64);
         board.fill_canvas = true;
-        world.insert_resource(layout);
         world.insert_resource(board);
         world.insert_resource(GridOverlay { enabled: true });
         world.insert_resource(CellAge { enabled: false });
@@ -691,23 +666,17 @@ mod persistence_tests {
         world.resource_mut::<Time<Real>>().advance_by(SAVE_DEBOUNCE);
         world.run_system_once(persist_settings).unwrap();
 
-        let mut loaded_layout = UiLayout {
-            control_deck_visible: false,
-            ..Default::default()
-        };
         let mut loaded_board = BoardSettings::default();
         let mut loaded_grid = GridOverlay { enabled: false };
         let mut loaded_cell_age = CellAge::default();
         let mut loaded_theme = Theme::default();
         let simulation = load_settings(
             &path,
-            &mut loaded_layout,
             &mut loaded_board,
             &mut loaded_grid,
             &mut loaded_cell_age,
             &mut loaded_theme,
         );
-        assert!(loaded_layout.control_deck_visible);
         assert_eq!((loaded_board.cols, loaded_board.rows), (128, 64));
         assert!(loaded_board.fill_canvas);
         assert!(loaded_grid.enabled);
@@ -720,6 +689,7 @@ mod persistence_tests {
         assert_eq!(restored.app.board.boundary_mode(), BoundaryMode::Fixed);
         assert_eq!(restored.app.tick_rate_ms(), 100);
         assert!(restored.app.is_max_speed());
+        assert!(restored.app.pause_when_settled());
         assert_eq!(
             restored.app.randomize_settings(),
             RandomizeSettings::new(70, Some(u64::MAX)).unwrap()
@@ -772,39 +742,24 @@ mod persistence_tests {
     }
 
     #[test]
-    fn reads_palette_visibility_and_board_size() {
+    fn files_from_when_the_palette_was_a_setting_still_load() {
         let parsed = parse_settings_from_toml(
-            "# saved by gol-bevy\npalette = false\nboard_cols = 512\nboard_rows = 256\n",
+            "# saved by gol-bevy\npalette = false\nlayout_preset = \"minimal\"\n\
+             board_cols = 512\nboard_rows = 256\n",
         );
-        assert_eq!(parsed.palette, Some(false));
         assert_eq!(parsed.board, Some((512, 256)));
-    }
-
-    #[test]
-    fn old_layout_presets_only_hide_the_palette_when_minimal() {
-        for (preset, visible) in [("full", true), ("compact", true), ("minimal", false)] {
-            let parsed = parse_settings_from_toml(&format!("layout_preset = \"{preset}\"\n"));
-            assert_eq!(parsed.palette, Some(visible));
-        }
-        // A saved palette setting wins over a leftover preset, in either order.
-        let both = parse_settings_from_toml("palette = true\nlayout_preset = \"minimal\"\n");
-        assert_eq!(both.palette, Some(true));
-        let both = parse_settings_from_toml("layout_preset = \"minimal\"\npalette = true\n");
-        assert_eq!(both.palette, Some(true));
     }
 
     #[test]
     fn a_partial_or_invalid_file_leaves_fields_unset() {
         // Only one of the two dimensions is useless on its own.
-        let half = parse_settings_from_toml("palette = 'false'\nboard_cols = 512\n");
-        assert_eq!(half.palette, Some(false));
+        let half = parse_settings_from_toml("board_cols = 512\n");
         assert_eq!(half.board, None);
 
         let junk = parse_settings_from_toml(
-            "layout_preset = \"nope\"\npalette = maybe\nboard_cols = wide\nrule = \"B9\"\nboundary_mode = \"round\"\n\
+            "board_cols = wide\nrule = \"B9\"\nboundary_mode = \"round\"\n\
              tick_rate_ms = fast\nmax_speed = yes\ngrid = 1\ncell_age = on\ntheme = \"neon\"\n",
         );
-        assert_eq!(junk.palette, None);
         assert_eq!(junk.board, None);
         assert_eq!(junk.simulation, super::SimulationSettings::default());
         assert_eq!(junk.grid, None);

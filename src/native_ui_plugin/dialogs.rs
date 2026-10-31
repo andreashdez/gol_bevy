@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DialogKind {
     Import,
+    Export,
     Settings,
     Help,
     Diagnostics,
@@ -35,12 +36,18 @@ pub(crate) enum DialogKind {
 impl DialogKind {
     fn title(self) -> &'static str {
         match self {
-            Self::Import => "Import / Export and workspaces",
+            Self::Import => "Import",
+            Self::Export => "Export",
             Self::Settings => "Workspace settings",
             Self::Help => "Controls and tips",
             Self::Diagnostics => "Simulation diagnostics",
             Self::ConfirmOpen => "Open workspace?",
         }
+    }
+
+    /// Whether results appear in the dialog, rather than as a notice over the board.
+    fn shows_feedback(self) -> bool {
+        matches!(self, Self::Import | Self::Export | Self::Settings)
     }
 }
 
@@ -193,6 +200,7 @@ fn dialog_action(
         && matches!(
             action,
             Action::Import
+                | Action::Export
                 | Action::Settings
                 | Action::EditRule
                 | Action::Help
@@ -204,6 +212,10 @@ fn dialog_action(
     match action {
         Action::Import => {
             state.mode.dialog = Some(DialogKind::Import);
+            state.drafts.feedback.clear();
+        }
+        Action::Export => {
+            state.mode.dialog = Some(DialogKind::Export);
             state.drafts.feedback.clear();
         }
         Action::Settings | Action::EditRule => {
@@ -524,11 +536,7 @@ fn load_rle(state: &mut DialogState, path: &Path) -> Result<String, String> {
 /// Shows a result in the open dialog, or as a notice over the board when no
 /// dialog shows feedback.
 fn report(state: &mut DialogState, error: bool, feedback: String) {
-    if !matches!(
-        state.mode.dialog,
-        Some(DialogKind::Import | DialogKind::Settings)
-    ) && !feedback.is_empty()
-    {
+    if !state.mode.dialog.is_some_and(DialogKind::shows_feedback) && !feedback.is_empty() {
         state.notice.show(feedback.clone());
     }
     state.drafts.error = error;
@@ -536,7 +544,7 @@ fn report(state: &mut DialogState, error: bool, feedback: String) {
 }
 
 /// Cmd/Ctrl+S saves the workspace and Cmd/Ctrl+O opens one, from the board or
-/// from the Import / Export and Settings dialogs.
+/// from the dialogs that show feedback.
 pub(super) fn file_shortcuts(
     keys: Res<ButtonInput<KeyCode>>,
     typed: Res<crate::shared::TypedKeys>,
@@ -567,12 +575,7 @@ fn file_shortcut(
     let command = keys.any_pressed(modifier)
         || keys.any_just_pressed(modifier)
         || keys.any_just_released(modifier);
-    if !command
-        || !matches!(
-            dialog,
-            None | Some(DialogKind::Import | DialogKind::Settings)
-        )
-    {
+    if !command || dialog.is_some_and(|kind| !kind.shows_feedback()) {
         return None;
     }
     if typed.just_typed("s") {
@@ -995,6 +998,7 @@ fn switch(parent: &mut ChildSpawnerCommands, title: &str, description: &str, act
 /// Slides the knob to the side matching the setting, and fills the track when on.
 pub(super) fn sync_switches(
     view: ViewState,
+    sim: Res<Simulation>,
     mut tracks: Query<
         (
             &SwitchTrack,
@@ -1012,6 +1016,7 @@ pub(super) fn sync_switches(
             Action::Grid => view.grid.enabled,
             Action::CellAge => view.cell_age.enabled,
             Action::FillCanvas => view.board.fill_canvas,
+            Action::PauseWhenSettled => sim.app.pause_when_settled(),
             _ => false,
         };
         set_if_neq!(
@@ -1397,7 +1402,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                 p.spawn(label(kind.title(), 24.0, Token::Ink));
                 p.spawn(Node { flex_grow: 1.0, ..default() });
                 let close_button = button(p, "Close", Action::CloseDialog);
-                if matches!(kind, DialogKind::Help | DialogKind::Diagnostics) { p.commands().entity(close_button).insert(AutoFocus); }
+                if matches!(kind, DialogKind::Export | DialogKind::Help | DialogKind::Diagnostics) { p.commands().entity(close_button).insert(AutoFocus); }
             });
             // The body scrolls with a visible scrollbar; the title and feedback stay put.
             p.spawn(Node { min_height: px(0), column_gap: px(10), ..default() }).with_children(|p| {
@@ -1405,19 +1410,20 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                 flex_grow: 1.0, min_width: px(0), overflow: Overflow::scroll_y(), min_height: px(0), ..default() })).with_children(|p| {
                 match kind {
                     DialogKind::Import => {
-                        heading(p, "Import", "Paste RLE or open an .rle file to add a stamp to your palette. A rule in the header also updates the board rule.");
+                        heading(p, "Pattern", "Paste RLE or open an .rle file to add a stamp to your palette. A rule in the header also updates the board rule.");
                         p.spawn(row()).with_children(|p| { button(p, "Open .rle file…", Action::OpenRle); });
                         field(p, "Pattern name", &drafts.name, Field::Name, false, true);
                         field(p, "RLE source", &drafts.source, Field::Source, true, false);
                         import_preview(p);
                         p.spawn(row()).with_children(|p| { button(p, "Import and select", Action::ImportSubmit); });
-                        heading(p, "Export", "Copy the live cells, cropped to their bounding box, as RLE with the board rule.");
+                        heading(p, "Workspace file", &format!("Open a .golw file to replace your board and imported patterns. It asks first. {}+O opens.", command_key()));
+                        p.spawn(row()).with_children(|p| { button(p, "Open workspace…", Action::OpenWorkspace); });
+                    }
+                    DialogKind::Export => {
+                        heading(p, "Pattern", "Copy the live cells, cropped to their bounding box, as RLE with the board rule.");
                         p.spawn(row()).with_children(|p| { button(p, "Copy board as RLE", Action::ExportRle); });
-                        heading(p, "Workspace files", &format!("Save your board and imported patterns to a .golw file, or open one to replace them. Opening asks first. {}+S saves and {}+O opens.", command_key(), command_key()));
-                        p.spawn(row()).with_children(|p| {
-                            button(p, "Save workspace…", Action::SaveWorkspace);
-                            button(p, "Open workspace…", Action::OpenWorkspace);
-                        });
+                        heading(p, "Workspace file", &format!("Save your board and imported patterns to a .golw file. {}+S saves.", command_key()));
+                        p.spawn(row()).with_children(|p| { button(p, "Save workspace…", Action::SaveWorkspace); });
                     }
                     DialogKind::Settings => {
                         heading(p, "Board", "Resizing keeps the cells that fit and clears undo history.");
@@ -1437,6 +1443,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         });
                         apply_row(p, Action::ApplyRule, |p| inline_field(p, "Rulestring", &drafts.rule, Field::Rule, drafts.rule_first));
                         setting(p, "Edges", |p| segmented(p, &[("Wrap", Action::Edges(BoundaryMode::Wrap)), ("Fixed", Action::Edges(BoundaryMode::Fixed))]));
+                        switch(p, "Pause when settled", "Stop once the board stops changing or starts repeating", Action::PauseWhenSettled);
                         p.spawn(row()).with_children(|p| { button(p, "Reset generation counter", Action::ResetEpoch); });
 
                         heading(p, "Randomization", "Each cell has this chance of being alive. The same density, seed, and board size repeat the same board; leave the seed blank for a fresh board each time.");
@@ -1457,7 +1464,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         p.spawn(label("Choose a stamp or draw cells, then press Space to play. U undoes an edit and pauses; one drag counts as one edit.", 16.0, Token::Ink));
                         p.spawn(label("Tab moves between controls; the board is the last stop, and while it is outlined Space and the other shortcuts apply to it. Escape closes a dialog. Simulation shortcuts are disabled while a dialog is open.", 14.0, Token::Muted));
                         help_columns(p);
-                        p.spawn(label("Import / Export adds RLE patterns to the palette, copies the board as RLE, and saves or opens workspace files.", 14.0, Token::Muted));
+                        p.spawn(label("Import adds RLE patterns to the palette and opens workspace files. Export copies the board as RLE and saves workspace files.", 14.0, Token::Muted));
                     }
                     DialogKind::ConfirmOpen => {
                         let file = drafts.pending_open.as_ref()
@@ -1480,7 +1487,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
             }).id();
             super::palette::scrollbar(p, body);
             });
-            if matches!(kind, DialogKind::Import | DialogKind::Settings) {
+            if kind.shows_feedback() {
                 p.spawn((label("", 14.0, Token::Accent), DialogReadout::Feedback, super::accessibility::feedback_node()));
             }
         });
@@ -1663,8 +1670,45 @@ mod tests {
     }
 
     #[test]
+    fn import_and_export_open_their_own_dialogs_and_return_focus() {
+        let mut world = test_world(DialogKind::Settings);
+        world.resource_mut::<NativeUi>().dialog = None;
+        let close_button = world.spawn(Action::CloseDialog).id();
+        for (action, kind) in [
+            (Action::Import, DialogKind::Import),
+            (Action::Export, DialogKind::Export),
+        ] {
+            let opener = world.spawn(action).id();
+            world.resource_mut::<Drafts>().feedback = "stale".into();
+            world.trigger(Activate { entity: opener });
+            assert_eq!(world.resource::<NativeUi>().dialog, Some(kind));
+            assert!(world.resource::<Drafts>().feedback.is_empty());
+
+            world.trigger(Activate {
+                entity: close_button,
+            });
+            assert_eq!(world.resource::<NativeUi>().dialog, None);
+            assert_eq!(world.resource::<InputFocus>().get(), Some(opener));
+        }
+    }
+
+    #[test]
+    fn file_results_stay_in_the_export_dialog_instead_of_covering_the_board() {
+        let mut world = test_world(DialogKind::Export);
+        let request = save_request(&world);
+        choose(&mut world, request, None);
+        assert_eq!(world.resource::<Drafts>().feedback, "No file was chosen.");
+        assert!(
+            world
+                .resource::<crate::shared::EditFeedback>()
+                .message
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn export_reports_an_empty_board_or_a_missing_clipboard() {
-        let mut world = test_world(DialogKind::Import);
+        let mut world = test_world(DialogKind::Export);
         let export = world.spawn(Action::ExportRle).id();
         world.trigger(Activate { entity: export });
         assert!(world.resource::<Drafts>().error);
@@ -1986,6 +2030,10 @@ mod tests {
             assert_eq!(
                 file_shortcut(&keys, &typed, Some(DialogKind::Import)),
                 Some(FileShortcut::Open)
+            );
+            assert!(
+                file_shortcut(&keys, &typed, Some(DialogKind::Export)).is_some(),
+                "Export shows file results too"
             );
             assert_eq!(file_shortcut(&keys, &typed, Some(DialogKind::Help)), None);
         }

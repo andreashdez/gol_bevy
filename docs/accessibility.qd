@@ -5,12 +5,12 @@ gol-bevy can be used from the keyboard alone, and exposes its interface to scree
 
 ## Keyboard navigation
 
-- .keybinding {Tab} moves between the visible, enabled controls in the order they appear: the toolbar, the Draw, Erase, and Stamp tools, the palette, the status bar, and the board. .keybinding {Shift+Tab} moves back.
+- .keybinding {Tab} moves between the visible, enabled controls in the order they appear: the toolbar, the palette while it is open, the status bar, and the board. .keybinding {Shift+Tab} moves back.
 - The board is the last stop in the tab order. While it has focus, the board shortcuts apply, so .keybinding {Shift+Tab} from the start returns to them.
 - .keybinding {Enter} or .keybinding {Space} activates the focused button.
 - Click the board, or press .keybinding {Esc} in a text field or the slider, to give the keyboard back to the board shortcuts.
 
-Focused controls have a bright outline, and are scrolled into view if the palette or a dialog has to scroll. When you move focus with the keyboard, the board gets the same outline. Hidden controls, such as those in a hidden palette, are left out of the tab order.
+Focused controls have a bright outline, and are scrolled into view if the palette or a dialog has to scroll. When you move focus with the keyboard, the board gets the same outline. Hidden controls, such as those in a closed palette, are left out of the tab order. If the palette closes while it has focus, the keyboard returns to the board.
 
 Clicking a button with the mouse does not leave it focused, so .keybinding {Space} still plays or pauses afterwards. Only keyboard and screen reader focus stays on a button.
 
@@ -22,14 +22,16 @@ The **High contrast** theme in [Settings](settings.qd#theme) uses black panels, 
 
 ## Dialogs
 
-Dialogs are modal: .keybinding {Tab} stays inside the open dialog. The Help and Diagnostics dialogs focus their **Close** button when they open.
+Dialogs are modal: .keybinding {Tab} stays inside the open dialog. The Export, Help, and Diagnostics dialogs focus their **Close** button when they open.
 
 .keybinding {Esc} closes a dialog, and focus returns to the control that opened it. The key that opened Help (.keybinding {/}) or Diagnostics (.keybinding {F3}) closes it again.
 
 ## Screen readers
 
-- Buttons expose their action and, for toggles such as tools, patterns, **Grid**, **Cell age**, and **Palette**, whether they are selected. The switches in Settings are announced as switches, and the **Wrap** / **Fixed** and theme choices say which one is selected.
-- Icon buttons are announced by name: **Play** as *Play* or *Pause*, then **Step**, **Undo**, **Redo**, **Grid**, **Cell age**, **Pattern palette**, **Settings**, and **Help**.
+- Buttons expose their action and, for toggles such as tools, patterns, **Grid**, and **Cell age**, whether they are selected. The switches in Settings are announced as switches, and the **Wrap** / **Fixed** and theme choices say which one is selected.
+- Icon buttons are announced by name: **Play** as *Play* or *Pause*, then **Reset to start**, **Step**, **Draw**, **Erase**, **Stamp**, **Randomize**, **Clear**, **Undo**, **Redo**, **Grid**, **Cell age**, **Import**, **Export**, **Settings**, and **Help**.
+- The status bar's rule and edges buttons include their current value in their names, such as *Rule: B3/S23* and *Edges: Wrap*.
+- The population line and the minimap are extras: the status bar's numbers and the arrow keys cover the same ground without them. The minimap is announced as *Board overview*, and only the pointer can use it.
 - Text fields expose their name and value.
 - The density slider in Settings exposes its value and supports increment and decrement actions.
 - Validation messages, such as a rejected board size or an import error, are announced politely when they appear.

@@ -1,6 +1,7 @@
 use crate::{
     board::{self, RandomizeSettings, Rule},
     patterns::{Pattern, PatternParseError},
+    settle::{SettleWatch, Settled},
 };
 use std::collections::VecDeque;
 
@@ -34,6 +35,9 @@ struct EditSnapshot {
     epoch: usize,
     rule: Rule,
 }
+
+/// Generations of population kept for the status bar's line.
+pub const POPULATION_HISTORY: usize = 256;
 
 const EDIT_HISTORY_MAX: usize = 32;
 const EDIT_HISTORY_BYTE_BUDGET: usize = 16 * 1024 * 1024;
@@ -109,12 +113,22 @@ pub struct App {
     library_revision: u64,
     randomize_settings: RandomizeSettings,
     tool: EditTool,
+    /// The palette was hidden by hand, while stamping, to reach the cells under it.
+    palette_hidden: bool,
     undo_history: VecDeque<EditSnapshot>,
     redo_history: VecDeque<EditSnapshot>,
     stroke_active: bool,
     stroke_saved: bool,
     /// The latest generation, with the live cells before and after it.
     last_step: Option<(usize, usize, usize)>,
+    /// The board before the first generation since the latest edit.
+    run_start: Option<EditSnapshot>,
+    settle: SettleWatch,
+    pause_when_settled: bool,
+    /// Why playback paused itself, until the UI has said so.
+    auto_paused: Option<Settled>,
+    /// Live cells per generation of this run, oldest first.
+    population_history: VecDeque<usize>,
 
     pub board: board::Board,
 }
@@ -141,11 +155,17 @@ impl App {
             library_revision: 0,
             randomize_settings: RandomizeSettings::default(),
             tool: EditTool::Draw,
+            palette_hidden: false,
             undo_history: VecDeque::new(),
             redo_history: VecDeque::new(),
             stroke_active: false,
             stroke_saved: false,
             last_step: None,
+            run_start: None,
+            settle: SettleWatch::default(),
+            pause_when_settled: false,
+            auto_paused: None,
+            population_history: VecDeque::with_capacity(POPULATION_HISTORY),
             board,
         }
     }
@@ -217,10 +237,14 @@ impl App {
 
     pub fn toggle_boundary_mode(&mut self) {
         self.board.toggle_boundary_mode();
+        self.settle.reset();
         self.needs_redraw = true;
     }
 
     pub fn set_boundary_mode(&mut self, mode: crate::board::BoundaryMode) {
+        if mode != self.board.boundary_mode() {
+            self.settle.reset();
+        }
         self.board.set_boundary_mode(mode);
         self.needs_redraw = true;
     }
@@ -268,12 +292,69 @@ impl App {
 
     pub fn increment_epoch(&mut self) {
         if let Some(res) = self.epoch.checked_add(1) {
+            if self.run_start.is_none() {
+                self.run_start = Some(self.current_snapshot());
+            }
             self.epoch = res;
             let before = self.board.live_cells_count();
+            let fingerprint = self.board.fingerprint();
             self.board.step();
             self.last_step = Some((res, before, self.board.live_cells_count()));
+            if self.population_history.is_empty() {
+                self.population_history.push_back(before);
+            }
+            if self.population_history.len() == POPULATION_HISTORY {
+                self.population_history.pop_front();
+            }
+            self.population_history
+                .push_back(self.board.live_cells_count());
+            let settled = self
+                .settle
+                .record(fingerprint, self.board.fingerprint(), res);
+            if self.running && self.pause_when_settled && settled.is_some() {
+                self.running = false;
+                self.auto_paused = settled;
+            }
             self.needs_redraw = true;
         }
+    }
+
+    /// Live cells over the latest generations of this run, oldest first.
+    pub fn population_history(&self) -> &VecDeque<usize> {
+        &self.population_history
+    }
+
+    /// Set once the board repeats an earlier generation, until it is edited.
+    pub fn settled(&self) -> Option<Settled> {
+        self.settle.settled()
+    }
+
+    pub fn pause_when_settled(&self) -> bool {
+        self.pause_when_settled
+    }
+
+    pub fn set_pause_when_settled(&mut self, pause: bool) {
+        self.pause_when_settled = pause;
+    }
+
+    /// What just paused playback, once, so the UI can explain it.
+    pub fn take_auto_paused(&mut self) -> Option<Settled> {
+        self.auto_paused.take()
+    }
+
+    pub fn can_reset_to_start(&self) -> bool {
+        self.run_start.is_some()
+    }
+
+    /// Returns to the board before the run, as an undoable edit, and pauses.
+    pub fn reset_to_start(&mut self) -> bool {
+        self.end_stroke();
+        let Some(start) = self.run_start.take() else {
+            return false;
+        };
+        self.save_edit();
+        self.restore(start);
+        true
     }
 
     /// How the latest generation changed the live cell count. `None` once an
@@ -287,6 +368,7 @@ impl App {
     pub fn reset_epoch(&mut self) {
         if self.epoch != 0 {
             self.epoch = 0;
+            self.settle.renumber();
             self.needs_redraw = true;
         }
     }
@@ -344,6 +426,7 @@ impl App {
             // Snapshots hold cells in the old layout, so they no longer fit.
             self.undo_history.clear();
             self.redo_history.clear();
+            self.forget_run();
             self.end_stroke();
             self.needs_redraw = true;
         }
@@ -385,6 +468,7 @@ impl App {
         self.library_revision = self.library_revision.wrapping_add(1);
         self.selected_pattern = Some(self.patterns.len() - 1);
         self.tool = EditTool::Stamp;
+        self.palette_hidden = false;
         self.needs_redraw = true;
         Ok(PatternImport { applied_rule })
     }
@@ -439,6 +523,7 @@ impl App {
         }
         restored.patterns.extend(decoded.patterns);
         restored.library_revision = self.library_revision.wrapping_add(1);
+        restored.pause_when_settled = self.pause_when_settled;
         *self = restored;
     }
 
@@ -466,6 +551,7 @@ impl App {
 
     pub fn clear_selected_pattern(&mut self) {
         self.tool = EditTool::Draw;
+        self.palette_hidden = false;
         if self.selected_pattern.take().is_some() {
             self.needs_redraw = true;
         }
@@ -613,13 +699,28 @@ impl App {
         self.tool
     }
 
+    /// Choosing a tool, even the one in use, shows the palette again if it was
+    /// hidden: it is how a pointer brings the palette back.
     pub fn set_tool(&mut self, tool: EditTool) {
         self.end_stroke();
         self.tool = tool;
+        self.palette_hidden = false;
         if tool == EditTool::Stamp && self.selected_pattern.is_none() && !self.patterns.is_empty() {
             self.selected_pattern = Some(0);
         }
         self.needs_redraw = true;
+    }
+
+    /// The palette shows while stamping, unless hidden by hand.
+    pub fn palette_shown(&self) -> bool {
+        self.tool == EditTool::Stamp && !self.palette_hidden
+    }
+
+    /// Only stamping has a palette to show or hide.
+    pub fn toggle_palette(&mut self) {
+        if self.tool == EditTool::Stamp {
+            self.palette_hidden = !self.palette_hidden;
+        }
     }
 
     pub fn pattern_at(&self, index: usize) -> Option<&Pattern> {
@@ -635,7 +736,16 @@ impl App {
         self.stroke_saved = false;
     }
 
+    /// The board no longer follows from the run so far.
+    fn forget_run(&mut self) {
+        self.run_start = None;
+        self.settle.reset();
+        self.population_history.clear();
+    }
+
     fn save_edit(&mut self) {
+        // Ahead of the stroke check: a stroke can span generations.
+        self.forget_run();
         if self.stroke_active && self.stroke_saved {
             return;
         }
@@ -659,6 +769,7 @@ impl App {
         self.board.restore_cells(snapshot.cells);
         self.epoch = snapshot.epoch;
         self.running = false;
+        self.forget_run();
         self.needs_redraw = true;
     }
 
@@ -736,6 +847,298 @@ mod tests {
         app.select_pattern(pattern);
         let (cols, rows) = app.board.size();
         app.place_selected_pattern_at(cols / 2, rows / 2);
+    }
+
+    /// A board with a blinker, and its cells before any generation has run.
+    fn blinker_board() -> (App, Vec<u8>) {
+        let mut app = App::new(16, 16);
+        stamp_centered(&mut app, PatternKind::Blinker);
+        let cells = app.board.snapshot_cells();
+        (app, cells)
+    }
+
+    #[test]
+    fn the_palette_follows_the_stamp_tool_and_can_be_hidden_while_stamping() {
+        let mut app = App::new(16, 16);
+        assert!(!app.palette_shown());
+        app.toggle_palette();
+        app.set_tool(EditTool::Stamp);
+        assert!(app.palette_shown(), "there was nothing to hide before");
+        assert!(app.has_selected_pattern());
+
+        // Hidden, it stays hidden through stamping and a change of stamp.
+        app.toggle_palette();
+        assert!(!app.palette_shown());
+        app.place_selected_pattern_at(8, 8);
+        app.rotate_stamp_clockwise();
+        app.select_pattern_index(1);
+        assert!(!app.palette_shown());
+        app.toggle_palette();
+        assert!(app.palette_shown());
+
+        // Choosing Stamp again brings it back, as does importing a pattern.
+        app.toggle_palette();
+        app.set_tool(EditTool::Stamp);
+        assert!(app.palette_shown());
+        app.toggle_palette();
+        app.import_rle_pattern("Dot", "x = 1, y = 1\no!").unwrap();
+        assert!(app.palette_shown());
+
+        // Leaving the tool closes it, and coming back opens it, however it was left.
+        app.toggle_palette();
+        app.clear_selected_pattern();
+        assert!(!app.palette_shown());
+        app.set_tool(EditTool::Stamp);
+        assert!(app.palette_shown());
+        app.toggle_palette();
+        app.set_tool(EditTool::Draw);
+        app.select_pattern_index(0);
+        assert!(app.palette_shown());
+    }
+
+    #[test]
+    fn reset_returns_to_the_board_before_the_first_generation() {
+        let (mut app, drawn) = blinker_board();
+        assert!(!app.can_reset_to_start());
+        assert!(!app.reset_to_start());
+
+        // Pausing and stepping stay part of the same run.
+        app.toggle_running();
+        app.increment_epoch();
+        app.toggle_running();
+        app.increment_epoch();
+        app.increment_epoch();
+        assert!(app.can_reset_to_start());
+        app.toggle_running();
+
+        assert!(app.reset_to_start());
+        assert_eq!(app.board.snapshot_cells(), drawn);
+        assert_eq!(app.epoch, 0);
+        assert!(!app.is_running());
+        assert!(!app.can_reset_to_start());
+    }
+
+    #[test]
+    fn population_history_starts_with_the_run_and_keeps_the_latest_generations() {
+        let (mut app, _) = blinker_board();
+        assert!(app.population_history().is_empty());
+        app.increment_epoch();
+        assert_eq!(app.population_history().len(), 2);
+
+        for _ in 0..POPULATION_HISTORY * 2 {
+            app.increment_epoch();
+        }
+        assert_eq!(app.population_history().len(), POPULATION_HISTORY);
+        assert_eq!(
+            app.population_history().back(),
+            Some(&app.board.live_cells_count())
+        );
+
+        app.populate_board(1, 1);
+        assert!(app.population_history().is_empty());
+        app.increment_epoch();
+        assert!(app.reset_to_start());
+        assert!(app.population_history().is_empty());
+    }
+
+    #[test]
+    fn an_edit_moves_the_start_of_the_run_even_within_a_stroke() {
+        let (mut app, _) = blinker_board();
+        app.increment_epoch();
+        app.begin_stroke();
+        app.populate_board(1, 1);
+        assert!(!app.can_reset_to_start());
+        app.increment_epoch();
+        assert!(app.can_reset_to_start());
+        // Later cells of the same stroke are one undo edit, but still edits.
+        app.populate_board(2, 1);
+        assert!(!app.can_reset_to_start());
+        app.end_stroke();
+        let edited = app.board.snapshot_cells();
+
+        app.increment_epoch();
+        assert!(app.reset_to_start());
+        assert_eq!(app.board.snapshot_cells(), edited);
+        assert_eq!(app.epoch, 2);
+    }
+
+    #[test]
+    fn reset_is_an_undoable_edit() {
+        let (mut app, drawn) = blinker_board();
+        for _ in 0..3 {
+            app.increment_epoch();
+        }
+        let ran = app.board.snapshot_cells();
+        assert!(app.reset_to_start());
+
+        assert!(app.undo());
+        assert_eq!(app.board.snapshot_cells(), ran);
+        assert_eq!(app.epoch, 3);
+        assert!(app.redo());
+        assert_eq!(app.board.snapshot_cells(), drawn);
+        assert_eq!(app.epoch, 0);
+    }
+
+    #[test]
+    fn undo_drops_the_start_of_the_run() {
+        let (mut app, _) = blinker_board();
+        app.increment_epoch();
+        assert!(app.undo());
+        assert!(!app.can_reset_to_start());
+    }
+
+    #[test]
+    fn resizing_drops_the_start_of_the_run() {
+        let (mut app, _) = blinker_board();
+        app.increment_epoch();
+        app.resize_board(32, 32);
+        assert!(!app.can_reset_to_start());
+    }
+
+    #[test]
+    fn a_still_life_settles_on_the_first_generation_and_an_oscillator_on_its_period() {
+        let mut app = App::new(16, 16);
+        for (col, row) in [(4, 4), (5, 4), (4, 5), (5, 5)] {
+            app.populate_board(col, row);
+        }
+        assert_eq!(app.settled(), None);
+        app.increment_epoch();
+        let settled = app.settled().unwrap();
+        assert_eq!((settled.since, settled.period), (0, 1));
+
+        let (mut app, _) = blinker_board();
+        app.increment_epoch();
+        assert_eq!(app.settled(), None);
+        app.increment_epoch();
+        let settled = app.settled().unwrap();
+        assert_eq!((settled.since, settled.period), (0, 2));
+    }
+
+    #[test]
+    fn a_glider_only_settles_once_it_crashes_into_a_fixed_corner() {
+        let mut app = App::new(32, 32);
+        app.set_boundary_mode(crate::board::BoundaryMode::Fixed);
+        stamp_centered(&mut app, PatternKind::Glider);
+        let mut generation = 0;
+        while app.settled().is_none() {
+            assert!(generation < 200, "the glider should end in the corner");
+            app.increment_epoch();
+            generation += 1;
+        }
+        let settled = app.settled().unwrap();
+        assert_eq!(settled.period, 1);
+        assert!(settled.since > 20);
+    }
+
+    #[test]
+    fn anything_that_changes_the_evolution_clears_settled() {
+        let settled = || {
+            let (mut app, _) = blinker_board();
+            app.increment_epoch();
+            app.increment_epoch();
+            assert!(app.settled().is_some());
+            app
+        };
+        let mut app = settled();
+        app.populate_board(1, 1);
+        assert_eq!(app.settled(), None);
+
+        let mut app = settled();
+        app.undo();
+        assert_eq!(app.settled(), None);
+
+        let mut app = settled();
+        app.reset_to_start();
+        assert_eq!(app.settled(), None);
+
+        let mut app = settled();
+        app.set_rule(Rule::parse("B36/S23").unwrap());
+        assert_eq!(app.settled(), None);
+
+        let mut app = settled();
+        app.toggle_boundary_mode();
+        assert_eq!(app.settled(), None);
+
+        let mut app = settled();
+        app.resize_board(32, 32);
+        assert_eq!(app.settled(), None);
+
+        // Choosing the mode already in use changes nothing.
+        let mut app = settled();
+        app.set_boundary_mode(app.board.boundary_mode());
+        assert!(app.settled().is_some());
+    }
+
+    #[test]
+    fn an_edit_between_generations_does_not_read_as_a_repeat() {
+        let (mut app, _) = blinker_board();
+        app.increment_epoch();
+        app.populate_board(1, 1);
+        app.increment_epoch();
+        assert_eq!(app.settled(), None);
+    }
+
+    #[test]
+    fn resetting_the_counter_renumbers_a_settled_board() {
+        let (mut app, _) = blinker_board();
+        for _ in 0..5 {
+            app.increment_epoch();
+        }
+        app.reset_epoch();
+        assert_eq!(app.settled().map(|settled| settled.since), Some(0));
+    }
+
+    #[test]
+    fn playback_pauses_once_when_settled_if_asked() {
+        let (mut app, _) = blinker_board();
+        app.set_pause_when_settled(true);
+        app.toggle_running();
+        app.increment_epoch();
+        assert!(app.is_running());
+        assert_eq!(app.take_auto_paused(), None);
+        app.increment_epoch();
+        assert!(!app.is_running());
+        assert_eq!(app.take_auto_paused(), app.settled());
+        assert_eq!(app.take_auto_paused(), None);
+
+        // Playing on from there is a choice, so it is not interrupted again.
+        app.toggle_running();
+        app.increment_epoch();
+        assert!(app.is_running());
+        assert_eq!(app.take_auto_paused(), None);
+    }
+
+    #[test]
+    fn stepping_to_a_settled_board_does_not_report_a_pause() {
+        let (mut app, _) = blinker_board();
+        app.set_pause_when_settled(true);
+        app.increment_epoch();
+        app.increment_epoch();
+        assert!(app.settled().is_some());
+        assert_eq!(app.take_auto_paused(), None);
+    }
+
+    #[test]
+    fn playback_keeps_running_past_a_settled_board_by_default() {
+        let (mut app, _) = blinker_board();
+        app.toggle_running();
+        app.increment_epoch();
+        app.increment_epoch();
+        assert!(app.settled().is_some());
+        assert!(app.is_running());
+    }
+
+    #[test]
+    fn opening_a_workspace_keeps_the_pause_preference_but_not_the_run() {
+        let (mut app, _) = blinker_board();
+        app.set_pause_when_settled(true);
+        let workspace = app.workspace().unwrap();
+        app.increment_epoch();
+        app.increment_epoch();
+        app.restore_workspace(workspace).unwrap();
+        assert!(app.pause_when_settled());
+        assert!(!app.can_reset_to_start());
+        assert_eq!(app.settled(), None);
     }
 
     #[test]

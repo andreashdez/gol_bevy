@@ -7,6 +7,7 @@ pub mod native_ui_plugin;
 pub mod patterns;
 pub mod render_plugin;
 pub mod settings_plugin;
+pub mod settle;
 pub mod shared;
 pub mod simulation_plugin;
 #[cfg(test)]

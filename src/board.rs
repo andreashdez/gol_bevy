@@ -229,6 +229,9 @@ pub struct Board {
     band_scratch: Vec<BandScratch>,
     /// running count of live cells, kept in step with every mutation
     live_count: usize,
+    /// XOR of [`cell_key`] for every flip made by stepping, so generations of one
+    /// run match exactly when their cells do. Edits leave it alone.
+    fingerprint: u64,
     /// board width in cells
     cols: usize,
     /// board height in cells
@@ -270,6 +273,7 @@ impl Board {
             frontier_scratch: Vec::new(),
             band_scratch: Vec::new(),
             live_count: 0,
+            fingerprint: 0,
             cols,
             rows,
             boundary_mode: BoundaryMode::Wrap,
@@ -461,7 +465,7 @@ impl Board {
                     dirty,
                 }
             });
-        let live_count = if band_count == 1 {
+        let (live_count, flips) = if band_count == 1 {
             let band = work.next().expect("a non-empty board has a band");
             view.step_band(band)
         } else {
@@ -472,7 +476,9 @@ impl Board {
                     }
                 })
                 .into_iter()
-                .sum()
+                .fold((0, 0), |(live, flips), (band_live, band_flips)| {
+                    (live + band_live, flips ^ band_flips)
+                })
         };
 
         let changed_count = next_frontier.len()
@@ -508,6 +514,7 @@ impl Board {
 
         std::mem::swap(&mut self.current, &mut self.future);
         self.live_count = live_count;
+        self.fingerprint ^= flips;
         changed_count > 0
     }
 
@@ -569,6 +576,7 @@ impl Board {
             } else {
                 -1
             };
+            self.fingerprint ^= cell_key(idx);
             self.mark_dirty_cell(idx);
         }
         self.live_count = self.live_count.saturating_add_signed(live_delta);
@@ -634,6 +642,29 @@ impl Board {
     /// Liveness of every cell, in index order (`row * cols + col`).
     pub fn alive_cells(&self) -> impl Iterator<Item = bool> + '_ {
         self.current.iter().map(|&cell| cell == CELL_ALIVE)
+    }
+
+    /// Counts the live cells under each block of a `width` × `height` grid over
+    /// the board, row 0 first, into `counts`. Blocks are at least a cell across,
+    /// so the grid may not be larger than the board.
+    pub fn overview(&self, width: usize, height: usize, counts: &mut [u32]) {
+        assert!(width <= self.cols && height <= self.rows && width > 0 && height > 0);
+        assert_eq!(counts.len(), width * height);
+        counts.fill(0);
+        for (row, cells) in self.current.chunks_exact(self.cols).enumerate() {
+            let line = &mut counts[row * height / self.rows * width..][..width];
+            for (block, count) in line.iter_mut().enumerate() {
+                let span = block * self.cols / width..(block + 1) * self.cols / width;
+                *count += count_live(&cells[span]) as u32;
+            }
+        }
+    }
+
+    /// Identifies the current generation among others of the same run: stepping
+    /// back to the same cells restores it. Only comparable while nothing but
+    /// stepping changes the board.
+    pub fn fingerprint(&self) -> u64 {
+        self.fingerprint
     }
 
     pub fn live_cells_count(&self) -> usize {
@@ -958,8 +989,8 @@ impl CellsView<'_> {
     }
 
     /// Steps one band and marks the cells in it that flipped dirty. Returns how
-    /// many cells in the band are alive.
-    fn step_band(self, band: BandWork<'_>) -> usize {
+    /// many cells in the band are alive, and the fingerprint of its flips.
+    fn step_band(self, band: BandWork<'_>) -> (usize, u64) {
         let BandWork {
             first_row,
             out,
@@ -980,8 +1011,20 @@ impl CellsView<'_> {
                 }
             }
         }
-        live
+        let flips = changed[recorded..]
+            .iter()
+            .fold(0, |flips, &idx| flips ^ cell_key(idx));
+        (live, flips)
     }
+}
+
+/// A well-mixed key per cell (SplitMix64), so that no set of flips is likely to
+/// cancel out unless each cell flipped back.
+fn cell_key(idx: usize) -> u64 {
+    let value = (idx as u64 + 1).wrapping_mul(0x9E3779B97F4A7C15);
+    let value = (value ^ (value >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+    let value = (value ^ (value >> 27)).wrapping_mul(0x94D049BB133111EB);
+    value ^ (value >> 31)
 }
 
 /// One band's share of a dense scan: its rows of the next generation and of the
@@ -1521,6 +1564,7 @@ mod tests {
                                 );
                                 assert_eq!(banded.current, single.current, "{context}");
                                 assert_eq!(banded.live_count, single.live_count, "{context}");
+                                assert_eq!(banded.fingerprint, single.fingerprint, "{context}");
                                 assert_eq!(
                                     banded.frontier_cells, single.frontier_cells,
                                     "{context}"
@@ -1618,9 +1662,41 @@ mod tests {
                         frontier_board.current, dense_board.current,
                         "diverged at generation {generation} ({mode:?}, {live_percent}% live)"
                     );
+                    assert_eq!(frontier_board.fingerprint(), dense_board.fingerprint());
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_overview_counts_every_live_cell_in_its_block() {
+        let mut board = Board::new(10, 7);
+        for (col, row) in [(0, 0), (9, 0), (9, 6), (4, 3), (5, 3)] {
+            board.populate(col, row);
+        }
+        let mut counts = vec![0; 5 * 3];
+        board.overview(5, 3, &mut counts);
+        assert_eq!(counts.iter().sum::<u32>(), 5);
+        assert_eq!((counts[0], counts[4], counts[14]), (1, 1, 1));
+
+        // At full size, a block is a cell.
+        let mut counts = vec![0; 10 * 7];
+        board.overview(10, 7, &mut counts);
+        assert_eq!(counts[3 * 10 + 4], 1);
+        assert_eq!(counts.iter().sum::<u32>(), 5);
+    }
+
+    #[test]
+    fn the_fingerprint_returns_with_the_cells() {
+        let mut board = Board::new(8, 8);
+        for col in 3..6 {
+            board.populate(col, 4);
+        }
+        let start = board.fingerprint();
+        board.step();
+        assert_ne!(board.fingerprint(), start);
+        board.step();
+        assert_eq!(board.fingerprint(), start);
     }
 
     #[test]

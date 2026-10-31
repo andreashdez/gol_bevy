@@ -6,7 +6,7 @@ gol-bevy reads and writes patterns in **RLE** (run length encoded) format, the c
 ## Importing a pattern
 
 1. Copy a pattern in RLE format, for example from the LifeWiki or Golly.
-2. Click **Import / Export** in the toolbar.
+2. Click **Import** in the toolbar, the arrow pointing into a tray.
 3. Optionally enter a **Pattern name**. Without one, the pattern is named *Imported* followed by a number.
 4. Paste the RLE into **RLE source**, or click **Open .rle file…** to load one. A loaded file's `#N` line, or else its file name, fills in **Pattern name**. Files over 8 MiB are refused.
 5. Check the preview under the source: a thumbnail with the pattern's size, cell count, and any rule in its header. It updates as you type, and says why when the RLE cannot be read.
@@ -22,7 +22,7 @@ If the RLE cannot be read, the dialog shows why, for example `Could not import: 
 
 ## Exporting the board
 
-In the **Import / Export** dialog, click **Copy board as RLE**. The clipboard receives:
+Click **Export** in the toolbar, the arrow pointing out of a tray, then **Copy board as RLE**. The clipboard receives:
 
 - only the live cells, cropped to their bounding box
 - the board's rule in the header

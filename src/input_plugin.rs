@@ -4,12 +4,12 @@ use crate::{
     shared::{
         BINDING_CLEAR, BINDING_CLEAR_STAMP, BINDING_FLIP_STAMP, BINDING_PAN_DOWN, BINDING_PAN_LEFT,
         BINDING_PAN_RIGHT, BINDING_PAN_UP, BINDING_QUIT, BINDING_RANDOMIZE, BINDING_RESET_CAMERA,
-        BINDING_RESET_EPOCH, BINDING_ROTATE_STAMP, BINDING_RUN_PAUSE, BINDING_SLOW_DOWN,
-        BINDING_SPEED_UP, BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_CONTROL_DECK,
-        BINDING_TOGGLE_DIAGNOSTICS, BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, CAMERA_PAN_SPEED,
-        CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay, EditFeedback,
-        GridOverlay, MainCamera, Simulation, TOOL_SHORTCUTS, TypedKeys, UiLayout, UpdateSet,
-        collect_typed_keys, world_to_cell,
+        BINDING_RESET_EPOCH, BINDING_RESET_TO_START, BINDING_ROTATE_STAMP, BINDING_RUN_PAUSE,
+        BINDING_SLOW_DOWN, BINDING_SPEED_UP, BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE,
+        BINDING_TOGGLE_DIAGNOSTICS, BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP,
+        BINDING_TOGGLE_PALETTE, CAMERA_PAN_SPEED, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN,
+        CAMERA_ZOOM_STEP, DiagnosticsOverlay, EditFeedback, GridOverlay, MainCamera, Simulation,
+        TOOL_SHORTCUTS, TypedKeys, UpdateSet, collect_typed_keys, world_to_cell,
     },
     ui_input::{UiInputCapture, canvas_keyboard_available},
 };
@@ -75,7 +75,6 @@ fn handle_keyboard(
     mut sim: ResMut<Simulation>,
     mut diagnostics: ResMut<DiagnosticsOverlay>,
     mut grid_overlay: ResMut<GridOverlay>,
-    mut ui_layout: ResMut<UiLayout>,
     mut feedback: ResMut<EditFeedback>,
 ) {
     // Fast chords can press and release the modifier within one frame.
@@ -102,6 +101,9 @@ fn handle_keyboard(
     }
     if BINDING_STEP.just_pressed(&keys, &typed) {
         sim.app.increment_epoch();
+    }
+    if BINDING_RESET_TO_START.just_pressed(&keys, &typed) {
+        feedback.reset_to_start(&mut sim.app);
     }
     if BINDING_RANDOMIZE.just_pressed(&keys, &typed) {
         feedback.randomize(&mut sim.app);
@@ -144,8 +146,8 @@ fn handle_keyboard(
     if BINDING_TOGGLE_BOUNDARY_MODE.just_pressed(&keys, &typed) {
         sim.app.toggle_boundary_mode();
     }
-    if BINDING_TOGGLE_CONTROL_DECK.just_pressed(&keys, &typed) {
-        ui_layout.toggle_control_deck();
+    if BINDING_TOGGLE_PALETTE.just_pressed(&keys, &typed) {
+        sim.app.toggle_palette();
     }
     if BINDING_QUIT.just_pressed(&keys, &typed) {
         sim.app.quit();
@@ -295,7 +297,6 @@ fn handle_camera_drag(
     buttons: Res<ButtonInput<MouseButton>>,
     capture: Res<UiInputCapture>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    layout: Res<UiLayout>,
     mut cameras: Query<(&mut Transform, &Projection), With<MainCamera>>,
     mut previous: Local<Option<Vec2>>,
 ) {
@@ -306,7 +307,7 @@ fn handle_camera_drag(
         window.focused
             && !capture.pointer
             && buttons.pressed(MouseButton::Middle)
-            && crate::native_ui_plugin::canvas_rect(window.size(), &layout).contains(position)
+            && crate::native_ui_plugin::canvas_rect(window.size()).contains(position)
     });
     let Some(cursor) = cursor else {
         *previous = None;
@@ -349,7 +350,6 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<ButtonInput<MouseButton>>();
         world.init_resource::<UiInputCapture>();
-        world.init_resource::<UiLayout>();
         let mut window = Window {
             focused: true,
             ..default()
@@ -474,7 +474,6 @@ mod tests {
             world.insert_resource(typed);
             world.insert_resource(DiagnosticsOverlay { enabled: false });
             world.insert_resource(GridOverlay { enabled: false });
-            world.insert_resource(UiLayout::default());
             world.init_resource::<EditFeedback>();
             world.run_system_once(handle_keyboard).unwrap();
             let app = &world.resource::<Simulation>().app;
@@ -515,7 +514,6 @@ mod tests {
         app.insert_resource(Simulation::new(sim))
             .insert_resource(DiagnosticsOverlay { enabled: false })
             .insert_resource(GridOverlay { enabled: false })
-            .insert_resource(UiLayout::default())
             .init_resource::<EditFeedback>();
         let help = |app: &App| app.world().resource::<Simulation>().app.is_help_visible();
 

@@ -13,6 +13,7 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 |-------------------------|------------------------------|
 | .keybinding {Space}     | Run or pause                 |
 | .keybinding {J}         | Step one generation          |
+| .keybinding {B}         | Reset to start               |
 | .keybinding {R}         | Randomize the board          |
 | .keybinding {X}         | Clear the board              |
 | .keybinding {0}         | Reset the generation counter |
@@ -50,7 +51,7 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 | .keybinding {W} .keybinding {A} .keybinding {S} .keybinding {D} or arrow keys | Pan          |
 | .keybinding {V}, or **Fit board** in the status bar | Fit the whole board in view |
 | .keybinding {T}                                | Toggle the grid                 |
-| .keybinding {H}                                | Hide or show the pattern palette |
+| .keybinding {H}                                | Hide or show the pattern palette while stamping |
 | .keybinding {F3}                               | Toggle diagnostics              |
 | .keybinding {/}                                | Toggle help                     |
 | .keybinding {Q}                                | Quit                            |

@@ -45,6 +45,7 @@ pub(super) fn pattern_hint(name: &str) -> String {
 pub(super) fn hint(action: Action) -> &'static str {
     match action {
         Action::Play => "Play / pause · Space",
+        Action::ResetToStart => "Back to the board this run started from · B · undo with U",
         Action::Step => "Step one generation · J",
         Action::Undo => "Undo the last edit · U",
         Action::Redo => {
@@ -62,7 +63,6 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::SpeedAdjust(step) if step < 0 => "Decrease speed by 1 gen/s · ∞ steps back to 40",
         Action::SpeedAdjust(_) => "Increase speed by 1 gen/s, up to 40",
         Action::MaxSpeed => "∞ · run as fast as possible · click again to return to the set speed",
-        Action::Sidebar => "Show / hide the palette · H",
         Action::Help => "Controls and tips · /",
         Action::Diagnostics => "Simulation diagnostics · F3",
         Action::Rotate => "Rotate stamp 90° clockwise · Z",
@@ -77,19 +77,24 @@ pub(super) fn hint(action: Action) -> &'static str {
         }
         Action::Tool(EditTool::Draw) => "Draw · 1 · paint cells with the left mouse button",
         Action::Tool(EditTool::Erase) => "Erase · 2 · clear cells; right-drag also erases",
-        Action::Tool(EditTool::Stamp) => "Stamp · 3 · place the selected pattern on the board",
-        Action::Import => "Import RLE into your library, or copy the board as RLE",
+        Action::Tool(EditTool::Stamp) => {
+            "Stamp · 3 · pick a pattern and place it on the board · H hides the palette"
+        }
+        Action::Import => "Add an RLE pattern to your library, or open a workspace file",
+        Action::Export => "Copy the board as RLE, or save a workspace file",
         Action::Settings => "Board size, rule, randomization, theme, grid, cell age, and edges",
-        Action::More => "Grid, cell age, palette, import / export, settings, and help",
+        Action::More => "Grid, cell age, import, export, settings, and help",
         Action::ApplyRandomize => "Use this density and optional seed for future randomizations",
         Action::RandomizeNow => "Apply the density and seed, then replace the board · undo with U",
-        Action::FillCanvas => {
-            "Size the board to fill the canvas, and follow it when the window or palette changes"
+        Action::FillCanvas => "Size the board to fill the canvas, and follow the window's size",
+        Action::PauseWhenSettled => {
+            "Pause when the board stops changing, or starts repeating with a period up to 128"
         }
         Action::RulePreset(_) => "Switch the board to this rule · undo with U",
         Action::Theme(_) => "Switch the colours of the board and interface · saved automatically",
         Action::ApplyRule => "Use the rulestring above, written in B/S notation",
         Action::EditRule => "The board's rule · click to change it in Settings",
+        Action::ToggleEdges => "Switch between wrapping and fixed edges · M",
         Action::ExportRle => "Copy the live cells to the clipboard as RLE",
         Action::SaveWorkspace => {
             if cfg!(target_os = "macos") {
@@ -284,22 +289,14 @@ pub(super) fn sync_overlays(
         let keyboard = view.focus_visible.0 && view.focus.get() == next;
         let show = candidate.is_some() && (overlay.elapsed >= 0.45 || keyboard);
         let rect = candidate.as_ref().map_or(Rect::default(), |c| c.2);
-        // Rail tools sit stacked at the window's left edge, so their hints open
-        // to the right instead of covering the next tool.
-        let in_rail = !view.layout.control_deck_visible && rect.max.x <= 16.0 + TOOL_RAIL_WIDTH;
-        let left = if in_rail {
-            rect.max.x + 8.0
-        } else {
-            rect.min
-                .x
-                .min(window.width() - OVERLAY_WIDTH - 8.0)
-                .max(8.0)
-        };
-        // Otherwise open away from the nearest window edge, anchored to the
-        // control so the hint never depends on its own height.
-        let (top, bottom) = if in_rail {
-            (px(rect.min.y), Val::Auto)
-        } else if rect.center().y < window.height() / 2.0 {
+        let left = rect
+            .min
+            .x
+            .min(window.width() - OVERLAY_WIDTH - 8.0)
+            .max(8.0);
+        // Open away from the nearest window edge, anchored to the control so
+        // the hint never depends on its own height.
+        let (top, bottom) = if rect.center().y < window.height() / 2.0 {
             (px(rect.max.y + 8.0), Val::Auto)
         } else {
             (Val::Auto, px(window.height() - rect.min.y + 8.0))
@@ -329,6 +326,7 @@ type FooterNode<'a> = (
     Option<&'a Readout>,
     Option<&'a Action>,
     Has<toolbar::ToolbarButton>,
+    Has<sparkline::Sparkline>,
 );
 
 /// Grows a readout to the widest it has been, so its neighbours stay put as
@@ -405,6 +403,13 @@ fn change_text(change: Option<isize>) -> String {
     }
 }
 
+/// The population and its change, whose tooltip says how the board settled.
+#[derive(Component)]
+pub(super) struct PopulationReadout;
+
+const POPULATION_HINT: &str =
+    "Live cells, their change over the latest generation, and a line of the last 256";
+
 type StatusText<'a> = (
     &'a mut Text,
     &'a mut ThemedText,
@@ -421,9 +426,20 @@ pub(super) fn sync_status(
     hovered: Res<crate::render_plugin::HoveredCell>,
     mut texts: Query<StatusText>,
     mut pills: Query<(&mut ThemedBackground, &mut ThemedBorder), With<StatusPill>>,
+    mut population: Query<&mut Tooltip, With<PopulationReadout>>,
     mut last: Local<Option<BoardShape>>,
 ) {
     let running = sim.app.is_running();
+    let settled = sim.app.settled();
+    for mut tooltip in &mut population {
+        let hint = settled.map_or_else(
+            || POPULATION_HINT.to_owned(),
+            |settled| format!("Board {settled}"),
+        );
+        if tooltip.0 != hint {
+            tooltip.0 = hint;
+        }
+    }
     for (mut background, mut border) in &mut pills {
         background.set_if_neq(ThemedBackground(if running {
             Token::Accent
@@ -460,16 +476,23 @@ pub(super) fn sync_status(
             }
             Readout::Generation => sim.app.epoch.to_string(),
             Readout::Population => live.to_string(),
-            Readout::Change => change_text(sim.app.population_change()),
+            Readout::Change => {
+                color.set_if_neq(ThemedText(if settled.is_some() {
+                    Token::Ink
+                } else {
+                    Token::Muted
+                }));
+                settled.map_or_else(
+                    || change_text(sim.app.population_change()),
+                    crate::settle::Settled::label,
+                )
+            }
             // Counted from the top left, like RLE and other Life tools.
             Readout::Pointer => hovered
                 .0
                 .map(|(col, row)| format!("({col}, {})", rows - 1 - row))
                 .unwrap_or_default(),
-            Readout::Board => format!(
-                "{cols} × {rows} cells   ·   {} edges",
-                sim.app.boundary_mode_label()
-            ),
+            Readout::Board => format!("{cols} × {rows} cells"),
         };
         if text.0 != value {
             text.0 = value;
@@ -537,9 +560,12 @@ pub(super) fn zoom_stepper(parent: &mut ChildSpawnerCommands) {
         });
 }
 
-/// From this width the status bar has room for the board size and edge mode,
-/// even with a 2048 × 2048 board and seven-digit counts.
-const BOARD_READOUT_MIN_WIDTH: f32 = 960.0;
+/// From these widths the status bar has room for the edges button, then the
+/// population line, then the board size too, even with seven-digit counts on a
+/// 2048 × 2048 board.
+const EDGES_BUTTON_MIN_WIDTH: f32 = 850.0;
+const SPARKLINE_MIN_WIDTH: f32 = 900.0;
+const BOARD_READOUT_MIN_WIDTH: f32 = 1010.0;
 
 pub(super) fn sync_footer(
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -551,7 +577,7 @@ pub(super) fn sync_footer(
     let Ok(window) = windows.single() else {
         return;
     };
-    for (mut node, sidebar, readout, action, toolbar_button) in &mut nodes {
+    for (mut node, sidebar, readout, action, toolbar_button, sparkline) in &mut nodes {
         if sidebar {
             set_if_neq!(node.bottom, px(STATUS_BAR_HEIGHT + 16.0));
         }
@@ -559,6 +585,26 @@ pub(super) fn sync_footer(
             set_if_neq!(
                 node.display,
                 if window.width() >= BOARD_READOUT_MIN_WIDTH {
+                    Display::Flex
+                } else {
+                    Display::None
+                }
+            );
+        }
+        if sparkline {
+            set_if_neq!(
+                node.display,
+                if window.width() >= SPARKLINE_MIN_WIDTH {
+                    Display::Flex
+                } else {
+                    Display::None
+                }
+            );
+        }
+        if matches!(action, Some(Action::ToggleEdges)) {
+            set_if_neq!(
+                node.display,
+                if window.width() >= EDGES_BUTTON_MIN_WIDTH {
                     Display::Flex
                 } else {
                     Display::None
@@ -623,6 +669,7 @@ pub(super) fn feedback_overlay(commands: &mut Commands) {
 
 pub(super) fn sync_feedback(
     time: Res<Time>,
+    sim: Res<Simulation>,
     mut feedback: ResMut<EditFeedback>,
     view: ViewState,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -633,7 +680,14 @@ pub(super) fn sync_feedback(
     let Ok(window) = windows.single() else {
         return;
     };
-    let canvas = canvas_rect(window.size(), &view.layout);
+    let canvas = canvas_rect(window.size());
+    // Beside an open palette, which floats over this corner of the canvas.
+    let left = 12.0
+        + if sim.app.palette_shown() {
+            palette_rect(window.size()).max.x
+        } else {
+            canvas.min.x
+        };
     for mut node in &mut nodes {
         set_if_neq!(
             node.display,
@@ -643,9 +697,9 @@ pub(super) fn sync_feedback(
                 Display::None
             }
         );
-        set_if_neq!(node.left, px(canvas.min.x + 12.0));
+        set_if_neq!(node.left, px(left));
         set_if_neq!(node.bottom, px(window.height() - canvas.max.y + 8.0));
-        set_if_neq!(node.max_width, px((canvas.width() - 24.0).max(0.0)));
+        set_if_neq!(node.max_width, px((canvas.max.x - left - 12.0).max(0.0)));
     }
     for mut text in &mut texts {
         let value = if feedback.remaining > 0.0 {
@@ -710,6 +764,55 @@ mod tests {
     }
 
     #[test]
+    fn the_population_readout_says_how_the_board_settled() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let mut app = GolApp::new(16, 16);
+        for col in 4..7 {
+            app.populate_board(col, 4);
+        }
+        world.insert_resource(Simulation::new(app));
+        world.init_resource::<crate::render_plugin::HoveredCell>();
+        let change = world
+            .spawn((Text::default(), ThemedText(Token::Muted), Readout::Change))
+            .id();
+        let group = world
+            .spawn((PopulationReadout, Tooltip(String::new())))
+            .id();
+        let sync = |world: &mut World| {
+            world.run_system_once(sync_status).unwrap();
+            (
+                world.get::<Text>(change).unwrap().0.clone(),
+                *world.get::<ThemedText>(change).unwrap() == ThemedText(Token::Ink),
+                world.get::<Tooltip>(group).unwrap().0.clone(),
+            )
+        };
+
+        world.resource_mut::<Simulation>().app.increment_epoch();
+        assert_eq!(
+            sync(&mut world),
+            ("±0".to_owned(), false, POPULATION_HINT.to_owned())
+        );
+
+        world.resource_mut::<Simulation>().app.increment_epoch();
+        assert_eq!(
+            sync(&mut world),
+            (
+                "period\u{a0}2".to_owned(),
+                true,
+                "Board repeating every 2 generations since generation 0".to_owned()
+            )
+        );
+
+        // An edit returns to the ordinary readout.
+        world.resource_mut::<Simulation>().app.populate_board(1, 1);
+        assert_eq!(
+            sync(&mut world),
+            (String::new(), false, POPULATION_HINT.to_owned())
+        );
+    }
+
+    #[test]
     fn an_edit_notice_shows_until_it_fades() {
         use bevy::ecs::system::RunSystemOnce;
         let mut world = World::new();
@@ -717,7 +820,6 @@ mod tests {
         world.init_resource::<EditFeedback>();
         world.init_resource::<Time>();
         world.init_resource::<NativeUi>();
-        world.init_resource::<UiLayout>();
         world.insert_resource(GridOverlay { enabled: false });
         world.init_resource::<CellAge>();
         world.init_resource::<crate::shared::BoardSettings>();
@@ -746,7 +848,6 @@ mod tests {
         view.fit_scale = 2.5;
         world.insert_resource(view);
         world.insert_resource(Simulation::new(GolApp::new(8, 8)));
-        world.insert_resource(UiLayout::default());
         world.add_observer(navigate);
         let camera = world.spawn((Camera2d, crate::shared::MainCamera)).id();
         world.get_mut::<Transform>(camera).unwrap().translation = Vec3::new(90.0, -40.0, 10.0);

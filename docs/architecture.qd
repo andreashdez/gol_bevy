@@ -11,6 +11,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
       - lib.rs
       - app.rs
       - board.rs
+      - settle.rs
       - patterns.rs
       - shared.rs
       - settings_plugin.rs
@@ -50,7 +51,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
 
 ## Plugins
 
-`main.rs` builds the app from Bevy's `DefaultPlugins` (with a 1200 × 800 window and a 680 × 420 minimum) and the project's plugins:
+`main.rs` builds the app from Bevy's `DefaultPlugins` (with a 1200 × 800 window and an 800 × 420 minimum) and the project's plugins:
 
 .mermaid
     flowchart TD
@@ -93,7 +94,6 @@ Keyboard shortcuts and mouse editing run later, in the `Input` set of `PostUpdat
 |-------------------------------------|---------------------------------------------------------------|
 | `Simulation`                        | The `App`, the step timer, average step time, and measured rate |
 | `BoardSettings`                     | The chosen board size, or that it should fill the canvas      |
-| `UiLayout`                          | Whether the palette is shown                                  |
 | `RedrawRequested`                   | Whether this frame needs a redraw                             |
 | `DiagnosticsOverlay`, `GridOverlay` | Whether diagnostics and the grid are on                       |
 | `CellAge`                           | Whether cells are shaded by age, with trails                  |

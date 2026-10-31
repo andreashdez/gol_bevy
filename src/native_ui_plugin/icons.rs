@@ -14,7 +14,6 @@ pub(super) enum Icon {
     Redo,
     Grid,
     CellAge,
-    Palette,
     Gear,
     Help,
     Fit,
@@ -22,10 +21,15 @@ pub(super) enum Icon {
     Draw,
     Erase,
     Stamp,
+    Reset,
+    Randomize,
+    Clear,
+    Import,
+    Export,
 }
 
 impl Icon {
-    const ALL: [Icon; 15] = [
+    const ALL: [Icon; 19] = [
         Icon::Play,
         Icon::Pause,
         Icon::Step,
@@ -33,7 +37,6 @@ impl Icon {
         Icon::Redo,
         Icon::Grid,
         Icon::CellAge,
-        Icon::Palette,
         Icon::Gear,
         Icon::Help,
         Icon::Fit,
@@ -41,6 +44,11 @@ impl Icon {
         Icon::Draw,
         Icon::Erase,
         Icon::Stamp,
+        Icon::Reset,
+        Icon::Randomize,
+        Icon::Clear,
+        Icon::Import,
+        Icon::Export,
     ];
 
     /// Stable handles, so icons can be spawned before or without the asset.
@@ -64,18 +72,13 @@ impl Icon {
             )),
             Icon::Step => (triangle(p, [vec2(6.5, 6.5), vec2(6.5, 17.5), vec2(14.5, 12.0)]) - 1.0)
                 .min(rounded_box(p, vec2(17.5, 12.0), vec2(1.3, 6.0), 1.0)),
+            // Step, facing back to the start.
+            Icon::Reset => Icon::Step.distance(vec2(24.0 - p.x, p.y)),
             // Lucide's undo-2: a chevron, a line, and a half turn back.
             Icon::Undo => undo(p) - HALF_STROKE,
             Icon::Redo => undo(vec2(24.0 - p.x, p.y)) - HALF_STROKE,
             Icon::Grid => grid(p) - HALF_STROKE,
             Icon::CellAge => cell_age(p),
-            // Lucide's panel-left: a window with a sidebar.
-            Icon::Palette => {
-                rounded_box(p, vec2(12.0, 12.0), vec2(9.0, 8.0), 2.0)
-                    .abs()
-                    .min(segment(p, vec2(9.0, 4.0), vec2(9.0, 20.0)))
-                    - HALF_STROKE
-            }
             Icon::Gear => gear(p),
             Icon::Help => help(p),
             Icon::Fit => fit(p) - HALF_STROKE,
@@ -87,6 +90,26 @@ impl Icon {
             Icon::Draw => pencil(p) - HALF_STROKE,
             Icon::Erase => eraser(p) - HALF_STROKE,
             Icon::Stamp => stamp(p) - HALF_STROKE,
+            Icon::Randomize => die(p, HALF_STROKE),
+            Icon::Clear => trash(p) - HALF_STROKE,
+            Icon::Import => {
+                tray(p)
+                    .min(polyline(p, &[vec2(12.0, 3.5), vec2(12.0, 15.0)]))
+                    .min(polyline(
+                        p,
+                        &[vec2(7.0, 10.0), vec2(12.0, 15.0), vec2(17.0, 10.0)],
+                    ))
+                    - HALF_STROKE
+            }
+            Icon::Export => {
+                tray(p)
+                    .min(polyline(p, &[vec2(12.0, 3.5), vec2(12.0, 15.0)]))
+                    .min(polyline(
+                        p,
+                        &[vec2(7.0, 8.5), vec2(12.0, 3.5), vec2(17.0, 8.5)],
+                    ))
+                    - HALF_STROKE
+            }
         }
     }
 
@@ -189,6 +212,64 @@ fn undo(p: Vec2) -> f32 {
         .min(segment(p, vec2(4.0, 9.0), vec2(14.5, 9.0)))
         .min(segment(p, vec2(14.5, 20.0), vec2(11.0, 20.0)))
         .min(arc)
+}
+
+/// A die showing five, for randomizing: an outline around filled pips.
+fn die(p: Vec2, half_stroke: f32) -> f32 {
+    let pips = [
+        vec2(8.5, 8.5),
+        vec2(15.5, 8.5),
+        vec2(12.0, 12.0),
+        vec2(8.5, 15.5),
+        vec2(15.5, 15.5),
+    ]
+    .map(|pip| p.distance(pip) - 1.5)
+    .into_iter()
+    .fold(f32::INFINITY, f32::min);
+    let outline = rounded_box(p, vec2(12.0, 12.0), vec2(8.5, 8.5), 2.5).abs() - half_stroke;
+    outline.min(pips)
+}
+
+/// Lucide's trash-2, shorter to fit: a lid with a handle, a can, and two slots.
+fn trash(p: Vec2) -> f32 {
+    polyline(p, &[vec2(3.0, 6.0), vec2(21.0, 6.0)])
+        .min(polyline(
+            p,
+            &[
+                vec2(9.0, 6.0),
+                vec2(9.0, 2.5),
+                vec2(15.0, 2.5),
+                vec2(15.0, 6.0),
+            ],
+        ))
+        .min(polyline(
+            p,
+            &[
+                vec2(5.5, 6.0),
+                vec2(6.0, 19.0),
+                vec2(8.0, 21.0),
+                vec2(16.0, 21.0),
+                vec2(18.0, 19.0),
+                vec2(18.5, 6.0),
+            ],
+        ))
+        .min(polyline(p, &[vec2(10.0, 10.5), vec2(10.0, 16.5)]))
+        .min(polyline(p, &[vec2(14.0, 10.5), vec2(14.0, 16.5)]))
+}
+
+/// The tray of Lucide's download and upload, which the arrows go into and out of.
+fn tray(p: Vec2) -> f32 {
+    polyline(
+        p,
+        &[
+            vec2(3.5, 15.0),
+            vec2(3.5, 18.5),
+            vec2(5.5, 20.5),
+            vec2(18.5, 20.5),
+            vec2(20.5, 18.5),
+            vec2(20.5, 15.0),
+        ],
+    )
 }
 
 /// Distance to the centre lines of a 3×3 grid of cells.
@@ -325,11 +406,15 @@ mod tests {
             (Icon::Play, vec2(11.0, 12.0)),
             (Icon::Pause, vec2(8.0, 12.0)),
             (Icon::Step, vec2(17.5, 12.0)),
+            (Icon::Reset, vec2(6.5, 12.0)),
+            (Icon::Randomize, vec2(12.0, 12.0)),
+            (Icon::Clear, vec2(12.0, 21.0)),
+            (Icon::Import, vec2(12.0, 8.0)),
+            (Icon::Export, vec2(12.0, 8.0)),
             (Icon::Undo, vec2(10.0, 9.0)),
             (Icon::Redo, vec2(14.0, 9.0)),
             (Icon::Grid, vec2(4.0 + 16.0 / 3.0, 12.0)),
             (Icon::CellAge, vec2(18.5, 5.5)),
-            (Icon::Palette, vec2(9.0, 12.0)),
             (Icon::Gear, vec2(12.0, 6.5)),
             (Icon::Help, vec2(12.0, 18.5)),
             (Icon::Fit, vec2(20.0, 6.0)),
@@ -350,8 +435,15 @@ mod tests {
                 assert!(icon.distance(edge) > 0.5, "{icon:?} touches {edge}");
             }
         }
-        // The gear has a hole, and redo mirrors undo.
+        // The gear has a hole, the die's pips stand apart, and import and export
+        // point opposite ways.
         assert!(Icon::Gear.distance(vec2(12.0, 12.0)) > 0.5);
+        assert!(Icon::Randomize.distance(vec2(12.0, 8.5)) > 0.5);
+        assert!(Icon::Import.distance(vec2(9.5, 12.5)) < -0.5);
+        assert!(Icon::Export.distance(vec2(9.5, 12.5)) > 0.5);
+        assert!(Icon::Export.distance(vec2(9.5, 6.0)) < -0.5);
+        assert!(Icon::Import.distance(vec2(9.5, 6.0)) > 0.5);
+        // Redo mirrors undo.
         assert_eq!(
             Icon::Undo.distance(vec2(6.0, 12.0)),
             Icon::Redo.distance(vec2(18.0, 12.0))

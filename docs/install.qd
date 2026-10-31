@@ -47,7 +47,7 @@ The first build takes a while, because dependencies are compiled with full optim
 
 ## Window and board size
 
-The window opens at 1200 × 800 and can be resized down to 680 × 420. On first launch the board is sized to fill the window. After that, the board keeps the size you choose in [Settings](settings.qd), whatever the window size.
+The window opens at 1200 × 800 and can be resized down to 800 × 420. On first launch the board is sized to fill the window. After that, the board keeps the size you choose in [Settings](settings.qd), whatever the window size.
 
 ## Next steps
 

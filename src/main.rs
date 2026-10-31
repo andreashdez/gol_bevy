@@ -22,7 +22,7 @@ fn main() {
                 resolution: WindowResolution::new(1200, 800),
                 resizable: true,
                 resize_constraints: bevy::window::WindowResizeConstraints {
-                    min_width: 680.0,
+                    min_width: 800.0,
                     min_height: 420.0,
                     ..default()
                 },

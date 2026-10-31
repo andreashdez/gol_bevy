@@ -1,7 +1,7 @@
 .docname {Drawing and stamps}
 .include {docs}
 
-You edit the board with three tools, chosen at the top of the pattern palette or with .keybinding {1}, .keybinding {2}, and .keybinding {3}: **Draw**, **Erase**, and **Stamp**. The digit keys work on layouts that need Shift for digits, such as AZERTY, too.
+You edit the board with three tools, chosen in the toolbar or with .keybinding {1}, .keybinding {2}, and .keybinding {3}: **Draw**, **Erase**, and **Stamp**. The digit keys work on layouts that need Shift for digits, such as AZERTY, too.
 
 ## Draw and erase
 
@@ -13,11 +13,13 @@ Cells you drag across are changed one at a time, but the whole drag counts as a 
 
 A stamp places a whole pattern with one click.
 
-1. Select a pattern: click its thumbnail in the palette.
+1. Click **Stamp** or press .keybinding {3} to open the pattern palette, then click a pattern's thumbnail.
 2. Move the mouse over the board. A blue *ghost*, outlined with the stamp's footprint, shows exactly which cells will be placed. It has its own colour so it never passes for cells already on the board.
 3. Click to place the pattern. The stamp stays selected, so you can keep clicking to place copies.
 
-.keybinding {C} drops the stamp and goes back to the Draw tool. Clicking **Stamp**, or pressing .keybinding {3}, with no pattern selected picks the first one in the library. Switching to Draw or Erase hides the ghost but keeps the stamp selected, so clicking **Stamp** again brings it back.
+.keybinding {C} drops the stamp, goes back to the Draw tool, and closes the palette. Clicking **Stamp**, or pressing .keybinding {3}, with no pattern selected picks the first one in the library. Switching to Draw or Erase closes the palette and hides the ghost but keeps the stamp selected, so clicking **Stamp** again brings both back.
+
+The palette covers the left of the canvas. To reach the cells under it, pan the board, or press .keybinding {H} to hide the palette while you keep stamping. .keybinding {H} or **Stamp** brings it back.
 
 You can add your own patterns, either for the current session through [RLE import](patterns.qd#importing-a-pattern) or permanently as [built-in patterns](patterns.qd#built-in-patterns).
 
@@ -28,7 +30,7 @@ You can add your own patterns, either for the current session through [RLE impor
 | .keybinding {Z}   | **Rotate** | Rotate the stamp a quarter turn clockwise |
 | .keybinding {F}   | **Flip**   | Mirror the stamp horizontally            |
 
-The stamp preview in the palette and the ghost on the board both show the orientation that will be placed. The Rotate and Flip buttons are disabled unless the Stamp tool is active.
+The stamp preview in the palette and the ghost on the board both show the orientation that will be placed. The keys also work while the palette is hidden.
 
 ## Board actions
 
@@ -59,6 +61,7 @@ These are edits, and can be undone:
 - drawing and erasing (one edit per drag)
 - placing a stamp
 - randomizing and clearing the board
+- [resetting to start](simulation.qd#reset-to-start)
 - changing the rule, including an import that changes the rule
 
 Undo restores the board, the generation counter, and the rule as they were before the edit, and pauses playback so you can see the result. Redo reapplies an undone edit and also leaves playback paused. Making a new edit discards anything left to redo.
@@ -71,13 +74,13 @@ Resizing the board clears the undo and redo history, because old snapshots no lo
 
 ## Save and reopen workspaces
 
-.keybinding {Mod+S} saves and .keybinding {Mod+O} opens, from the board or with **Import / Export** or **Settings** open; results show in the dialog, or as a brief notice over the board.
+.keybinding {Mod+S} saves and .keybinding {Mod+O} opens, from the board or with **Import**, **Export**, or **Settings** open; results show in the dialog, or as a brief notice over the board.
 
-Open **Import / Export**, then use **Workspace files**. **Save workspace…** opens the
+To save, open **Export** and click **Save workspace…**. It opens the
 system file dialog in your Documents folder, or wherever you last saved or opened a
 workspace. The dialog asks before replacing an existing file.
 
-**Open workspace…** lets you choose a `.golw` file and checks it. If it is valid, you're
+To open one, open **Import** and click **Open workspace…**. It lets you choose a `.golw` file and checks it. If it is valid, you're
 asked whether to replace the current board and imported pattern library. **Cancel**
 (or Escape) keeps your current work. Files preserve board dimensions, exact cell positions, generation,
 rule, boundary mode, playback speed, randomization density and seed, and imported pattern names, cells, and rules.
