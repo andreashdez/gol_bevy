@@ -335,6 +335,7 @@ type FooterNode<'a> = (
     Option<&'a Readout>,
     Option<&'a Action>,
     Has<toolbar::ToolbarButton>,
+    Has<sparkline::Sparkline>,
 );
 
 /// Grows a readout to the widest it has been, so its neighbours stay put as
@@ -415,7 +416,8 @@ fn change_text(change: Option<isize>) -> String {
 #[derive(Component)]
 pub(super) struct PopulationReadout;
 
-const POPULATION_HINT: &str = "Live cells, and their change over the latest generation";
+const POPULATION_HINT: &str =
+    "Live cells, their change over the latest generation, and a line of the last 256";
 
 type StatusText<'a> = (
     &'a mut Text,
@@ -567,10 +569,12 @@ pub(super) fn zoom_stepper(parent: &mut ChildSpawnerCommands) {
         });
 }
 
-/// From this width the status bar has room for the edges button, and from the
-/// next for the board size too, even with seven-digit counts on a 2048 × 2048 board.
+/// From these widths the status bar has room for the edges button, then the
+/// population line, then the board size too, even with seven-digit counts on a
+/// 2048 × 2048 board.
 const EDGES_BUTTON_MIN_WIDTH: f32 = 850.0;
-const BOARD_READOUT_MIN_WIDTH: f32 = 960.0;
+const SPARKLINE_MIN_WIDTH: f32 = 900.0;
+const BOARD_READOUT_MIN_WIDTH: f32 = 1010.0;
 
 pub(super) fn sync_footer(
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -582,7 +586,7 @@ pub(super) fn sync_footer(
     let Ok(window) = windows.single() else {
         return;
     };
-    for (mut node, sidebar, readout, action, toolbar_button) in &mut nodes {
+    for (mut node, sidebar, readout, action, toolbar_button, sparkline) in &mut nodes {
         if sidebar {
             set_if_neq!(node.bottom, px(STATUS_BAR_HEIGHT + 16.0));
         }
@@ -590,6 +594,16 @@ pub(super) fn sync_footer(
             set_if_neq!(
                 node.display,
                 if window.width() >= BOARD_READOUT_MIN_WIDTH {
+                    Display::Flex
+                } else {
+                    Display::None
+                }
+            );
+        }
+        if sparkline {
+            set_if_neq!(
+                node.display,
+                if window.width() >= SPARKLINE_MIN_WIDTH {
                     Display::Flex
                 } else {
                     Display::None

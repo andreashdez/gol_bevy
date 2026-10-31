@@ -16,6 +16,7 @@ mod controls;
 mod dialogs;
 mod icons;
 mod palette;
+mod sparkline;
 mod speed;
 mod theme;
 mod toolbar;
@@ -131,6 +132,7 @@ impl Plugin for NativeUiPlugin {
                     controls::sync_overlays,
                     controls::sync_footer,
                     controls::sync_status,
+                    sparkline::sync,
                     toolbar::sync_layout,
                     toolbar::sync_menu,
                     controls::sync_feedback,
@@ -485,6 +487,7 @@ fn setup(
                     p.spawn(controls::number(Readout::Population, 13.0, Token::Ink));
                     p.spawn(label("alive", 13.0, Token::Muted));
                     p.spawn(controls::number(Readout::Change, 12.0, Token::Muted));
+                    p.spawn(sparkline::node());
                 });
                 button(p, "Rule", Action::EditRule);
                 button(p, "Edges", Action::ToggleEdges);

@@ -36,6 +36,9 @@ struct EditSnapshot {
     rule: Rule,
 }
 
+/// Generations of population kept for the status bar's line.
+pub const POPULATION_HISTORY: usize = 256;
+
 const EDIT_HISTORY_MAX: usize = 32;
 const EDIT_HISTORY_BYTE_BUDGET: usize = 16 * 1024 * 1024;
 
@@ -122,6 +125,8 @@ pub struct App {
     pause_when_settled: bool,
     /// Why playback paused itself, until the UI has said so.
     auto_paused: Option<Settled>,
+    /// Live cells per generation of this run, oldest first.
+    population_history: VecDeque<usize>,
 
     pub board: board::Board,
 }
@@ -157,6 +162,7 @@ impl App {
             settle: SettleWatch::default(),
             pause_when_settled: false,
             auto_paused: None,
+            population_history: VecDeque::with_capacity(POPULATION_HISTORY),
             board,
         }
     }
@@ -291,6 +297,14 @@ impl App {
             let fingerprint = self.board.fingerprint();
             self.board.step();
             self.last_step = Some((res, before, self.board.live_cells_count()));
+            if self.population_history.is_empty() {
+                self.population_history.push_back(before);
+            }
+            if self.population_history.len() == POPULATION_HISTORY {
+                self.population_history.pop_front();
+            }
+            self.population_history
+                .push_back(self.board.live_cells_count());
             let settled = self
                 .settle
                 .record(fingerprint, self.board.fingerprint(), res);
@@ -300,6 +314,11 @@ impl App {
             }
             self.needs_redraw = true;
         }
+    }
+
+    /// Live cells over the latest generations of this run, oldest first.
+    pub fn population_history(&self) -> &VecDeque<usize> {
+        &self.population_history
     }
 
     /// Set once the board repeats an earlier generation, until it is edited.
@@ -701,6 +720,7 @@ impl App {
     fn forget_run(&mut self) {
         self.run_start = None;
         self.settle.reset();
+        self.population_history.clear();
     }
 
     fn save_edit(&mut self) {
@@ -837,6 +857,29 @@ mod tests {
         assert_eq!(app.epoch, 0);
         assert!(!app.is_running());
         assert!(!app.can_reset_to_start());
+    }
+
+    #[test]
+    fn population_history_starts_with_the_run_and_keeps_the_latest_generations() {
+        let (mut app, _) = blinker_board();
+        assert!(app.population_history().is_empty());
+        app.increment_epoch();
+        assert_eq!(app.population_history().len(), 2);
+
+        for _ in 0..POPULATION_HISTORY * 2 {
+            app.increment_epoch();
+        }
+        assert_eq!(app.population_history().len(), POPULATION_HISTORY);
+        assert_eq!(
+            app.population_history().back(),
+            Some(&app.board.live_cells_count())
+        );
+
+        app.populate_board(1, 1);
+        assert!(app.population_history().is_empty());
+        app.increment_epoch();
+        assert!(app.reset_to_start());
+        assert!(app.population_history().is_empty());
     }
 
     #[test]
