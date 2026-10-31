@@ -18,7 +18,7 @@ While a text field or the speed slider has focus, board shortcuts are disabled, 
 
 ## Colours
 
-The **High contrast** theme in [Settings](settings.qd#theme) uses black panels, white text, bright green cells, and a yellow focus outline. A **Light** theme is available too. Every theme keeps text at a contrast of at least 4.5:1 against its background, and live cells and the pointer outline at least 3:1 against empty cells. That holds for every [cell age](interface.qd#cell-age) shade too. Trails stay below 1.6:1, so they never look like live cells or crowd them out. Turn off **Cell age** if the shading or trails distract you.
+The **High contrast** theme in [Settings](settings.qd#display) uses black panels, white text, bright green cells, and a yellow focus outline. A **Light** theme is available too. Every theme keeps text at a contrast of at least 4.5:1 against its background, and live cells and the pointer outline at least 3:1 against empty cells. That holds for every [cell age](interface.qd#cell-age) shade too. Trails stay below 1.6:1, so they never look like live cells or crowd them out. Turn off **Cell age** if the shading or trails distract you.
 
 ## Dialogs
 
@@ -38,4 +38,4 @@ Dialogs are modal: .keybinding {Tab} stays inside the open dialog. The Export, H
 
 ## Text editing
 
-Text fields support the platform clipboard shortcuts (.keybinding {Mod+C}, .keybinding {Mod+X}, .keybinding {Mod+V}, and .keybinding {Mod+A}) and selection with .keybinding {Shift} and the arrow keys.
+Text fields support the platform clipboard shortcuts (.keys {Mod+C, Mod+X, Mod+V, Mod+A}) and selection with .keybinding {Shift} and the arrow keys.

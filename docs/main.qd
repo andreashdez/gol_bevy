@@ -19,14 +19,21 @@
 
 ## Where to start
 
-| If you want to…                   | Read                                         |
-|-----------------------------------|----------------------------------------------|
-| Download and run the app          | [Installation](install.qd)                   |
-| Learn the basics in five minutes  | [First steps](first-steps.qd)                |
-| Look up a shortcut                | [Controls reference](controls.qd)            |
-| Bring in a pattern from elsewhere | [Patterns and RLE](patterns.qd)              |
-| Build or change the code          | [Building from source](development.qd)       |
-| Understand how the code fits      | [Architecture](architecture.qd)              |
+.column gap:{1em} cross:{stretch}
+    .row gap:{1em} cross:{stretch}
+        .card {[Installation](install.qd)} {Download and run the app}
+
+        .card {[First steps](first-steps.qd)} {Learn the basics in five minutes}
+
+    .row gap:{1em} cross:{stretch}
+        .card {[Controls reference](controls.qd)} {Look up a shortcut}
+
+        .card {[Patterns and RLE](patterns.qd)} {Bring in a pattern from elsewhere}
+
+    .row gap:{1em} cross:{stretch}
+        .card {[Building from source](development.qd)} {Build or change the code}
+
+        .card {[Architecture](architecture.qd)} {Understand how the code fits}
 
 ## License
 

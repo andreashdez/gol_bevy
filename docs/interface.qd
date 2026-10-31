@@ -40,7 +40,7 @@ The board has its own canvas between the toolbar and status bar. Drawing and sta
 | Action                         | How                                                       |
 |--------------------------------|-----------------------------------------------------------|
 | Zoom                           | Scroll over the canvas, or use **−** and **+** beside the zoom percentage in the status bar |
-| Pan                            | Middle-button drag, or .keybinding {W} .keybinding {A} .keybinding {S} .keybinding {D} or the arrow keys |
+| Pan                            | Middle-button drag, or .keys {W, A, S, D} or the arrow keys |
 | Fit the whole board            | .keybinding {V}, or **Fit board** (the corner brackets) in the status bar |
 
 The canvas leaves only a thin gap around the board, and a fitted board leaves only 1% of the canvas free on each side in the direction it fills, just enough to keep the fixed-edge walls visible. [Fill canvas](settings.qd#fill-canvas), on by default, sizes the board to the canvas so there is no border on either axis.
@@ -84,7 +84,7 @@ From left to right:
 - **Running** or **Paused**, in a pill that turns green while the simulation runs.
 - The generation counter.
 - The number of living cells, how the latest generation changed it, and, from 900 pixels wide, a line of the population over the last 256 generations of the run. The change reads `+12`, `−12`, or `±0` for a stable population. The change disappears after an edit, undo, or counter reset, since it no longer describes the board. Once the board [settles](simulation.qd#when-the-board-settles), `stable` or `period 2` takes its place; hover over it to see the generation that began.
-- The rule. Click it to open [Settings](settings.qd#rule) with the rulestring ready to edit.
+- The rule. Click it to open [Settings](settings.qd#simulation) with the rulestring ready to edit.
 - The [edge mode](simulation.qd#edges), **Wrap edges** or **Fixed edges**, from 850 pixels wide. Click it to switch, like .keybinding {M}.
 - The cell under the pointer, as `(x, y)` counted from the top-left cell `(0, 0)`, while the pointer is over the board.
 

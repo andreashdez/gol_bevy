@@ -77,10 +77,12 @@ These pages are written in [Quarkdown](https://quarkdown.com) and live in `docs/
 
 ```shell
 cd docs
-quarkdown c main.qd              # writes the site to docs/quarkdown-output/gol-bevy/
+quarkdown c main.qd --strict     # writes the site to docs/quarkdown-output/gol-bevy/
 quarkdown c main.qd -p -w        # live preview while you edit
 ```
 
-`_setup.qd` holds the shared theme and header, and `_nav.qd` the sidebar. A new page needs a `.docname` and `.include {docs}` at the top, and a link from `_nav.qd` or another page, since Quarkdown only compiles pages that are linked.
+`_setup.qd` holds the shared theme, header, and helpers such as `.keys` and `.card`, and `_nav.qd` the sidebar. A new page needs a `.docname` and `.include {docs}` at the top, and a link from `_nav.qd` or another page, since Quarkdown only compiles pages that are linked.
 
-`.github/workflows/docs.yml` publishes the site to [GitHub Pages](https://andreashdez.github.io/gol_bevy/) on every push to `main` that changes `docs/`. It builds with `--strict`, so a Quarkdown error fails the deployment, and pins the Quarkdown version (currently **2.6.4**); bump it there when you upgrade locally.
+`.github/workflows/docs.yml` publishes the site to [GitHub Pages](https://andreashdez.github.io/gol_bevy/) on every push to `main` that changes `docs/`. It builds with `--strict`, so a Quarkdown error fails the deployment, and installs the latest Quarkdown release, so keep your local copy up to date. The pages need Quarkdown 2.7 or newer.
+
+> Warning: Without `--strict`, a Quarkdown error is only logged and the build still succeeds. A dot directly before a letter starts a function call, even in plain text, so write `\.rle` outside code spans.
