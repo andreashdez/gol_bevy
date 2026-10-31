@@ -1,13 +1,15 @@
 use std::time::{Duration, Instant};
 
-use crate::shared::{DiagnosticsOverlay, GridOverlay, RedrawRequested, Simulation, UpdateSet};
+use crate::shared::{
+    DiagnosticsOverlay, EditFeedback, GridOverlay, RedrawRequested, Simulation, UpdateSet,
+};
 use bevy::{app::AppExit, prelude::*};
 
 pub struct SimulationPlugin;
 
 impl Plugin for SimulationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
+        app.init_resource::<EditFeedback>().add_systems(
             Update,
             (
                 advance_simulation.in_set(UpdateSet::Simulation),
@@ -31,9 +33,16 @@ const MAX_SPEED_FRAME_BUDGET: Duration = Duration::from_millis(8);
 /// settled ones, so that a frame does not spin through its whole budget.
 const MAX_SPEED_STEPS_PER_FRAME: u64 = 1024;
 
-fn advance_simulation(time: Res<Time>, mut sim: ResMut<Simulation>) {
+fn advance_simulation(
+    time: Res<Time>,
+    mut sim: ResMut<Simulation>,
+    mut feedback: ResMut<EditFeedback>,
+) {
     let steps = run_due_steps(&mut sim, time.delta(), MAX_SPEED_FRAME_BUDGET);
     sim.rate.record(steps, time.delta());
+    if let Some(settled) = sim.app.take_auto_paused() {
+        feedback.show(format!("Paused · {settled}"));
+    }
 }
 
 /// Returns how many generations ran.
@@ -50,7 +59,11 @@ fn run_due_steps(sim: &mut Simulation, delta: Duration, max_speed_budget: Durati
         loop {
             step(sim);
             steps += 1;
-            if steps == MAX_SPEED_STEPS_PER_FRAME || started.elapsed() >= max_speed_budget {
+            // A step can pause the board by settling it.
+            if steps == MAX_SPEED_STEPS_PER_FRAME
+                || started.elapsed() >= max_speed_budget
+                || !sim.app.is_running()
+            {
                 return steps;
             }
         }
@@ -60,7 +73,7 @@ fn run_due_steps(sim: &mut Simulation, delta: Duration, max_speed_budget: Durati
     let tick = Duration::from_millis(sim.app.tick_rate_ms());
 
     let mut steps = 0;
-    while sim.accumulator >= tick {
+    while sim.app.is_running() && sim.accumulator >= tick {
         if steps == MAX_STEPS_PER_FRAME {
             // Drop the backlog rather than carry it into the next frame.
             sim.accumulator = Duration::ZERO;
@@ -159,6 +172,28 @@ mod tests {
         sim.app.set_max_speed();
         assert_eq!(run_due_steps(&mut sim, Duration::from_millis(16)), 0);
         assert_eq!(sim.app.epoch, 0);
+    }
+
+    #[test]
+    fn a_frame_stops_at_the_generation_that_settles_the_board() {
+        let settling_simulation = || {
+            let mut sim = running_simulation();
+            sim.app.populate_board(3, 3);
+            sim.app.set_pause_when_settled(true);
+            sim
+        };
+
+        // A lone cell dies on the first generation, and the second repeats it.
+        let mut sim = settling_simulation();
+        assert_eq!(run_due_steps(&mut sim, Duration::from_secs(10)), 2);
+        assert_eq!(sim.app.epoch, 2);
+        assert!(!sim.app.is_running());
+
+        let mut sim = settling_simulation();
+        sim.app.set_max_speed();
+        assert_eq!(run(&mut sim, Duration::ZERO, Duration::from_secs(60)), 2);
+        assert_eq!(sim.app.epoch, 2);
+        assert!(!sim.app.is_running());
     }
 
     #[test]

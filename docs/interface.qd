@@ -7,7 +7,7 @@ The window has four parts: the toolbar at the top, the pattern palette on the le
 
 The toolbar is a single 64-pixel row at every window size. It has three groups, with a subtle divider before the board edits:
 
-- **Playback:** Play / Pause, Step, and the speed field, with its **∞** toggle for maximum speed (see [Playback and rules](simulation.qd#speed))
+- **Playback:** Play / Pause, Reset to start, Step, and the speed field, with its **∞** toggle for maximum speed (see [Playback and rules](simulation.qd#speed))
 - **Board edits:** Randomize, Clear, Undo, and Redo; history buttons are disabled when unavailable
 - **Workspace:** the **Grid**, **Cell age**, and **Pattern palette** toggles, Import / Export, **Settings** (a gear), and **Help** (a question mark), at the right end
 
@@ -77,7 +77,7 @@ From left to right:
 
 - **Running** or **Paused**, in a pill that turns green while the simulation runs.
 - The generation counter.
-- The number of living cells, and how the latest generation changed it: `+12`, `−12`, or `±0` for a stable population. The change disappears after an edit, undo, or counter reset, since it no longer describes the board.
+- The number of living cells, and how the latest generation changed it: `+12`, `−12`, or `±0` for a stable population. The change disappears after an edit, undo, or counter reset, since it no longer describes the board. Once the board [settles](simulation.qd#when-the-board-settles), `stable` or `period 2` takes its place; hover over it to see the generation that began.
 - The rule. Click it to open [Settings](settings.qd#rule) with the rulestring ready to edit.
 - The cell under the pointer, as `(x, y)` counted from the top-left cell `(0, 0)`, while the pointer is over the board.
 

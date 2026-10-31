@@ -995,6 +995,7 @@ fn switch(parent: &mut ChildSpawnerCommands, title: &str, description: &str, act
 /// Slides the knob to the side matching the setting, and fills the track when on.
 pub(super) fn sync_switches(
     view: ViewState,
+    sim: Res<Simulation>,
     mut tracks: Query<
         (
             &SwitchTrack,
@@ -1012,6 +1013,7 @@ pub(super) fn sync_switches(
             Action::Grid => view.grid.enabled,
             Action::CellAge => view.cell_age.enabled,
             Action::FillCanvas => view.board.fill_canvas,
+            Action::PauseWhenSettled => sim.app.pause_when_settled(),
             _ => false,
         };
         set_if_neq!(
@@ -1437,6 +1439,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         });
                         apply_row(p, Action::ApplyRule, |p| inline_field(p, "Rulestring", &drafts.rule, Field::Rule, drafts.rule_first));
                         setting(p, "Edges", |p| segmented(p, &[("Wrap", Action::Edges(BoundaryMode::Wrap)), ("Fixed", Action::Edges(BoundaryMode::Fixed))]));
+                        switch(p, "Pause when settled", "Stop once the board stops changing or starts repeating", Action::PauseWhenSettled);
                         p.spawn(row()).with_children(|p| { button(p, "Reset generation counter", Action::ResetEpoch); });
 
                         heading(p, "Randomization", "Each cell has this chance of being alive. The same density, seed, and board size repeat the same board; leave the seed blank for a fresh board each time.");

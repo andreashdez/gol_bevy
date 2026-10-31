@@ -62,6 +62,7 @@ struct SimulationSettings {
     boundary: Option<BoundaryMode>,
     tick_rate_ms: Option<u64>,
     max_speed: Option<bool>,
+    pause_when_settled: Option<bool>,
     random_density_percent: Option<u8>,
     random_seed: Option<u64>,
 }
@@ -73,6 +74,7 @@ impl SimulationSettings {
             boundary: Some(sim.app.board.boundary_mode()),
             tick_rate_ms: Some(sim.app.tick_rate_ms()),
             max_speed: Some(sim.app.is_max_speed()),
+            pause_when_settled: Some(sim.app.pause_when_settled()),
             random_density_percent: Some(sim.app.randomize_settings().density_percent()),
             random_seed: sim.app.randomize_settings().seed(),
         }
@@ -95,6 +97,9 @@ impl SimulationSettings {
         }
         if self.max_speed == Some(true) {
             sim.app.set_max_speed();
+        }
+        if let Some(pause) = self.pause_when_settled {
+            sim.app.set_pause_when_settled(pause);
         }
     }
 }
@@ -303,6 +308,9 @@ fn persist_settings(
     if let Some(max_speed) = simulation.max_speed {
         contents.push_str(&format!("max_speed = {max_speed}\n"));
     }
+    if let Some(pause) = simulation.pause_when_settled {
+        contents.push_str(&format!("pause_when_settled = {pause}\n"));
+    }
     if let Some(density) = simulation.random_density_percent {
         contents.push_str(&format!("random_density_percent = {density}\n"));
     }
@@ -359,6 +367,9 @@ fn parse_settings_from_toml(contents: &str) -> ParsedSettings {
             "boundary_mode" => parsed.simulation.boundary = boundary_from_storage_str(value),
             "tick_rate_ms" => parsed.simulation.tick_rate_ms = value.parse::<u64>().ok(),
             "max_speed" => parsed.simulation.max_speed = value.parse::<bool>().ok(),
+            "pause_when_settled" => {
+                parsed.simulation.pause_when_settled = value.parse::<bool>().ok()
+            }
             "random_density_percent" => {
                 parsed.simulation.random_density_percent =
                     value.parse::<u8>().ok().filter(|&density| density <= 100)
@@ -666,6 +677,7 @@ mod persistence_tests {
         app.toggle_boundary_mode();
         app.set_tick_rate_ms(100);
         app.set_max_speed();
+        app.set_pause_when_settled(true);
         app.set_randomize_settings(RandomizeSettings::new(70, Some(u64::MAX)).unwrap());
         let mut world = World::new();
         layout.control_deck_visible = true;
@@ -720,6 +732,7 @@ mod persistence_tests {
         assert_eq!(restored.app.board.boundary_mode(), BoundaryMode::Fixed);
         assert_eq!(restored.app.tick_rate_ms(), 100);
         assert!(restored.app.is_max_speed());
+        assert!(restored.app.pause_when_settled());
         assert_eq!(
             restored.app.randomize_settings(),
             RandomizeSettings::new(70, Some(u64::MAX)).unwrap()

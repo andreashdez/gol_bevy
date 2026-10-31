@@ -88,6 +88,12 @@ pub const BINDING_STEP: KeyBinding = KeyBinding {
     caps: &["J"],
     action: "Step one generation",
 };
+pub const BINDING_RESET_TO_START: KeyBinding = KeyBinding {
+    chars: &["b"],
+    keys: &[],
+    caps: &["B"],
+    action: "Reset to start",
+};
 pub const BINDING_RANDOMIZE: KeyBinding = KeyBinding {
     chars: &["r"],
     keys: &[],
@@ -279,6 +285,7 @@ pub fn help_sections() -> [HelpSection; 5] {
             entries: vec![
                 BINDING_RUN_PAUSE.into(),
                 BINDING_STEP.into(),
+                BINDING_RESET_TO_START.into(),
                 BINDING_SPEED_UP.into(),
                 BINDING_SLOW_DOWN.into(),
                 BINDING_TOGGLE_BOUNDARY_MODE.into(),
@@ -497,6 +504,14 @@ impl EditFeedback {
             "Edit redone · U to undo"
         } else {
             "Nothing to redo"
+        });
+    }
+
+    pub fn reset_to_start(&mut self, app: &mut GolApp) {
+        self.show(if app.reset_to_start() {
+            "Reset to start · U to undo"
+        } else {
+            "Nothing to reset"
         });
     }
 

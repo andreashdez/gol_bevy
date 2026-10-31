@@ -53,6 +53,12 @@ A board is split only into bands of at least 65,536 cells. Dispatching bands cos
 
 Step buffers, candidate lists, and per-band change lists are kept between generations instead of being reallocated. Dirty and frontier flags are cleared one index at a time, for just the cells that were set, rather than by filling the whole array.
 
+## Fingerprints
+
+Each generation has a 64-bit fingerprint: the XOR of a fixed key for every cell that has flipped since the run began. A cell flipped back cancels out, so returning to the same cells returns to the same value, on either stepping path. It comes from the lists of changed cells that stepping builds anyway, with each band of a dense scan computing its own share, so it costs nothing per board cell.
+
+`settle` compares each fingerprint with the last 128, which is how a repeating board is noticed. Each generation follows only from the one before it, so one repeat means the board repeats until edited. Edits do not update the fingerprint, so anything that changes the board other than stepping starts the comparison over.
+
 ## Rendering
 
 The board is drawn as a single texture with one texel per cell, so the cell count costs no entities. After each frame's steps, the renderer takes the board's list of dirty cells and rewrites only those texels. Resizing, randomizing, and clearing request a full redraw instead.

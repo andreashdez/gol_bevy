@@ -22,10 +22,11 @@ pub(super) enum Icon {
     Draw,
     Erase,
     Stamp,
+    Reset,
 }
 
 impl Icon {
-    const ALL: [Icon; 15] = [
+    const ALL: [Icon; 16] = [
         Icon::Play,
         Icon::Pause,
         Icon::Step,
@@ -41,6 +42,7 @@ impl Icon {
         Icon::Draw,
         Icon::Erase,
         Icon::Stamp,
+        Icon::Reset,
     ];
 
     /// Stable handles, so icons can be spawned before or without the asset.
@@ -64,6 +66,8 @@ impl Icon {
             )),
             Icon::Step => (triangle(p, [vec2(6.5, 6.5), vec2(6.5, 17.5), vec2(14.5, 12.0)]) - 1.0)
                 .min(rounded_box(p, vec2(17.5, 12.0), vec2(1.3, 6.0), 1.0)),
+            // Step, facing back to the start.
+            Icon::Reset => Icon::Step.distance(vec2(24.0 - p.x, p.y)),
             // Lucide's undo-2: a chevron, a line, and a half turn back.
             Icon::Undo => undo(p) - HALF_STROKE,
             Icon::Redo => undo(vec2(24.0 - p.x, p.y)) - HALF_STROKE,
@@ -325,6 +329,7 @@ mod tests {
             (Icon::Play, vec2(11.0, 12.0)),
             (Icon::Pause, vec2(8.0, 12.0)),
             (Icon::Step, vec2(17.5, 12.0)),
+            (Icon::Reset, vec2(6.5, 12.0)),
             (Icon::Undo, vec2(10.0, 9.0)),
             (Icon::Redo, vec2(14.0, 9.0)),
             (Icon::Grid, vec2(4.0 + 16.0 / 3.0, 12.0)),

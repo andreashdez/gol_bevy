@@ -146,6 +146,7 @@ pub(super) fn spawn(commands: &mut Commands) {
                 .with_children(|p| match group {
                     Group::Playback => {
                         icon_button(p, "Play", Icon::Play, Action::Play);
+                        icon_button(p, "Reset to start", Icon::Reset, Action::ResetToStart);
                         icon_button(p, "Step", Icon::Step, Action::Step);
                         speed::spawn(p);
                     }

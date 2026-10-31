@@ -11,6 +11,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
       - lib.rs
       - app.rs
       - board.rs
+      - settle.rs
       - patterns.rs
       - shared.rs
       - settings_plugin.rs

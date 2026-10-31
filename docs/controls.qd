@@ -13,6 +13,7 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 |-------------------------|------------------------------|
 | .keybinding {Space}     | Run or pause                 |
 | .keybinding {J}         | Step one generation          |
+| .keybinding {B}         | Reset to start               |
 | .keybinding {R}         | Randomize the board          |
 | .keybinding {X}         | Clear the board              |
 | .keybinding {0}         | Reset the generation counter |

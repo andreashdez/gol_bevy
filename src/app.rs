@@ -1,6 +1,7 @@
 use crate::{
     board::{self, RandomizeSettings, Rule},
     patterns::{Pattern, PatternParseError},
+    settle::{SettleWatch, Settled},
 };
 use std::collections::VecDeque;
 
@@ -115,6 +116,12 @@ pub struct App {
     stroke_saved: bool,
     /// The latest generation, with the live cells before and after it.
     last_step: Option<(usize, usize, usize)>,
+    /// The board before the first generation since the latest edit.
+    run_start: Option<EditSnapshot>,
+    settle: SettleWatch,
+    pause_when_settled: bool,
+    /// Why playback paused itself, until the UI has said so.
+    auto_paused: Option<Settled>,
 
     pub board: board::Board,
 }
@@ -146,6 +153,10 @@ impl App {
             stroke_active: false,
             stroke_saved: false,
             last_step: None,
+            run_start: None,
+            settle: SettleWatch::default(),
+            pause_when_settled: false,
+            auto_paused: None,
             board,
         }
     }
@@ -217,10 +228,14 @@ impl App {
 
     pub fn toggle_boundary_mode(&mut self) {
         self.board.toggle_boundary_mode();
+        self.settle.reset();
         self.needs_redraw = true;
     }
 
     pub fn set_boundary_mode(&mut self, mode: crate::board::BoundaryMode) {
+        if mode != self.board.boundary_mode() {
+            self.settle.reset();
+        }
         self.board.set_boundary_mode(mode);
         self.needs_redraw = true;
     }
@@ -268,12 +283,56 @@ impl App {
 
     pub fn increment_epoch(&mut self) {
         if let Some(res) = self.epoch.checked_add(1) {
+            if self.run_start.is_none() {
+                self.run_start = Some(self.current_snapshot());
+            }
             self.epoch = res;
             let before = self.board.live_cells_count();
+            let fingerprint = self.board.fingerprint();
             self.board.step();
             self.last_step = Some((res, before, self.board.live_cells_count()));
+            let settled = self
+                .settle
+                .record(fingerprint, self.board.fingerprint(), res);
+            if self.running && self.pause_when_settled && settled.is_some() {
+                self.running = false;
+                self.auto_paused = settled;
+            }
             self.needs_redraw = true;
         }
+    }
+
+    /// Set once the board repeats an earlier generation, until it is edited.
+    pub fn settled(&self) -> Option<Settled> {
+        self.settle.settled()
+    }
+
+    pub fn pause_when_settled(&self) -> bool {
+        self.pause_when_settled
+    }
+
+    pub fn set_pause_when_settled(&mut self, pause: bool) {
+        self.pause_when_settled = pause;
+    }
+
+    /// What just paused playback, once, so the UI can explain it.
+    pub fn take_auto_paused(&mut self) -> Option<Settled> {
+        self.auto_paused.take()
+    }
+
+    pub fn can_reset_to_start(&self) -> bool {
+        self.run_start.is_some()
+    }
+
+    /// Returns to the board before the run, as an undoable edit, and pauses.
+    pub fn reset_to_start(&mut self) -> bool {
+        self.end_stroke();
+        let Some(start) = self.run_start.take() else {
+            return false;
+        };
+        self.save_edit();
+        self.restore(start);
+        true
     }
 
     /// How the latest generation changed the live cell count. `None` once an
@@ -287,6 +346,7 @@ impl App {
     pub fn reset_epoch(&mut self) {
         if self.epoch != 0 {
             self.epoch = 0;
+            self.settle.renumber();
             self.needs_redraw = true;
         }
     }
@@ -344,6 +404,7 @@ impl App {
             // Snapshots hold cells in the old layout, so they no longer fit.
             self.undo_history.clear();
             self.redo_history.clear();
+            self.forget_run();
             self.end_stroke();
             self.needs_redraw = true;
         }
@@ -439,6 +500,7 @@ impl App {
         }
         restored.patterns.extend(decoded.patterns);
         restored.library_revision = self.library_revision.wrapping_add(1);
+        restored.pause_when_settled = self.pause_when_settled;
         *self = restored;
     }
 
@@ -635,7 +697,15 @@ impl App {
         self.stroke_saved = false;
     }
 
+    /// The board no longer follows from the run so far.
+    fn forget_run(&mut self) {
+        self.run_start = None;
+        self.settle.reset();
+    }
+
     fn save_edit(&mut self) {
+        // Ahead of the stroke check: a stroke can span generations.
+        self.forget_run();
         if self.stroke_active && self.stroke_saved {
             return;
         }
@@ -659,6 +729,7 @@ impl App {
         self.board.restore_cells(snapshot.cells);
         self.epoch = snapshot.epoch;
         self.running = false;
+        self.forget_run();
         self.needs_redraw = true;
     }
 
@@ -736,6 +807,236 @@ mod tests {
         app.select_pattern(pattern);
         let (cols, rows) = app.board.size();
         app.place_selected_pattern_at(cols / 2, rows / 2);
+    }
+
+    /// A board with a blinker, and its cells before any generation has run.
+    fn blinker_board() -> (App, Vec<u8>) {
+        let mut app = App::new(16, 16);
+        stamp_centered(&mut app, PatternKind::Blinker);
+        let cells = app.board.snapshot_cells();
+        (app, cells)
+    }
+
+    #[test]
+    fn reset_returns_to_the_board_before_the_first_generation() {
+        let (mut app, drawn) = blinker_board();
+        assert!(!app.can_reset_to_start());
+        assert!(!app.reset_to_start());
+
+        // Pausing and stepping stay part of the same run.
+        app.toggle_running();
+        app.increment_epoch();
+        app.toggle_running();
+        app.increment_epoch();
+        app.increment_epoch();
+        assert!(app.can_reset_to_start());
+        app.toggle_running();
+
+        assert!(app.reset_to_start());
+        assert_eq!(app.board.snapshot_cells(), drawn);
+        assert_eq!(app.epoch, 0);
+        assert!(!app.is_running());
+        assert!(!app.can_reset_to_start());
+    }
+
+    #[test]
+    fn an_edit_moves_the_start_of_the_run_even_within_a_stroke() {
+        let (mut app, _) = blinker_board();
+        app.increment_epoch();
+        app.begin_stroke();
+        app.populate_board(1, 1);
+        assert!(!app.can_reset_to_start());
+        app.increment_epoch();
+        assert!(app.can_reset_to_start());
+        // Later cells of the same stroke are one undo edit, but still edits.
+        app.populate_board(2, 1);
+        assert!(!app.can_reset_to_start());
+        app.end_stroke();
+        let edited = app.board.snapshot_cells();
+
+        app.increment_epoch();
+        assert!(app.reset_to_start());
+        assert_eq!(app.board.snapshot_cells(), edited);
+        assert_eq!(app.epoch, 2);
+    }
+
+    #[test]
+    fn reset_is_an_undoable_edit() {
+        let (mut app, drawn) = blinker_board();
+        for _ in 0..3 {
+            app.increment_epoch();
+        }
+        let ran = app.board.snapshot_cells();
+        assert!(app.reset_to_start());
+
+        assert!(app.undo());
+        assert_eq!(app.board.snapshot_cells(), ran);
+        assert_eq!(app.epoch, 3);
+        assert!(app.redo());
+        assert_eq!(app.board.snapshot_cells(), drawn);
+        assert_eq!(app.epoch, 0);
+    }
+
+    #[test]
+    fn undo_drops_the_start_of_the_run() {
+        let (mut app, _) = blinker_board();
+        app.increment_epoch();
+        assert!(app.undo());
+        assert!(!app.can_reset_to_start());
+    }
+
+    #[test]
+    fn resizing_drops_the_start_of_the_run() {
+        let (mut app, _) = blinker_board();
+        app.increment_epoch();
+        app.resize_board(32, 32);
+        assert!(!app.can_reset_to_start());
+    }
+
+    #[test]
+    fn a_still_life_settles_on_the_first_generation_and_an_oscillator_on_its_period() {
+        let mut app = App::new(16, 16);
+        for (col, row) in [(4, 4), (5, 4), (4, 5), (5, 5)] {
+            app.populate_board(col, row);
+        }
+        assert_eq!(app.settled(), None);
+        app.increment_epoch();
+        let settled = app.settled().unwrap();
+        assert_eq!((settled.since, settled.period), (0, 1));
+
+        let (mut app, _) = blinker_board();
+        app.increment_epoch();
+        assert_eq!(app.settled(), None);
+        app.increment_epoch();
+        let settled = app.settled().unwrap();
+        assert_eq!((settled.since, settled.period), (0, 2));
+    }
+
+    #[test]
+    fn a_glider_only_settles_once_it_crashes_into_a_fixed_corner() {
+        let mut app = App::new(32, 32);
+        app.set_boundary_mode(crate::board::BoundaryMode::Fixed);
+        stamp_centered(&mut app, PatternKind::Glider);
+        let mut generation = 0;
+        while app.settled().is_none() {
+            assert!(generation < 200, "the glider should end in the corner");
+            app.increment_epoch();
+            generation += 1;
+        }
+        let settled = app.settled().unwrap();
+        assert_eq!(settled.period, 1);
+        assert!(settled.since > 20);
+    }
+
+    #[test]
+    fn anything_that_changes_the_evolution_clears_settled() {
+        let settled = || {
+            let (mut app, _) = blinker_board();
+            app.increment_epoch();
+            app.increment_epoch();
+            assert!(app.settled().is_some());
+            app
+        };
+        let mut app = settled();
+        app.populate_board(1, 1);
+        assert_eq!(app.settled(), None);
+
+        let mut app = settled();
+        app.undo();
+        assert_eq!(app.settled(), None);
+
+        let mut app = settled();
+        app.reset_to_start();
+        assert_eq!(app.settled(), None);
+
+        let mut app = settled();
+        app.set_rule(Rule::parse("B36/S23").unwrap());
+        assert_eq!(app.settled(), None);
+
+        let mut app = settled();
+        app.toggle_boundary_mode();
+        assert_eq!(app.settled(), None);
+
+        let mut app = settled();
+        app.resize_board(32, 32);
+        assert_eq!(app.settled(), None);
+
+        // Choosing the mode already in use changes nothing.
+        let mut app = settled();
+        app.set_boundary_mode(app.board.boundary_mode());
+        assert!(app.settled().is_some());
+    }
+
+    #[test]
+    fn an_edit_between_generations_does_not_read_as_a_repeat() {
+        let (mut app, _) = blinker_board();
+        app.increment_epoch();
+        app.populate_board(1, 1);
+        app.increment_epoch();
+        assert_eq!(app.settled(), None);
+    }
+
+    #[test]
+    fn resetting_the_counter_renumbers_a_settled_board() {
+        let (mut app, _) = blinker_board();
+        for _ in 0..5 {
+            app.increment_epoch();
+        }
+        app.reset_epoch();
+        assert_eq!(app.settled().map(|settled| settled.since), Some(0));
+    }
+
+    #[test]
+    fn playback_pauses_once_when_settled_if_asked() {
+        let (mut app, _) = blinker_board();
+        app.set_pause_when_settled(true);
+        app.toggle_running();
+        app.increment_epoch();
+        assert!(app.is_running());
+        assert_eq!(app.take_auto_paused(), None);
+        app.increment_epoch();
+        assert!(!app.is_running());
+        assert_eq!(app.take_auto_paused(), app.settled());
+        assert_eq!(app.take_auto_paused(), None);
+
+        // Playing on from there is a choice, so it is not interrupted again.
+        app.toggle_running();
+        app.increment_epoch();
+        assert!(app.is_running());
+        assert_eq!(app.take_auto_paused(), None);
+    }
+
+    #[test]
+    fn stepping_to_a_settled_board_does_not_report_a_pause() {
+        let (mut app, _) = blinker_board();
+        app.set_pause_when_settled(true);
+        app.increment_epoch();
+        app.increment_epoch();
+        assert!(app.settled().is_some());
+        assert_eq!(app.take_auto_paused(), None);
+    }
+
+    #[test]
+    fn playback_keeps_running_past_a_settled_board_by_default() {
+        let (mut app, _) = blinker_board();
+        app.toggle_running();
+        app.increment_epoch();
+        app.increment_epoch();
+        assert!(app.settled().is_some());
+        assert!(app.is_running());
+    }
+
+    #[test]
+    fn opening_a_workspace_keeps_the_pause_preference_but_not_the_run() {
+        let (mut app, _) = blinker_board();
+        app.set_pause_when_settled(true);
+        let workspace = app.workspace().unwrap();
+        app.increment_epoch();
+        app.increment_epoch();
+        app.restore_workspace(workspace).unwrap();
+        assert!(app.pause_when_settled());
+        assert!(!app.can_reset_to_start());
+        assert_eq!(app.settled(), None);
     }
 
     #[test]

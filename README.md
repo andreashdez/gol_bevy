@@ -36,7 +36,7 @@ icons. It comes back when the window is wide again, unless you showed or hid it 
 Resizing preserves keyboard focus and the camera view relative to the fitted board.
 The workspace group has icon toggles for the grid, cell age, and pattern palette, which show
 whether they are on, plus Import / Export, a gear for Settings, and a ? for Help.
-Play / Pause, Step, Undo, and Redo are icon buttons too; tooltips give their names and shortcuts.
+Play / Pause, Reset to start, Step, Undo, and Redo are icon buttons too; tooltips give their names and shortcuts.
 
 The pattern library scrolls with the mouse wheel or its scrollbar; search and the
 stamp preview with its rotate/flip controls stay visible while browsing. The stamp
@@ -72,6 +72,17 @@ and `inf` work too); the unit is hidden while editing and may be typed. Enter ap
 a valid edited value. Invalid values leave the simulation speed unchanged. Fixed speeds
 use millisecond intervals, so the field shows the closest achievable rate. At ∞, the
 field shows the rate actually achieved while running, and ∞ again when paused.
+**Reset to start** (**B**) returns to the board as it was before its first generation since
+your latest edit, including the generation counter, and pauses. Pausing and stepping stay part
+of the same run; an edit, undo, or board resize starts a new one. It is an undoable edit, so a
+reset by mistake loses nothing.
+
+When a generation repeats one from the last 128, the board has settled: the status bar shows
+`stable`, or `period 2` for a two-generation cycle, in place of the population change, and
+hovering there gives the generation it started from. Turn on **Pause when settled** in Settings
+to stop there; playback pauses once, with a message saying why, and Play continues past it.
+Longer cycles, such as a lone glider circling a wrapped board, are not detected.
+
 Hover or focus buttons for shortcut hints. Search and speed field focus block
 board shortcuts; Escape returns keyboard control to the canvas.
 
@@ -103,7 +114,7 @@ of other random operations. Density is a probability per cell, so the resulting
 population is approximate; 0% clears the board and 100% fills it. Randomization
 keeps the current rule, boundary mode, and generation counter.
 
-Palette visibility, board size, rule, boundary mode, speed, randomization preferences, the grid, cell age, and the theme are saved between runs
+Palette visibility, board size, rule, boundary mode, speed, pause when settled, randomization preferences, the grid, cell age, and the theme are saved between runs
 in `settings.toml`, in a `gol-bevy` folder in the platform's settings location:
 
 - Linux: `$XDG_CONFIG_HOME`, or `~/.config` if that is unset
@@ -161,6 +172,7 @@ just ci-local
 | --- | --- |
 | `Space` | Play / pause |
 | `J` | Step one generation |
+| `B` | Reset to start |
 | `+` | Speed up |
 | `−` | Slow down |
 | `M` | Wrap / fixed edges |
@@ -212,12 +224,12 @@ just ci-local
 
 Board size is set in Settings: pick a preset (128², 256², 512², 1024²) or type exact dimensions, from 8 up to 2048 per side. The choice is saved between runs. **Fill canvas**, on by default, instead sizes the board to the canvas and keeps it matched as the window or palette changes. Resizing the board clears undo history, because old snapshots no longer fit; resizing the window does not, unless Fill canvas is on.
 
-The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools stay available independently of the pattern palette; rotate and flip controls appear in the palette for stamps. Use the Pattern palette toggle to show or hide the library. Grid and Cell age are available in the toolbar and Settings. Cell age, on by default, brightens newborn cells, deepens long-lived ones, and leaves fading trails where cells died; boundary mode is in Settings. The status bar shows a green Running or neutral Paused pill, the generation, the population with its change over the latest generation (for example `842 alive −12`), the rule, which opens Settings at the rulestring when clicked, and the cell under the pointer, plus board dimensions and boundary mode when space allows. Numbers use tabular digits and keep their widest size until the board is cleared or resized, so readouts stay close without shifting. The status
+The playback toolbar shows speed in generations per second. Draw, Erase, and Stamp tools stay available independently of the pattern palette; rotate and flip controls appear in the palette for stamps. Use the Pattern palette toggle to show or hide the library. Grid and Cell age are available in the toolbar and Settings. Cell age, on by default, brightens newborn cells, deepens long-lived ones, and leaves fading trails where cells died; boundary mode is in Settings. The status bar shows a green Running or neutral Paused pill, the generation, the population with its change over the latest generation (for example `842 alive −12`) or how the board settled (`842 alive period 2`), the rule, which opens Settings at the rulestring when clicked, and the cell under the pointer, plus board dimensions and boundary mode when space allows. Numbers use tabular digits and keep their widest size until the board is cleared or resized, so readouts stay close without shifting. The status
 bar stays a single row at every window size. The active rule preset is highlighted in
 Settings. Clear, randomize, undo, and redo show brief feedback, including the undo
 shortcut where applicable. Diagnostics open from Settings or F3 and start hidden.
 
-Undo restores the board, generation, and rule before drawing, erasing, placing a stamp, randomizing, clearing, changing the rule, or importing a pattern that changes the rule, and pauses playback. Redo reapplies an undone edit, and making a new edit discards the redo chain. Each drag is one edit. History retains up to 32 edits within an approximate 16 MiB budget (with at least one edit), and clears when the board is resized. Imported patterns remain available for the current session, or across sessions in saved workspace files.
+Undo restores the board, generation, and rule before drawing, erasing, placing a stamp, randomizing, clearing, resetting to start, changing the rule, or importing a pattern that changes the rule, and pauses playback. Redo reapplies an undone edit, and making a new edit discards the redo chain. Each drag is one edit. History retains up to 32 edits within an approximate 16 MiB budget (with at least one edit), and clears when the board is resized. Imported patterns remain available for the current session, or across sessions in saved workspace files.
 
 ## Architecture map
 
@@ -246,6 +258,7 @@ Shared resources:
 Core domain:
   app::App      (state machine and user actions)
   board::Board  (cell storage, stepping rules, dirty-cell tracking)
+  settle        (noticing a board that repeats, from generation fingerprints)
   patterns      (built-ins from assets/patterns/ + RLE parsing)
 ```
 
@@ -287,6 +300,7 @@ x = 8, y = 4
 - The dense scan runs in bands of whole rows on Bevy's compute task pool, one band per thread, with each band also marking its own changed cells dirty. A band reads only the current generation and writes only its own rows, so no locking is needed. Boards split only into bands of at least 64K cells: below that, the 15-20 µs it costs to dispatch them outweighs the work they share on a settled board.
 - A dense step whose changes exceed the fallback threshold does not keep them as a frontier list, since the next step would take the dense scan anyway.
 - Dense fallback threshold defaults to 5% candidate coverage and can be overridden with `GOL_FRONTIER_DENSE_THRESHOLD_PERCENT`. The dense scan is vectorizable while the frontier step pays per-candidate bookkeeping, so the scan wins early: around 2% for young soup and 5-6% for settled debris on small boards. `cargo bench --bench dense_crossover` measures both, and is worth re-running after changing either path. A frontier that is already over the threshold skips straight to the scan, and candidate collection stops as soon as it crosses it.
+- Each generation has a fingerprint, the XOR of a key per flipped cell, updated from the lists of changed cells stepping already builds. Settling is noticed by comparing it to the last 128, so the check costs nothing per board cell.
 - Rendering is incremental: the board is drawn as a single texture with one texel per cell, and only changed cells are rewritten. Cell count no longer costs one sprite entity each.
 - The grid overlay is drawn only for the lines that intersect the viewport, and is skipped entirely below a few pixels per cell, so its cost tracks screen area rather than board area.
 - A frame runs at most 8 generations to catch up after a stall and then drops the backlog, so a slow frame cannot snowball into a frozen app. Max speed instead spends a fixed time budget per frame, capped at 1024 generations.

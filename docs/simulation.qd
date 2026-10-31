@@ -7,9 +7,26 @@
 |----------------------|-------------------|----------|
 | Run or pause         | .keybinding {Space} | **Play** / **Pause** |
 | Advance one generation | .keybinding {J} | **Step** |
+| Go back to the start of the run | .keybinding {B} | **Reset to start** |
 | Reset the generation counter to 0 | .keybinding {0} | **Reset generation counter** in Settings |
 
 Resetting the generation counter leaves the cells as they are.
+
+### Reset to start
+
+**Reset to start** returns to the board as it was before its first generation since your latest edit, including the generation counter, and pauses. Use it to rerun a pattern, or to change it and try again.
+
+Pausing and stepping stay part of the same run. Drawing, erasing, stamping, randomizing, clearing, or changing the rule moves the start to the edited board, even while the simulation runs, so a reset never discards an edit. Undo, redo, and resizing the board end the run instead, and the button stays disabled until the next generation. With [Fill canvas](settings.qd#fill-canvas) on, resizing the window resizes the board too.
+
+A reset is itself an [undoable edit](editing.qd#undo-and-redo): undo returns to where the run had got to, and redo resets again.
+
+### When the board settles
+
+Sooner or later most boards stop evolving: everything left is still, or repeats. The status bar notices as soon as a generation repeats one from the last 128, and shows it in place of the population change: `stable` for a board that no longer changes, and `period 2` for one that repeats every two generations. Hover over it to see the generation the cycle began at. The label stays until something changes how the board evolves: an edit, undo, a board resize, or switching edges.
+
+Turn on **Pause when settled** in [Settings](settings.qd#simulation) to stop there. Playback pauses at the first repeat with a short message saying why, which helps at ∞ speed. It pauses only once, so pressing Play continues past it.
+
+128 generations is enough for mixes of the common oscillators, even though their periods combine. Longer cycles are not noticed. A glider circling a wrapped board is the usual one, since it returns to the same cell only after a very long time. Gliders on a [fixed](#edges) board crash into an edge instead.
 
 > Tip: .keybinding {Space} keeps playing and pausing after you click a toolbar button. Only a button you reach with .keybinding {Tab} takes .keybinding {Space} for itself. Click the board, or press .keybinding {Tab} until the board is outlined, to give .keybinding {Space} back to playback.
 

@@ -59,6 +59,7 @@ These are edits, and can be undone:
 - drawing and erasing (one edit per drag)
 - placing a stamp
 - randomizing and clearing the board
+- [resetting to start](simulation.qd#reset-to-start)
 - changing the rule, including an import that changes the rule
 
 Undo restores the board, the generation counter, and the rule as they were before the edit, and pauses playback so you can see the result. Redo reapplies an undone edit and also leaves playback paused. Making a new edit discards anything left to redo.

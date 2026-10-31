@@ -20,7 +20,7 @@ const INVALID_HINT: &str = "Enter a speed from 1 to 40 gen/s, or ∞ (or max).";
 const DRAG_THRESHOLD: f32 = 3.0;
 /// Wide, so the fill reads as a scale and a drag has room; the toolbar's
 /// playback budget is sized around it.
-const FIELD_WIDTH: f32 = 220.0;
+const FIELD_WIDTH: f32 = 178.0;
 const STEP_WIDTH: f32 = 20.0;
 /// The ∞ toggle at the field's right end, where the fill stops.
 const MAX_WIDTH: f32 = 30.0;

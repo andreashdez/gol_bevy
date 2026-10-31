@@ -4,12 +4,12 @@ use crate::{
     shared::{
         BINDING_CLEAR, BINDING_CLEAR_STAMP, BINDING_FLIP_STAMP, BINDING_PAN_DOWN, BINDING_PAN_LEFT,
         BINDING_PAN_RIGHT, BINDING_PAN_UP, BINDING_QUIT, BINDING_RANDOMIZE, BINDING_RESET_CAMERA,
-        BINDING_RESET_EPOCH, BINDING_ROTATE_STAMP, BINDING_RUN_PAUSE, BINDING_SLOW_DOWN,
-        BINDING_SPEED_UP, BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_CONTROL_DECK,
-        BINDING_TOGGLE_DIAGNOSTICS, BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, CAMERA_PAN_SPEED,
-        CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay, EditFeedback,
-        GridOverlay, MainCamera, Simulation, TOOL_SHORTCUTS, TypedKeys, UiLayout, UpdateSet,
-        collect_typed_keys, world_to_cell,
+        BINDING_RESET_EPOCH, BINDING_RESET_TO_START, BINDING_ROTATE_STAMP, BINDING_RUN_PAUSE,
+        BINDING_SLOW_DOWN, BINDING_SPEED_UP, BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE,
+        BINDING_TOGGLE_CONTROL_DECK, BINDING_TOGGLE_DIAGNOSTICS, BINDING_TOGGLE_GRID,
+        BINDING_TOGGLE_HELP, CAMERA_PAN_SPEED, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP,
+        DiagnosticsOverlay, EditFeedback, GridOverlay, MainCamera, Simulation, TOOL_SHORTCUTS,
+        TypedKeys, UiLayout, UpdateSet, collect_typed_keys, world_to_cell,
     },
     ui_input::{UiInputCapture, canvas_keyboard_available},
 };
@@ -102,6 +102,9 @@ fn handle_keyboard(
     }
     if BINDING_STEP.just_pressed(&keys, &typed) {
         sim.app.increment_epoch();
+    }
+    if BINDING_RESET_TO_START.just_pressed(&keys, &typed) {
+        feedback.reset_to_start(&mut sim.app);
     }
     if BINDING_RANDOMIZE.just_pressed(&keys, &typed) {
         feedback.randomize(&mut sim.app);

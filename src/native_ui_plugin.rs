@@ -167,7 +167,7 @@ enum Readout {
     Status,
     Generation,
     Population,
-    /// How the latest generation changed the population.
+    /// How the latest generation changed the population, or how the board settled.
     Change,
     /// The cell under the pointer.
     Pointer,
@@ -180,6 +180,8 @@ struct StatusPill;
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 enum Action {
     Play,
+    /// Returns to the board before the run.
+    ResetToStart,
     Step,
     Undo,
     Redo,
@@ -218,6 +220,7 @@ enum Action {
     ConfirmOpenWorkspace,
     CancelOpenWorkspace,
     ResetEpoch,
+    PauseWhenSettled,
     ApplyRandomize,
     RandomizeNow,
     Tool(EditTool),
@@ -468,7 +471,14 @@ fn setup(
                     p.spawn(label("Gen", 13.0, Token::Muted));
                     p.spawn(controls::number(Readout::Generation, 13.0, Token::Ink));
                 });
-                p.spawn(controls::readout_group()).with_children(|p| {
+                p.spawn((
+                    controls::readout_group(),
+                    controls::PopulationReadout,
+                    controls::Tooltip(String::new()),
+                    Hovered::default(),
+                    accessibility::named_node(accesskit::Role::Group, "Population"),
+                ))
+                .with_children(|p| {
                     p.spawn(controls::number(Readout::Population, 13.0, Token::Ink));
                     p.spawn(label("alive", 13.0, Token::Muted));
                     p.spawn(controls::number(Readout::Change, 12.0, Token::Muted));
@@ -691,6 +701,7 @@ fn activate(
         Action::Theme(choice) => {
             theme.set_if_neq(*choice);
         }
+        Action::ResetToStart => feedback.reset_to_start(&mut sim.app),
         Action::Undo => feedback.undo(&mut sim.app),
         Action::Redo => feedback.redo(&mut sim.app),
         Action::Clear => feedback.clear(&mut sim.app),
@@ -721,6 +732,7 @@ fn apply_action(action: Action, app: &mut GolApp) {
         Action::Clear => app.clear_board(),
         Action::Edges(mode) => app.set_boundary_mode(mode),
         Action::ResetEpoch => app.reset_epoch(),
+        Action::PauseWhenSettled => app.set_pause_when_settled(!app.pause_when_settled()),
         _ => {}
     }
 }
@@ -812,6 +824,7 @@ fn sync(
             accessible.set_label(accessible_label);
         }
         let disabled = match action {
+            Action::ResetToStart => !sim.app.can_reset_to_start(),
             Action::Undo => !sim.app.can_undo(),
             Action::Redo => !sim.app.can_redo(),
             Action::Rotate | Action::Flip => sim.app.tool() != EditTool::Stamp,
@@ -840,6 +853,7 @@ fn sync(
             Action::MaxSpeed => sim.app.is_max_speed(),
             Action::CellAge => cell_age.enabled,
             Action::FillCanvas => board.fill_canvas,
+            Action::PauseWhenSettled => sim.app.pause_when_settled(),
             Action::Sidebar => layout.control_deck_visible,
             Action::Theme(choice) => *theme == *choice,
             Action::Edges(mode) => sim.app.board.boundary_mode() == *mode,
@@ -856,6 +870,7 @@ fn sync(
                 | Action::Grid
                 | Action::CellAge
                 | Action::FillCanvas
+                | Action::PauseWhenSettled
                 | Action::Sidebar
                 | Action::RulePreset(_)
                 | Action::Theme(_)

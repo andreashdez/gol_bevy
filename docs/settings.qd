@@ -23,6 +23,7 @@ Switch it off to keep the current size from then on; with it off, resizing the w
 
 - **Rule:** pick **Life**, **HighLife**, **Day & Night**, or **Seeds**, or type a rulestring and click **Apply**. See [Rules](simulation.qd#rules) for the notation.
 - **Edges:** choose **Wrap** or **Fixed**. See [Edges](simulation.qd#edges).
+- **Pause when settled** pauses playback once the board stops changing or starts repeating. It is off by default. See [When the board settles](simulation.qd#when-the-board-settles).
 - **Reset generation counter** sets the generation back to 0 without touching the cells.
 
 ## Randomization
@@ -61,6 +62,7 @@ These settings are saved whenever they change, and restored on the next launch:
 | Rule           | `rule`                               |
 | Edge mode      | `boundary_mode`                      |
 | Speed          | `tick_rate_ms`, `max_speed`          |
+| Pause when settled | `pause_when_settled`             |
 | Randomization  | `random_density_percent`, `random_seed` |
 
 The board's cells, undo history, and imported patterns are not stored in the settings
