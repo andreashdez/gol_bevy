@@ -48,7 +48,7 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 |------------------------------------------------|---------------------------------|
 | Mouse wheel over the board, or **− / +** in the status bar | Zoom                    |
 | Middle-button drag over the board             | Pan without editing cells       |
-| .keybinding {W} .keybinding {A} .keybinding {S} .keybinding {D} or arrow keys | Pan          |
+| .keys {W, A, S, D} or arrow keys               | Pan                             |
 | .keybinding {V}, or **Fit board** in the status bar | Fit the whole board in view |
 | .keybinding {T}                                | Toggle the grid                 |
 | .keybinding {H}                                | Hide or show the pattern palette while stamping |
@@ -60,10 +60,10 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 
 | Key                                         | Action                                                    |
 |---------------------------------------------|-----------------------------------------------------------|
-| .keybinding {Tab}, .keybinding {Shift+Tab}  | Move between controls                                     |
+| .keys {Tab, Shift+Tab}                      | Move between controls                                     |
 | .keybinding {Enter} or .keybinding {Space}  | Activate the focused button                               |
-| .keybinding {Left}, .keybinding {Right}     | Change speed, with the slider focused                     |
-| .keybinding {Home}, .keybinding {End}       | 1 or 40 gen/s, with the slider focused             |
+| .keys {Left, Right}                         | Change speed, with the slider focused                     |
+| .keys {Home, End}                           | 1 or 40 gen/s, with the slider focused             |
 | .keybinding {Esc}                           | Close a dialog, or leave a text field or the slider       |
-| .keybinding {Mod+C}, .keybinding {Mod+X}, .keybinding {Mod+V}, .keybinding {Mod+A} | Copy, cut, paste, and select all in text fields |
+| .keys {Mod+C, Mod+X, Mod+V, Mod+A}          | Copy, cut, paste, and select all in text fields           |
 | .keybinding {Shift} + arrow keys            | Select text in text fields                                |

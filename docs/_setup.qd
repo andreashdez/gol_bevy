@@ -1,6 +1,6 @@
 .docdescription {Documentation for gol-bevy, Conway's Game of Life with a native desktop GUI built on Bevy.}
 .doclang {English}
-.theme {darko} layout:{minimal}
+.theme {darko} layout:{hyperlegible}
 
 .dockeywords
   - game of life
@@ -19,6 +19,23 @@
 .function {repolink}
     label path:
     .text {.label} url:{.repourl/.path}
+
+<!-- A comma-separated list of keys: .keys {Mod+C, Mod+V} -->
+.function {keys}
+    list:
+    .list::split::join
+        key:
+        .keybinding {.key}
+
+.var {cardcolor} {#5FC7C7}
+
+<!-- Half of a .row: a link, and what the reader finds behind it. -->
+.function {card}
+    link summary:
+    .column cross:{start} gap:{0} width:{50%} padding:{1em} radius:{8px} background:{.cardcolor::color alpha:{0.08}} border:{.cardcolor::color alpha:{0.35}} borderwidth:{1px}
+        **.link**
+
+        .summary
 
 .pagemargin {topleft}
     [gol-bevy](@)

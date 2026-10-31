@@ -36,7 +36,7 @@ Press .keybinding {R} to fill about a quarter of the board at random, then .keyb
 ## Moving around
 
 - Scroll over the board to zoom, or use **− / +** in the status bar.
-- Pan by middle-button dragging, or with .keybinding {W} .keybinding {A} .keybinding {S} .keybinding {D} or the arrow keys.
+- Pan by middle-button dragging, or with .keys {W, A, S, D} or the arrow keys.
 - Press .keybinding {V}, or click **Fit board** (the corner brackets at the right of the status bar), to fit the whole board back into view.
 
 ## Getting help in the app
