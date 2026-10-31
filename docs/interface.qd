@@ -8,14 +8,14 @@ The window has four parts: the toolbar at the top, the pattern palette on the le
 The toolbar is a single 64-pixel row at every window size. It has three groups, with a subtle divider before the board edits:
 
 - **Playback:** Play / Pause, Reset to start, Step, and the speed field, with its **∞** toggle for maximum speed (see [Playback and rules](simulation.qd#speed))
-- **Board edits:** Randomize, Clear, Undo, and Redo; history buttons are disabled when unavailable
-- **Workspace:** the **Grid**, **Cell age**, and **Pattern palette** toggles, Import / Export, **Settings** (a gear), and **Help** (a question mark), at the right end
+- **Board edits:** **Randomize** (a die), **Clear** (a bin), Undo, and Redo; history buttons are disabled when unavailable
+- **Workspace:** the **Grid**, **Cell age**, and **Pattern palette** toggles, **Import** and **Export** (arrows into and out of a tray), **Settings** (a gear), and **Help** (a question mark), at the right end
 
-Below 1000 pixels wide, the workspace controls move into a menu behind a **More** button (**⋯**) at the right end, where each one is labelled. Choosing an item, clicking outside the menu, or pressing .keybinding {Escape} closes it, and the click that closes it does not draw on the board. From the keyboard, the menu opens with its first item focused. Tab order follows the layout: the toolbar, the tools, the palette,
+Below 900 pixels wide, the workspace controls move into a menu behind a **More** button (**⋯**) at the right end, where each one is labelled. Choosing an item, clicking outside the menu, or pressing .keybinding {Escape} closes it, and the click that closes it does not draw on the board. From the keyboard, the menu opens with its first item focused. Tab order follows the layout: the toolbar, the tools, the palette,
 the status bar, and last the board, which is outlined when it has keyboard focus.
 Resizing retains the focused control, camera pan, and zoom relative to the fitted board.
 
-Most buttons show icons instead of words. Play turns into a pause icon while the simulation runs. The Grid, Cell age, and Pattern palette toggles have a green outline while they are on. Hover over or focus a button to see its name and shortcut. Screen readers announce icon buttons by name, and the toggles as on or off.
+Every toolbar button shows an icon instead of a word. Play turns into a pause icon while the simulation runs. The Grid, Cell age, and Pattern palette toggles have a green outline while they are on. Hover over or focus a button to see its name and shortcut. Screen readers announce icon buttons by name, and the toggles as on or off.
 
 ## Pattern palette
 
@@ -89,7 +89,8 @@ Clear, randomize, undo, and redo show a notice at the bottom left of the canvas 
 
 | Dialog              | Opens with                               | Contains                                                       |
 |---------------------|------------------------------------------|----------------------------------------------------------------|
-| **Import / Export** | the **Import / Export** button           | RLE import, and copying the board as RLE                       |
+| **Import**          | the **Import** button                    | RLE import, and opening workspace files                        |
+| **Export**          | the **Export** button                    | copying the board as RLE, and saving workspace files           |
 | **Settings**        | the **Settings** button, or the rule in the status bar | board size, rule, theme, grid, cell age, edges, diagnostics, generation reset |
 | **Help**            | .keybinding {/} or the **Help** button   | a summary and the full list of shortcuts                       |
 | **Diagnostics**     | .keybinding {F3} or **Settings**         | live simulation statistics                                     |

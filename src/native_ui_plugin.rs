@@ -195,6 +195,7 @@ enum Action {
     MaxSpeed,
     Sidebar,
     Import,
+    Export,
     Help,
     Settings,
     /// Opens the menu holding the workspace controls in narrow windows.
@@ -672,6 +673,7 @@ fn activate(
     };
     match action {
         Action::Import
+        | Action::Export
         | Action::FitBoard
         | Action::ZoomIn
         | Action::ZoomOut

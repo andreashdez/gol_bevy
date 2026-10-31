@@ -72,13 +72,13 @@ Resizing the board clears the undo and redo history, because old snapshots no lo
 
 ## Save and reopen workspaces
 
-.keybinding {Mod+S} saves and .keybinding {Mod+O} opens, from the board or with **Import / Export** or **Settings** open; results show in the dialog, or as a brief notice over the board.
+.keybinding {Mod+S} saves and .keybinding {Mod+O} opens, from the board or with **Import**, **Export**, or **Settings** open; results show in the dialog, or as a brief notice over the board.
 
-Open **Import / Export**, then use **Workspace files**. **Save workspace…** opens the
+To save, open **Export** and click **Save workspace…**. It opens the
 system file dialog in your Documents folder, or wherever you last saved or opened a
 workspace. The dialog asks before replacing an existing file.
 
-**Open workspace…** lets you choose a `.golw` file and checks it. If it is valid, you're
+To open one, open **Import** and click **Open workspace…**. It lets you choose a `.golw` file and checks it. If it is valid, you're
 asked whether to replace the current board and imported pattern library. **Cancel**
 (or Escape) keeps your current work. Files preserve board dimensions, exact cell positions, generation,
 rule, boundary mode, playback speed, randomization density and seed, and imported pattern names, cells, and rules.

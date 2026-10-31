@@ -5,16 +5,16 @@ use bevy::{ecs::system::SystemParam, input_focus::FocusCause};
 
 pub(super) const HEIGHT: f32 = 64.0;
 /// Below this width the workspace controls collapse into the menu.
-pub(super) const COLLAPSE_BELOW_WIDTH: f32 = 1000.0;
+pub(super) const COLLAPSE_BELOW_WIDTH: f32 = 900.0;
 /// Below this width the palette folds into its rail, so the board keeps most of
 /// the window. It concerns the canvas, not the toolbar, so it has its own width.
 pub(super) const PALETTE_COLLAPSE_BELOW_WIDTH: f32 = 900.0;
 
 /// Column budgets for the playback and board edit groups, with a little slack.
-/// With the workspace controls, one row needs 1000 px; collapsed, it fits the
+/// With the workspace controls, one row needs 900 px; collapsed, it fits the
 /// 680 px minimum window.
-const PLAYBACK_WIDTH: f32 = 336.0;
-const EDITING_WIDTH: f32 = 252.0;
+const PLAYBACK_WIDTH: f32 = 378.0;
+const EDITING_WIDTH: f32 = 180.0;
 const MENU_WIDTH: f32 = 220.0;
 
 #[derive(Component)]
@@ -44,15 +44,9 @@ pub(super) struct MoreButton;
 pub(super) struct MenuPanel;
 #[derive(Component)]
 pub(super) struct MenuItem;
-/// Shown inside the menu only: names beside icons, and an icon-sized gap
-/// that lines up a label without an icon.
+/// Shown inside the menu only: names beside icons.
 #[derive(Component)]
 pub(super) struct MenuLabel;
-
-pub(super) fn button(parent: &mut ChildSpawnerCommands, text: &str, action: Action) {
-    let entity = super::button(parent, text, action);
-    parent.commands().entity(entity).insert(ToolbarButton);
-}
 
 fn icon_button(
     parent: &mut ChildSpawnerCommands,
@@ -65,41 +59,20 @@ fn icon_button(
     entity
 }
 
-fn menu_item(parent: &mut ChildSpawnerCommands, name: &str, icon: Option<Icon>, action: Action) {
-    let entity = match icon {
-        Some(icon) => {
-            let entity = icon_button(parent, name, icon, action);
-            parent.commands().entity(entity).with_child((
-                MenuLabel,
-                label(name, 14.0, Token::Ink),
-                Node {
-                    display: Display::None,
-                    ..default()
-                },
-            ));
-            entity
-        }
-        None => {
-            let entity = button_frame(parent, name, action);
-            parent
-                .commands()
-                .entity(entity)
-                .insert(ToolbarButton)
-                .with_children(|p| {
-                    p.spawn((
-                        MenuLabel,
-                        Node {
-                            display: Display::None,
-                            width: px(icons::DISPLAY_SIZE),
-                            ..default()
-                        },
-                    ));
-                    p.spawn(label(name, 14.0, Token::Ink));
-                });
-            entity
-        }
-    };
-    parent.commands().entity(entity).insert(MenuItem);
+fn menu_item(parent: &mut ChildSpawnerCommands, name: &str, icon: Icon, action: Action) {
+    let entity = icon_button(parent, name, icon, action);
+    parent
+        .commands()
+        .entity(entity)
+        .insert(MenuItem)
+        .with_child((
+            MenuLabel,
+            label(name, 14.0, Token::Ink),
+            Node {
+                display: Display::None,
+                ..default()
+            },
+        ));
 }
 
 pub(super) fn spawn(commands: &mut Commands) {
@@ -151,8 +124,8 @@ pub(super) fn spawn(commands: &mut Commands) {
                         speed::spawn(p);
                     }
                     Group::Editing => {
-                        button(p, "Randomize", Action::Randomize);
-                        button(p, "Clear", Action::Clear);
+                        icon_button(p, "Randomize", Icon::Randomize, Action::Randomize);
+                        icon_button(p, "Clear", Icon::Clear, Action::Clear);
                         icon_button(p, "Undo", Icon::Undo, Action::Undo);
                         icon_button(p, "Redo", Icon::Redo, Action::Redo);
                     }
@@ -175,12 +148,13 @@ pub(super) fn spawn(commands: &mut Commands) {
                             GlobalZIndex(40),
                         ))
                         .with_children(|p| {
-                            menu_item(p, "Grid", Some(Icon::Grid), Action::Grid);
-                            menu_item(p, "Cell age", Some(Icon::CellAge), Action::CellAge);
-                            menu_item(p, "Pattern palette", Some(Icon::Palette), Action::Sidebar);
-                            menu_item(p, "Import / Export", None, Action::Import);
-                            menu_item(p, "Settings", Some(Icon::Gear), Action::Settings);
-                            menu_item(p, "Help", Some(Icon::Help), Action::Help);
+                            menu_item(p, "Grid", Icon::Grid, Action::Grid);
+                            menu_item(p, "Cell age", Icon::CellAge, Action::CellAge);
+                            menu_item(p, "Pattern palette", Icon::Palette, Action::Sidebar);
+                            menu_item(p, "Import", Icon::Import, Action::Import);
+                            menu_item(p, "Export", Icon::Export, Action::Export);
+                            menu_item(p, "Settings", Icon::Gear, Action::Settings);
+                            menu_item(p, "Help", Icon::Help, Action::Help);
                         });
                     }
                 });

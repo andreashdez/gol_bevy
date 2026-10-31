@@ -22,14 +22,14 @@ The **High contrast** theme in [Settings](settings.qd#theme) uses black panels, 
 
 ## Dialogs
 
-Dialogs are modal: .keybinding {Tab} stays inside the open dialog. The Help and Diagnostics dialogs focus their **Close** button when they open.
+Dialogs are modal: .keybinding {Tab} stays inside the open dialog. The Export, Help, and Diagnostics dialogs focus their **Close** button when they open.
 
 .keybinding {Esc} closes a dialog, and focus returns to the control that opened it. The key that opened Help (.keybinding {/}) or Diagnostics (.keybinding {F3}) closes it again.
 
 ## Screen readers
 
 - Buttons expose their action and, for toggles such as tools, patterns, **Grid**, **Cell age**, and **Palette**, whether they are selected. The switches in Settings are announced as switches, and the **Wrap** / **Fixed** and theme choices say which one is selected.
-- Icon buttons are announced by name: **Play** as *Play* or *Pause*, then **Reset to start**, **Step**, **Undo**, **Redo**, **Grid**, **Cell age**, **Pattern palette**, **Settings**, and **Help**.
+- Icon buttons are announced by name: **Play** as *Play* or *Pause*, then **Reset to start**, **Step**, **Randomize**, **Clear**, **Undo**, **Redo**, **Grid**, **Cell age**, **Pattern palette**, **Import**, **Export**, **Settings**, and **Help**.
 - Text fields expose their name and value.
 - The density slider in Settings exposes its value and supports increment and decrement actions.
 - Validation messages, such as a rejected board size or an import error, are announced politely when they appear.

@@ -30,13 +30,14 @@ The interface uses native Bevy UI throughout: playback controls, a searchable pa
 palette, editing tools, live status, and import/settings/help/diagnostics dialogs.
 
 The toolbar is a single 64-pixel row, grouped into playback, board edits, and workspace
-controls. Below 1000 pixels wide, the workspace controls move into a menu behind a **⋯**
-button at the right end. Below 900 pixels, the pattern palette also folds into its rail of tool
-icons. It comes back when the window is wide again, unless you showed or hid it yourself in between.
+controls. Below 900 pixels wide, the workspace controls move into a menu behind a **⋯**
+button at the right end, and the pattern palette folds into its rail of tool icons. The palette
+comes back when the window is wide again, unless you showed or hid it yourself in between.
 Resizing preserves keyboard focus and the camera view relative to the fitted board.
 The workspace group has icon toggles for the grid, cell age, and pattern palette, which show
-whether they are on, plus Import / Export, a gear for Settings, and a ? for Help.
-Play / Pause, Reset to start, Step, Undo, and Redo are icon buttons too; tooltips give their names and shortcuts.
+whether they are on, plus arrows into and out of a tray for Import and Export, a gear for
+Settings, and a ? for Help. Every toolbar button is an icon, including a die for Randomize and a
+bin for Clear; tooltips give their names and shortcuts.
 
 The pattern library scrolls with the mouse wheel or its scrollbar; search and the
 stamp preview with its rotate/flip controls stay visible while browsing. The stamp
@@ -131,15 +132,15 @@ the previous file and retry after a delay.
 until the first save writes `settings.toml`, and is left alone. Entries that are
 missing or unreadable keep their defaults.
 
-**Import / Export** also copies the board to the clipboard as RLE: the live cells,
+**Export** copies the board to the clipboard as RLE: the live cells,
 cropped to their bounding box, with the board rule in the header. The result pastes
 back into Import, or into other Life tools such as Golly.
 
 Import also opens `.rle` files into its fields, and previews the pasted or loaded RLE (a
 thumbnail with its size, cell count, and rule) before you import it.
 
-**Workspace files** in Import / Export provide **Save workspace…** (**Cmd/Ctrl+S**) and
-**Open workspace…** (**Cmd/Ctrl+O**), which use the system file dialog. It starts in your Documents folder, then wherever you
+Workspace files are saved from Export with **Save workspace…** (**Cmd/Ctrl+S**) and opened
+from Import with **Open workspace…** (**Cmd/Ctrl+O**), which use the system file dialog. It starts in your Documents folder, then wherever you
 last saved or opened a workspace, and asks before replacing an existing file. Saving
 writes through a temporary file before replacing it. On Linux the file dialog comes
 from xdg-desktop-portal, so a portal backend (such as xdg-desktop-portal-gtk or -kde)

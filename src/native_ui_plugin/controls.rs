@@ -79,9 +79,10 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::Tool(EditTool::Draw) => "Draw · 1 · paint cells with the left mouse button",
         Action::Tool(EditTool::Erase) => "Erase · 2 · clear cells; right-drag also erases",
         Action::Tool(EditTool::Stamp) => "Stamp · 3 · place the selected pattern on the board",
-        Action::Import => "Import RLE into your library, or copy the board as RLE",
+        Action::Import => "Add an RLE pattern to your library, or open a workspace file",
+        Action::Export => "Copy the board as RLE, or save a workspace file",
         Action::Settings => "Board size, rule, randomization, theme, grid, cell age, and edges",
-        Action::More => "Grid, cell age, palette, import / export, settings, and help",
+        Action::More => "Grid, cell age, palette, import, export, settings, and help",
         Action::ApplyRandomize => "Use this density and optional seed for future randomizations",
         Action::RandomizeNow => "Apply the density and seed, then replace the board · undo with U",
         Action::FillCanvas => {
