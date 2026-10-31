@@ -61,6 +61,8 @@ Each generation has a 64-bit fingerprint: the XOR of a fixed key for every cell 
 
 ## Rendering
 
+The minimap counts live cells per block with the same vectorized sum as the population, about 2 ms on a 2048 × 2048 board. It runs five times a second, and only while the map is showing.
+
 The board is drawn as a single texture with one texel per cell, so the cell count costs no entities. After each frame's steps, the renderer takes the board's list of dirty cells and rewrites only those texels. Resizing, randomizing, and clearing request a full redraw instead.
 
 The grid overlay draws only lines that cross the viewport, and none at all below a few pixels per cell, so its cost follows the screen size, not the board size.

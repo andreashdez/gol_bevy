@@ -644,6 +644,22 @@ impl Board {
         self.current.iter().map(|&cell| cell == CELL_ALIVE)
     }
 
+    /// Counts the live cells under each block of a `width` × `height` grid over
+    /// the board, row 0 first, into `counts`. Blocks are at least a cell across,
+    /// so the grid may not be larger than the board.
+    pub fn overview(&self, width: usize, height: usize, counts: &mut [u32]) {
+        assert!(width <= self.cols && height <= self.rows && width > 0 && height > 0);
+        assert_eq!(counts.len(), width * height);
+        counts.fill(0);
+        for (row, cells) in self.current.chunks_exact(self.cols).enumerate() {
+            let line = &mut counts[row * height / self.rows * width..][..width];
+            for (block, count) in line.iter_mut().enumerate() {
+                let span = block * self.cols / width..(block + 1) * self.cols / width;
+                *count += count_live(&cells[span]) as u32;
+            }
+        }
+    }
+
     /// Identifies the current generation among others of the same run: stepping
     /// back to the same cells restores it. Only comparable while nothing but
     /// stepping changes the board.
@@ -1650,6 +1666,24 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_overview_counts_every_live_cell_in_its_block() {
+        let mut board = Board::new(10, 7);
+        for (col, row) in [(0, 0), (9, 0), (9, 6), (4, 3), (5, 3)] {
+            board.populate(col, row);
+        }
+        let mut counts = vec![0; 5 * 3];
+        board.overview(5, 3, &mut counts);
+        assert_eq!(counts.iter().sum::<u32>(), 5);
+        assert_eq!((counts[0], counts[4], counts[14]), (1, 1, 1));
+
+        // At full size, a block is a cell.
+        let mut counts = vec![0; 10 * 7];
+        board.overview(10, 7, &mut counts);
+        assert_eq!(counts[3 * 10 + 4], 1);
+        assert_eq!(counts.iter().sum::<u32>(), 5);
     }
 
     #[test]

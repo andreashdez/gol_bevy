@@ -49,6 +49,12 @@ The board is fitted into the canvas on startup, after a board size change, and w
 
 The zoom percentage is relative to **Fit board** (100%). Middle-button panning must start on the canvas and stops when the pointer enters a control or leaves the window.
 
+### Minimap
+
+While part of the board is out of view, a small map of the whole board appears in the bottom-right corner of the canvas, with a frame around what the canvas shows. Click the map to centre the view there, or drag to move it. Clicks on the map never edit the board, and scrolling over it does not zoom.
+
+The map shows where cells are alive rather than every cell, so a lone glider stays visible on the largest board. It refreshes five times a second, and disappears once the whole board is in view again.
+
 With **fixed** edges, a pale wall outlines the board and pulses briefly when you switch to that mode. With **wrapping** edges, the wall is hidden.
 
 ### Grid

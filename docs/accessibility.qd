@@ -31,6 +31,7 @@ Dialogs are modal: .keybinding {Tab} stays inside the open dialog. The Export, H
 - Buttons expose their action and, for toggles such as tools, patterns, **Grid**, **Cell age**, and **Palette**, whether they are selected. The switches in Settings are announced as switches, and the **Wrap** / **Fixed** and theme choices say which one is selected.
 - Icon buttons are announced by name: **Play** as *Play* or *Pause*, then **Reset to start**, **Step**, **Randomize**, **Clear**, **Undo**, **Redo**, **Grid**, **Cell age**, **Pattern palette**, **Import**, **Export**, **Settings**, and **Help**.
 - The status bar's rule and edges buttons include their current value in their names, such as *Rule: B3/S23* and *Edges: Wrap*.
+- The population line and the minimap are extras: the status bar's numbers and the arrow keys cover the same ground without them. The minimap is announced as *Board overview*, and only the pointer can use it.
 - Text fields expose their name and value.
 - The density slider in Settings exposes its value and supports increment and decrement actions.
 - Validation messages, such as a rejected board size or an import error, are announced politely when they appear.

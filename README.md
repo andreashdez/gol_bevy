@@ -50,6 +50,8 @@ bar. Startup, board-size changes, **Fit board**, and **V** fit the entire board 
 The status bar's zoom stepper (**− 100% +**) zooms in steps; 100% means the whole-board
 fit, and the corner-brackets button beside it is **Fit board**. Middle-button dragging
 pans without editing cells.
+While part of the board is out of view, a minimap in the canvas's bottom-right corner
+shows the whole board with a frame around what is visible; click or drag it to move the view.
 Window and layout changes retain the pan position and zoom relative to the fitted
 view. Drawing and stamp previews stay inside the canvas, including on Retina displays.
 The built-in library covers spaceships, oscillators (blinker, pulsar, pentadecathlon), the
@@ -302,6 +304,7 @@ x = 8, y = 4
 - A dense step whose changes exceed the fallback threshold does not keep them as a frontier list, since the next step would take the dense scan anyway.
 - Dense fallback threshold defaults to 5% candidate coverage and can be overridden with `GOL_FRONTIER_DENSE_THRESHOLD_PERCENT`. The dense scan is vectorizable while the frontier step pays per-candidate bookkeeping, so the scan wins early: around 2% for young soup and 5-6% for settled debris on small boards. `cargo bench --bench dense_crossover` measures both, and is worth re-running after changing either path. A frontier that is already over the threshold skips straight to the scan, and candidate collection stops as soon as it crosses it.
 - Each generation has a fingerprint, the XOR of a key per flipped cell, updated from the lists of changed cells stepping already builds. Settling is noticed by comparing it to the last 128, so the check costs nothing per board cell.
+- The minimap samples the board five times a second, and only while it shows, counting live cells per block with the vectorized population sum: about 2 ms on a 2048 × 2048 board.
 - Rendering is incremental: the board is drawn as a single texture with one texel per cell, and only changed cells are rewritten. Cell count no longer costs one sprite entity each.
 - The grid overlay is drawn only for the lines that intersect the viewport, and is skipped entirely below a few pixels per cell, so its cost tracks screen area rather than board area.
 - A frame runs at most 8 generations to catch up after a stall and then drops the backlog, so a slow frame cannot snowball into a frozen app. Max speed instead spends a fixed time budget per frame, capped at 1024 generations.

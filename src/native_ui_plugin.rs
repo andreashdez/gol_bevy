@@ -15,6 +15,7 @@ mod accessibility;
 mod controls;
 mod dialogs;
 mod icons;
+mod minimap;
 mod palette;
 mod sparkline;
 mod speed;
@@ -83,6 +84,7 @@ impl Plugin for NativeUiPlugin {
             .init_resource::<EditFeedback>()
             .init_resource::<Theme>()
             .init_resource::<toolbar::WorkspaceMenu>()
+            .init_resource::<minimap::MinimapArea>()
             .add_plugins((TabNavigationPlugin, bevy::picking::cursor::CursorIconPlugin))
             .add_observer(activate)
             .add_observer(toolbar::menu_action)
@@ -132,7 +134,7 @@ impl Plugin for NativeUiPlugin {
                     controls::sync_overlays,
                     controls::sync_footer,
                     controls::sync_status,
-                    sparkline::sync,
+                    (sparkline::sync, minimap::sync).chain(),
                     toolbar::sync_layout,
                     toolbar::sync_menu,
                     controls::sync_feedback,
@@ -541,6 +543,7 @@ fn setup(
                 Visibility::Hidden,
                 Pickable::IGNORE,
             ));
+            minimap::spawn(p);
         });
     controls::overlays(&mut commands);
     controls::feedback_overlay(&mut commands);
@@ -647,6 +650,7 @@ fn publish_input_regions(
     layout: Res<UiLayout>,
     state: Res<NativeUi>,
     menu: Res<toolbar::WorkspaceMenu>,
+    minimap: Res<minimap::MinimapArea>,
     mut regions: ResMut<UiInputRegions>,
 ) {
     // An open menu holds the pointer and keyboard like a dialog, so the click
@@ -656,6 +660,7 @@ fn publish_input_regions(
         .single()
         .map(|window| panel_rects(window.size(), &layout))
         .unwrap_or_default();
+    regions.panels.extend(minimap.0);
 }
 
 /// Board display options that buttons switch on and off.
@@ -1483,6 +1488,7 @@ mod tests {
         world.init_resource::<ButtonInput<KeyCode>>();
         world.init_resource::<ButtonInput<MouseButton>>();
         world.init_resource::<UiInputRegions>();
+        world.init_resource::<minimap::MinimapArea>();
         world.add_observer(toolbar::menu_action);
         let window = world
             .spawn((
