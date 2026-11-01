@@ -10,6 +10,7 @@ pub mod settings_plugin;
 pub mod settle;
 pub mod shared;
 pub mod simulation_plugin;
+pub mod sparse_board;
 #[cfg(test)]
 mod test_support;
 pub mod ui_input;

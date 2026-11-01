@@ -133,6 +133,12 @@ impl Rule {
         })
     }
 
+    /// Whether a dead cell with no live neighbours is born, which on an unbounded
+    /// board would light every cell of the plane.
+    pub(crate) fn births_from_nothing(self) -> bool {
+        self.allows_birth(0)
+    }
+
     fn allows_birth(self, neighbors: u8) -> bool {
         self.birth & (1 << neighbors) != 0
     }
@@ -143,7 +149,7 @@ impl Rule {
 
     /// Birth counts in bits 0..=8 and survival counts in bits 9..=17, so the next
     /// state is bit `neighbors + 9 * alive` without branching on `alive`.
-    fn transition_mask(self) -> u32 {
+    pub(crate) fn transition_mask(self) -> u32 {
         u32::from(self.birth) | (u32::from(self.survive) << 9)
     }
 }
@@ -576,7 +582,7 @@ impl Board {
             } else {
                 -1
             };
-            self.fingerprint ^= cell_key(idx);
+            self.fingerprint ^= cell_key(idx as u64);
             self.mark_dirty_cell(idx);
         }
         self.live_count = self.live_count.saturating_add_signed(live_delta);
@@ -1013,15 +1019,15 @@ impl CellsView<'_> {
         }
         let flips = changed[recorded..]
             .iter()
-            .fold(0, |flips, &idx| flips ^ cell_key(idx));
+            .fold(0, |flips, &idx| flips ^ cell_key(idx as u64));
         (live, flips)
     }
 }
 
 /// A well-mixed key per cell (SplitMix64), so that no set of flips is likely to
 /// cancel out unless each cell flipped back.
-fn cell_key(idx: usize) -> u64 {
-    let value = (idx as u64 + 1).wrapping_mul(0x9E3779B97F4A7C15);
+pub(crate) fn cell_key(idx: u64) -> u64 {
+    let value = idx.wrapping_add(1).wrapping_mul(0x9E3779B97F4A7C15);
     let value = (value ^ (value >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
     let value = (value ^ (value >> 27)).wrapping_mul(0x94D049BB133111EB);
     value ^ (value >> 31)

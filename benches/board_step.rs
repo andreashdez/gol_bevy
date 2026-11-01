@@ -1,5 +1,8 @@
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use gol_bevy::board::{Board, DirtyCells};
+use gol_bevy::{
+    board::{Board, DirtyCells},
+    sparse_board::SparseBoard,
+};
 use std::hint::black_box;
 
 fn seed_glider(board: &mut Board) {
@@ -16,24 +19,28 @@ fn seed_glider(board: &mut Board) {
     }
 }
 
-fn seed_noise(board: &mut Board, live_percent: u64) {
-    let (cols, rows) = board.size();
-    if cols == 0 || rows == 0 {
-        return;
-    }
-
-    for row in 0..rows {
-        for col in 0..cols {
+/// Deterministic noise over a `cols` × `rows` area, so both boards get the same cells.
+fn noise_cells(
+    cols: usize,
+    rows: usize,
+    live_percent: u64,
+) -> impl Iterator<Item = (usize, usize)> {
+    (0..rows)
+        .flat_map(move |row| (0..cols).map(move |col| (col, row)))
+        .filter(move |&(col, row)| {
             let idx = (row * cols + col) as u64;
             let mut x = idx.wrapping_add(0x9E3779B97F4A7C15);
             x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
             x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB);
             x ^= x >> 31;
+            x % 100 < live_percent
+        })
+}
 
-            if x % 100 < live_percent {
-                let _ = board.populate(col, row);
-            }
-        }
+fn seed_noise(board: &mut Board, live_percent: u64) {
+    let (cols, rows) = board.size();
+    for (col, row) in noise_cells(cols, rows, live_percent) {
+        let _ = board.populate(col, row);
     }
 }
 
@@ -107,5 +114,49 @@ fn bench_dense_scan(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_board_step_and_dirty, bench_dense_scan);
+/// The same glider and fresh noise as above on the unbounded board, so the two
+/// boards can be compared directly.
+fn bench_sparse_board(c: &mut Criterion) {
+    let mut group = c.benchmark_group("sparse_board_step");
+    group.sample_size(20);
+
+    let mut glider = SparseBoard::default();
+    for (x, y) in [(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)] {
+        glider.populate(x, y);
+    }
+    let _ = glider.take_dirty_chunks();
+    group.bench_function("glider", |b| {
+        b.iter(|| {
+            let _ = black_box(&mut glider).step();
+            black_box(glider.take_dirty_chunks())
+        })
+    });
+
+    for size in [512, 1024, 2048] {
+        let mut seeded = SparseBoard::default();
+        for (col, row) in noise_cells(size, size, 30) {
+            seeded.populate(col as i64, row as i64);
+        }
+        let _ = seeded.take_dirty_chunks();
+        group.bench_function(format!("fresh_noise30_{size}"), |b| {
+            b.iter_batched_ref(
+                || seeded.clone(),
+                |board| {
+                    let _ = board.step();
+                    black_box(board.take_dirty_chunks())
+                },
+                BatchSize::LargeInput,
+            )
+        });
+    }
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_board_step_and_dirty,
+    bench_dense_scan,
+    bench_sparse_board
+);
 criterion_main!(benches);
