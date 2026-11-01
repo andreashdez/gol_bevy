@@ -4,7 +4,7 @@
 use crate::{
     render_plugin::{BoardSprite, CellPalette, CellStyle, SETTLED_AGE, settled_age, texel_offset},
     shared::{CELL_SIZE, MainCamera, RedrawRequested, Simulation, StartupSet, UpdateSet},
-    sparse_board::{BlockGrid, CHUNK_SIZE, Chunk, ChunkKey, DirtyChunks, SparseBoard},
+    sparse_board::{BlockGrid, CHUNK_SIZE, CellRect, Chunk, ChunkKey, DirtyChunks, SparseBoard},
     universe::Universe,
 };
 use bevy::{
@@ -144,8 +144,22 @@ fn view_grid(view: Rect, origin: (i64, i64), cells_per_pixel: f32) -> BlockGrid 
     }
 }
 
+/// The cells the world rectangle `view` touches.
+pub(crate) fn view_cells(view: Rect, origin: (i64, i64)) -> CellRect {
+    let (min, max) = (
+        (view.min / CELL_SIZE).floor().as_i64vec2(),
+        (view.max / CELL_SIZE).ceil().as_i64vec2(),
+    );
+    CellRect {
+        left: min.x + origin.0,
+        bottom: min.y + origin.1,
+        width: (max.x - min.x) as usize,
+        height: (max.y - min.y) as usize,
+    }
+}
+
 /// The world rectangle a grid covers, for placing its sprite.
-fn grid_rect(grid: BlockGrid, origin: (i64, i64)) -> Rect {
+pub(crate) fn grid_rect(grid: BlockGrid, origin: (i64, i64)) -> Rect {
     let size =
         Vec2::new(grid.width as f32, grid.height as f32) * (1i64 << grid.level) as f32 * CELL_SIZE;
     let min = Vec2::new(
@@ -304,6 +318,7 @@ fn sync_plane(
     };
 
     let origin = sim.plane_origin;
+    sim.app.set_view_cells(view_cells(view, origin));
     let grid = view_grid(view, origin, cells_per_pixel);
     // The grid's cells stay put in world space only until the origin moves.
     let rect = grid_rect(grid, origin);
@@ -587,6 +602,89 @@ mod tests {
         assert_eq!(
             texel(&data, grid, 64, 5),
             palette.texel(true, settled_age(true) + 1)
+        );
+    }
+
+    #[test]
+    fn the_cells_in_view_take_in_any_it_only_touches() {
+        let view = Rect::new(
+            -1.5 * CELL_SIZE,
+            2.0 * CELL_SIZE,
+            1.5 * CELL_SIZE,
+            2.5 * CELL_SIZE,
+        );
+        let cells = view_cells(view, (1 << 40, -5));
+        assert_eq!(
+            cells,
+            CellRect {
+                left: (1 << 40) - 2,
+                bottom: -3,
+                width: 4,
+                height: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn drawing_the_plane_tells_the_app_what_is_in_view() {
+        use bevy::{
+            camera::{ComputedCameraValues, RenderTargetInfo},
+            ecs::system::RunSystemOnce,
+        };
+        let mut app = crate::app::App::new(16, 16);
+        app.set_unbounded().unwrap();
+        let mut sim = Simulation::new(app);
+        sim.plane_origin = (1000, -1000);
+        let mut world = World::new();
+        world.insert_resource(sim);
+        world.init_resource::<RedrawRequested>();
+        world.init_resource::<Theme>();
+        world.init_resource::<crate::shared::CellAge>();
+        world.init_resource::<crate::render_plugin::CellAges>();
+        world.init_resource::<Assets<Image>>();
+        world.init_resource::<PlaneCanvas>();
+        world.spawn((Window::default(), PrimaryWindow));
+        world.spawn((
+            Sprite::default(),
+            Transform::default(),
+            Visibility::Hidden,
+            PlaneSprite,
+        ));
+        let size = UVec2::new(400, 200);
+        world.spawn((
+            Camera2d,
+            MainCamera,
+            Camera {
+                viewport: Some(bevy::camera::Viewport {
+                    physical_size: size,
+                    ..default()
+                }),
+                computed: ComputedCameraValues {
+                    target_info: Some(RenderTargetInfo {
+                        physical_size: size,
+                        scale_factor: 1.0,
+                    }),
+                    ..default()
+                },
+                ..default()
+            },
+            Projection::Orthographic(OrthographicProjection {
+                scale: CELL_SIZE,
+                ..OrthographicProjection::default_2d()
+            }),
+        ));
+        world.run_system_once(sync_plane).unwrap();
+
+        // One cell a point, around the plane's origin.
+        let area = world.resource::<Simulation>().app.randomize_area().unwrap();
+        assert_eq!(
+            area,
+            CellRect {
+                left: 800,
+                bottom: -1100,
+                width: 400,
+                height: 200,
+            }
         );
     }
 }

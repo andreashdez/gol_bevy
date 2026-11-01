@@ -57,6 +57,8 @@ While part of the board is out of view, a small map of the whole board appears i
 
 The map shows where cells are alive rather than every cell, so a lone glider stays visible on the largest board. It refreshes five times a second, and disappears once the whole board is in view again.
 
+An unbounded board has no whole to show, so its map runs from the live cells to the view, and appears while any live cell is out of sight. The further apart they are, the less a click on the map can aim, so use .keybinding {V} to frame them all.
+
 With **fixed** edges, a pale wall outlines the board and pulses briefly when you switch to that mode. With **wrapping** edges, the wall is hidden.
 
 ### Grid

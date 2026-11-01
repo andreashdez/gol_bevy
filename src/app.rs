@@ -2,10 +2,11 @@ use crate::{
     board::{self, BoundaryMode, RandomizeSettings, Rule},
     patterns::{Pattern, PatternParseError},
     settle::{SettleWatch, Settled},
-    sparse_board::UnboundedRuleError,
-    universe::{CellSnapshot, Universe, board_from_plane, plane_from_board},
+    shared::BOARD_SIZE_MAX,
+    sparse_board::{CellRect, PLANE_CHUNKS_MAX, PLANE_EXPORT_CELLS_MAX, UnboundedRuleError},
+    universe::{CellSnapshot, Universe, board_from_plane, plane_from_board, plane_to_rle},
 };
-use std::collections::VecDeque;
+use std::{collections::VecDeque, fmt};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum EditTool {
@@ -29,6 +30,39 @@ pub struct BoardExport {
     pub cells: usize,
     pub width: usize,
     pub height: usize,
+}
+
+/// Why the board can't be copied as RLE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoardExportError {
+    Empty,
+    TooLarge,
+}
+
+impl fmt::Display for BoardExportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Empty => "The board is empty, so there is nothing to export.",
+            Self::TooLarge => "The board has too many live cells to export (over 67,108,864).",
+        })
+    }
+}
+
+/// Why playback stopped by itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoPause {
+    Settled(Settled),
+    /// The unbounded board reached its memory budget.
+    BoardFull,
+}
+
+impl fmt::Display for AutoPause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Settled(settled) => settled.fmt(f),
+            Self::BoardFull => f.write_str("the board reached its memory limit"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -129,12 +163,16 @@ pub struct App {
     settle: SettleWatch,
     pause_when_settled: bool,
     /// Why playback paused itself, until the UI has said so.
-    auto_paused: Option<Settled>,
+    auto_paused: Option<AutoPause>,
     /// Live cells per generation of this run, oldest first.
     population_history: VecDeque<usize>,
 
     /// The size the board has, or has to return to from the unbounded board.
     finite_size: (usize, usize),
+    /// Chunks of the unbounded board that stop a run.
+    chunk_budget: usize,
+    /// The part of the unbounded board on screen.
+    view_cells: Option<CellRect>,
 
     pub board: Universe,
 }
@@ -173,6 +211,8 @@ impl App {
             auto_paused: None,
             population_history: VecDeque::with_capacity(POPULATION_HISTORY),
             finite_size: (cols, rows),
+            chunk_budget: PLANE_CHUNKS_MAX,
+            view_cells: None,
             board,
         }
     }
@@ -337,7 +377,18 @@ impl App {
         self.needs_redraw = true;
     }
 
+    /// Whether the unbounded board has outgrown what a run may use. Anything that
+    /// frees chunks lets playback go on.
+    fn board_is_full(&self) -> bool {
+        matches!(&self.board, Universe::Unbounded(plane) if plane.chunk_count() >= self.chunk_budget)
+    }
+
     pub fn increment_epoch(&mut self) {
+        if self.board_is_full() {
+            self.running = false;
+            self.auto_paused = Some(AutoPause::BoardFull);
+            return;
+        }
         if let Some(res) = self.epoch.checked_add(1) {
             if self.run_start.is_none() {
                 self.run_start = Some(self.current_snapshot());
@@ -360,7 +411,7 @@ impl App {
                 .record(fingerprint, self.board.fingerprint(), res);
             if self.running && self.pause_when_settled && settled.is_some() {
                 self.running = false;
-                self.auto_paused = settled;
+                self.auto_paused = settled.map(AutoPause::Settled);
             }
             self.needs_redraw = true;
         }
@@ -385,7 +436,7 @@ impl App {
     }
 
     /// What just paused playback, once, so the UI can explain it.
-    pub fn take_auto_paused(&mut self) -> Option<Settled> {
+    pub fn take_auto_paused(&mut self) -> Option<AutoPause> {
         self.auto_paused.take()
     }
 
@@ -429,14 +480,41 @@ impl App {
         self.randomize_settings = settings;
     }
 
+    #[cfg(test)]
+    pub fn set_chunk_budget(&mut self, chunks: usize) {
+        self.chunk_budget = chunks;
+    }
+
+    /// Tells the app what the canvas shows of the unbounded board.
+    pub fn set_view_cells(&mut self, view: CellRect) {
+        self.view_cells = Some(view);
+    }
+
+    /// What randomizing fills on the unbounded board, which has no size of its
+    /// own: as much of the view as a board could hold, or a board's worth around
+    /// the origin if nothing has been drawn yet. `None` on a finite board.
+    pub fn randomize_area(&self) -> Option<CellRect> {
+        self.board.finite().is_none().then(|| {
+            let (cols, rows) = self.finite_size;
+            self.view_cells
+                .unwrap_or_else(|| CellRect::around_origin(cols, rows))
+                .middle(BOARD_SIZE_MAX)
+        })
+    }
+
+    /// Replaces every cell of a finite board. The unbounded board has too many,
+    /// so the cells outside [`randomize_area`](Self::randomize_area) stay.
     pub fn randomize_board(&mut self) {
-        if self.board.finite().is_none() {
-            return;
-        }
         self.end_stroke();
         self.save_edit();
-        if let Some(board) = self.board.finite_mut() {
-            board.populate_random_with(self.randomize_settings);
+        let area = self.randomize_area();
+        match &mut self.board {
+            Universe::Finite(board) => board.populate_random_with(self.randomize_settings),
+            Universe::Unbounded(plane) => {
+                if let Some(area) = area {
+                    plane.replace_rect(area, self.randomize_settings.draws());
+                }
+            }
         }
         self.needs_redraw = true;
     }
@@ -573,11 +651,7 @@ impl App {
     /// [`Workspace::decode`]: crate::workspace::Workspace::decode
     pub(crate) fn restore_decoded(&mut self, decoded: crate::workspace::DecodedWorkspace) {
         let mut restored = Self::new(decoded.width, decoded.height);
-        restored.board.set_rule(decoded.rule);
-        restored.board.set_boundary_mode(decoded.boundary);
-        if let Some(board) = restored.board.finite_mut() {
-            board.restore_cells(decoded.cells);
-        }
+        restored.board = decoded.board;
         restored.epoch = decoded.generation;
         restored.randomize_settings = decoded.randomize_settings;
         restored.set_tick_rate_ms(decoded.tick_rate_ms);
@@ -591,22 +665,42 @@ impl App {
     }
 
     /// The live cells cropped to their bounding box, as RLE with the board rule
-    /// in the header. `None` for an empty board, and for the unbounded board,
-    /// whose bounding box needn't fit in memory.
-    pub fn board_to_rle(&self) -> Option<BoardExport> {
-        let board = self.board.finite()?;
+    /// in the header.
+    pub fn board_to_rle(&self) -> Result<BoardExport, BoardExportError> {
+        let board = match &self.board {
+            Universe::Finite(board) => board,
+            Universe::Unbounded(plane) => {
+                if plane.live_cells_count() > PLANE_EXPORT_CELLS_MAX {
+                    return Err(BoardExportError::TooLarge);
+                }
+                let comment = format!("Generation {} of an unbounded board", self.epoch);
+                let export = plane_to_rle(plane, &comment).ok_or(BoardExportError::Empty)?;
+                return Ok(BoardExport {
+                    rle: export.rle,
+                    cells: plane.live_cells_count(),
+                    width: export.width,
+                    height: export.height,
+                });
+            }
+        };
         let (cols, rows) = board.size();
         let live: Vec<(usize, usize)> = (0..rows)
             .flat_map(|y| (0..cols).map(move |x| (x, y)))
             .filter(|&(x, y)| board.is_alive(x, y))
             .collect();
-        let min_x = live.iter().map(|cell| cell.0).min()?;
-        let min_y = live.iter().map(|cell| cell.1).min()?;
-        let width = live.iter().map(|cell| cell.0).max()? - min_x + 1;
-        let height = live.iter().map(|cell| cell.1).max()? - min_y + 1;
+        let bounds = (|| {
+            Some((
+                live.iter().map(|cell| cell.0).min()?,
+                live.iter().map(|cell| cell.1).min()?,
+                live.iter().map(|cell| cell.0).max()?,
+                live.iter().map(|cell| cell.1).max()?,
+            ))
+        })();
+        let (min_x, min_y, max_x, max_y) = bounds.ok_or(BoardExportError::Empty)?;
+        let (width, height) = (max_x - min_x + 1, max_y - min_y + 1);
         let cells: Vec<_> = live.iter().map(|&(x, y)| (x - min_x, y - min_y)).collect();
         let comment = format!("Generation {} of a {cols}x{rows} board", self.epoch);
-        Some(BoardExport {
+        Ok(BoardExport {
             rle: crate::patterns::to_rle(&cells, width, height, Some(self.board.rule()), &comment),
             cells: cells.len(),
             width,
@@ -1165,18 +1259,177 @@ mod tests {
         assert_eq!(app.board.size(), Some((32, 64)));
     }
 
-    #[test]
-    fn what_needs_a_finite_board_declines_the_unbounded_one() {
+    /// Cells in chunks of their own, far enough apart to have nothing to do.
+    fn scattered_app(chunks: i64) -> App {
         let mut app = unbounded_app();
-        app.populate_board(0, 0);
-        assert_eq!(app.board_to_rle(), None);
-        assert!(app.workspace().is_err());
+        for chunk in 0..chunks {
+            app.populate_board(chunk * 1000, 0);
+        }
+        app
+    }
 
+    #[test]
+    fn a_full_unbounded_board_stops_the_run_until_something_frees_chunks() {
+        let mut app = scattered_app(3);
+        app.chunk_budget = 3;
+        app.toggle_running();
+        app.increment_epoch();
+        assert_eq!(app.epoch, 0, "no generation ran");
+        assert!(!app.is_running());
+        assert_eq!(app.take_auto_paused(), Some(AutoPause::BoardFull));
+        assert_eq!(app.take_auto_paused(), None);
+        assert_eq!(
+            AutoPause::BoardFull.to_string(),
+            "the board reached its memory limit"
+        );
+
+        // Playing or stepping again can't get past it.
+        app.toggle_running();
+        app.increment_epoch();
+        assert!(!app.is_running());
+        app.increment_epoch();
+        assert_eq!(app.epoch, 0);
+        assert_eq!(app.take_auto_paused(), Some(AutoPause::BoardFull));
+
+        app.depopulate_board(0, 0);
+        app.increment_epoch();
+        assert_eq!(app.epoch, 1);
+        assert_eq!(app.take_auto_paused(), None);
+    }
+
+    #[test]
+    fn a_board_under_budget_or_with_edges_keeps_running() {
+        let mut app = scattered_app(2);
+        app.chunk_budget = 3;
+        app.toggle_running();
+        app.increment_epoch();
+        assert!(app.is_running());
+        assert_eq!(app.epoch, 1);
+
+        let mut app = App::new(16, 16);
+        app.chunk_budget = 0;
+        app.toggle_running();
+        app.increment_epoch();
+        assert!(app.is_running());
+        assert_eq!(app.epoch, 1);
+    }
+
+    #[test]
+    fn randomizing_the_plane_fills_the_view_and_leaves_the_rest() {
         let mut app = unbounded_app();
+        app.set_randomize_settings(RandomizeSettings::new(100, None).unwrap());
+        app.populate_board(500, 500);
+        let view = CellRect {
+            left: -5,
+            bottom: 100,
+            width: 70,
+            height: 3,
+        };
+        app.set_view_cells(view);
+        assert_eq!(app.randomize_area(), Some(view));
         app.randomize_board();
-        assert_eq!(app.board.live_cells_count(), 0);
+        assert_eq!(app.board.live_cells_count(), 70 * 3 + 1);
+        assert!(app.board.is_alive(-5, 100) && app.board.is_alive(64, 102));
+        assert!(!app.board.is_alive(-6, 100) && !app.board.is_alive(65, 102));
+        assert!(app.board.is_alive(500, 500), "left outside the view alone");
+
+        // What was there goes, as on a finite board.
+        app.set_randomize_settings(RandomizeSettings::new(0, None).unwrap());
+        app.randomize_board();
+        assert_eq!(app.board.live_cells_count(), 1);
+
         assert!(app.undo());
-        assert_eq!(app.board.size(), Some((16, 16)), "randomizing left no edit");
+        assert_eq!(app.board.live_cells_count(), 70 * 3 + 1);
+        assert!(app.undo());
+        assert_eq!(app.board.live_cells_count(), 1);
+    }
+
+    #[test]
+    fn a_seed_repeats_on_the_plane() {
+        let randomized = |seed| {
+            let mut app = unbounded_app();
+            app.set_randomize_settings(RandomizeSettings::new(50, Some(seed)).unwrap());
+            app.randomize_board();
+            let mut cells: Vec<_> = match &app.board {
+                Universe::Unbounded(plane) => plane.live_cells().collect(),
+                Universe::Finite(_) => panic!("the board is unbounded"),
+            };
+            cells.sort_unstable();
+            cells
+        };
+        assert_eq!(randomized(7), randomized(7));
+        assert_ne!(randomized(7), randomized(8));
+    }
+
+    #[test]
+    fn randomizing_starts_from_where_the_board_would_be_and_is_capped_at_a_board() {
+        let mut app = App::new(32, 16);
+        app.set_unbounded().unwrap();
+        assert_eq!(app.randomize_area(), Some(CellRect::around_origin(32, 16)));
+
+        // A view zoomed far out is bigger than anything worth filling.
+        app.set_view_cells(CellRect {
+            left: 1 << 40,
+            bottom: -(1 << 30),
+            width: 1 << 30,
+            height: BOARD_SIZE_MAX - 2,
+        });
+        let area = app.randomize_area().unwrap();
+        assert_eq!(
+            (area.width, area.height),
+            (BOARD_SIZE_MAX, BOARD_SIZE_MAX - 2)
+        );
+        assert_eq!(area.bottom, -(1 << 30));
+        let middle = (1i64 << 40) + (1 << 29);
+        assert_eq!(area.left, middle - BOARD_SIZE_MAX as i64 / 2);
+
+        assert_eq!(App::new(16, 16).randomize_area(), None);
+    }
+
+    #[test]
+    fn the_plane_exports_runs_of_any_extent_from_the_corner_of_its_cells() {
+        let mut app = unbounded_app();
+        assert_eq!(app.board_to_rle(), Err(BoardExportError::Empty));
+
+        let far = 1i64 << 40;
+        for (x, y) in [(far, -far), (far + 1, -far), (far + 1000, -far + 2)] {
+            app.populate_board(x, y);
+        }
+        app.epoch = 9;
+        let export = app.board_to_rle().unwrap();
+        assert_eq!((export.cells, export.width, export.height), (3, 1001, 3));
+        assert_eq!(
+            export.rle,
+            "#C Generation 9 of an unbounded board\n\
+             x = 1001, y = 3, rule = B3/S23\n2o2$1000bo!\n"
+        );
+    }
+
+    #[test]
+    fn a_plane_too_big_to_write_out_says_so() {
+        let mut app = unbounded_app();
+        let Universe::Unbounded(plane) = &mut app.board else {
+            panic!("the board is unbounded");
+        };
+        let side = 1 << 13;
+        let area = CellRect::around_origin(side + 1, side);
+        plane.replace_rect(area, || true);
+        assert!(plane.live_cells_count() > PLANE_EXPORT_CELLS_MAX);
+        assert_eq!(app.board_to_rle(), Err(BoardExportError::TooLarge));
+        assert!(
+            app.workspace()
+                .unwrap_err()
+                .to_string()
+                .contains("67,108,864")
+        );
+
+        let Universe::Unbounded(plane) = &mut app.board else {
+            panic!("the board is unbounded");
+        };
+        plane.clear();
+        plane.replace_rect(CellRect::around_origin(side, side), || true);
+        assert_eq!(plane.live_cells_count(), PLANE_EXPORT_CELLS_MAX);
+        assert_eq!(app.board_to_rle().unwrap().cells, PLANE_EXPORT_CELLS_MAX);
     }
 
     #[test]
@@ -1431,7 +1684,10 @@ mod tests {
         assert_eq!(app.take_auto_paused(), None);
         app.increment_epoch();
         assert!(!app.is_running());
-        assert_eq!(app.take_auto_paused(), app.settled());
+        assert_eq!(
+            app.take_auto_paused(),
+            app.settled().map(AutoPause::Settled)
+        );
         assert_eq!(app.take_auto_paused(), None);
 
         // Playing on from there is a choice, so it is not interrupted again.
@@ -1555,7 +1811,7 @@ mod tests {
     #[test]
     fn board_export_crops_to_the_live_cells_and_reads_back() {
         let mut app = App::new(32, 24);
-        assert_eq!(app.board_to_rle(), None);
+        assert_eq!(app.board_to_rle(), Err(BoardExportError::Empty));
 
         let cells = [(10, 5), (11, 6), (9, 7), (10, 7), (11, 7), (20, 15)];
         for (x, y) in cells {

@@ -88,62 +88,107 @@ pub fn to_rle(
     rule: Option<Rule>,
     comment: &str,
 ) -> String {
-    let mut grid = vec![false; width * height];
-    for &(x, y) in cells {
-        grid[y * width + x] = true;
+    let mut sorted: Vec<_> = cells.iter().map(|&(x, y)| (y, x)).collect();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let mut writer = RleWriter::default();
+    for (y, x) in sorted {
+        writer.cells(x, y, 1);
     }
-    let run = |length: usize, tag: char| {
-        if length == 1 {
-            tag.to_string()
-        } else {
-            format!("{length}{tag}")
-        }
-    };
+    writer.finish(width, height, rule, comment)
+}
 
-    let mut tokens = Vec::new();
-    let mut last_row = None;
-    for (y, row) in grid.chunks_exact(width.max(1)).enumerate().take(height) {
-        let Some(end) = row.iter().rposition(|&alive| alive) else {
-            continue;
+/// Builds RLE a run of live cells at a time, for patterns too big or too sparse
+/// to lay out in a grid.
+#[derive(Default)]
+pub struct RleWriter {
+    body: String,
+    line_length: usize,
+    token: String,
+    /// Where the body has got to.
+    row: usize,
+    column: usize,
+    /// Live cells at `(x, y)`, held back in case more follow on.
+    run: Option<(usize, usize, usize)>,
+}
+
+impl RleWriter {
+    /// Adds `length` live cells from `(x, y)`. Cells arrive row by row, left to
+    /// right, and those next to each other in pieces make one run.
+    pub fn cells(&mut self, x: usize, y: usize, length: usize) {
+        if let Some(run) = &mut self.run
+            && (run.0 + run.2, run.1) == (x, y)
+        {
+            run.2 += length;
+            return;
+        }
+        self.write_run();
+        self.run = Some((x, y, length));
+    }
+
+    fn write_run(&mut self) {
+        let Some((x, y, length)) = self.run.take() else {
+            return;
         };
-        let gap = last_row.map_or(y, |previous| y - previous);
-        if gap > 0 {
-            tokens.push(run(gap, '$'));
+        if y > self.row {
+            self.push(y - self.row, '$');
+            self.row = y;
+            self.column = 0;
         }
-        last_row = Some(y);
-        let mut x = 0;
-        while x <= end {
-            let alive = row[x];
-            let length = row[x..=end]
-                .iter()
-                .take_while(|&&cell| cell == alive)
-                .count();
-            tokens.push(run(length, if alive { 'o' } else { 'b' }));
-            x += length;
+        if x > self.column {
+            self.push(x - self.column, 'b');
         }
+        self.push(length, 'o');
+        self.column = x + length;
     }
-    tokens.push("!".to_owned());
 
-    let mut rle = String::new();
-    for line in comment.lines() {
-        rle.push_str(&format!("#C {line}\n"));
+    fn push(&mut self, length: usize, tag: char) {
+        use std::fmt::Write;
+        self.token.clear();
+        let written = if length == 1 {
+            write!(self.token, "{tag}")
+        } else {
+            write!(self.token, "{length}{tag}")
+        };
+        written.expect("writing to a string succeeds");
+        self.push_token();
     }
-    rle.push_str(&format!("x = {width}, y = {height}"));
-    if let Some(rule) = rule {
-        rle.push_str(&format!(", rule = {rule}"));
-    }
-    rle.push('\n');
-    let mut line_length = 0;
-    for token in tokens {
-        if line_length + token.len() > RLE_LINE_WIDTH {
-            rle.push('\n');
-            line_length = 0;
+
+    fn push_token(&mut self) {
+        if self.line_length + self.token.len() > RLE_LINE_WIDTH {
+            self.body.push('\n');
+            self.line_length = 0;
         }
-        line_length += token.len();
-        rle.push_str(&token);
+        self.line_length += self.token.len();
+        self.body.push_str(&self.token);
     }
-    rle.push('\n');
-    rle
+
+    /// The complete RLE. Without a rule the header has no `rule =` field.
+    pub fn finish(
+        mut self,
+        width: usize,
+        height: usize,
+        rule: Option<Rule>,
+        comment: &str,
+    ) -> String {
+        self.write_run();
+        self.token.clear();
+        self.token.push('!');
+        self.push_token();
+
+        let mut rle = String::new();
+        for line in comment.lines() {
+            rle.push_str(&format!("#C {line}\n"));
+        }
+        rle.push_str(&format!("x = {width}, y = {height}"));
+        if let Some(rule) = rule {
+            rle.push_str(&format!(", rule = {rule}"));
+        }
+        rle.push('\n');
+        rle.push_str(&self.body);
+        rle.push('\n');
+        rle
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,6 +201,8 @@ pub enum PatternParseError {
     Overflow,
     InvalidRule(RuleParseError),
     TooLarge,
+    PlaneTooLarge,
+    PlaneOutOfReach,
     OutOfBounds,
     InvalidRun,
     LibraryFull,
@@ -175,6 +222,13 @@ impl fmt::Display for PatternParseError {
                 f,
                 "RLE exceeds the 8 MiB input or 2048 × 2048 pattern limit"
             ),
+            Self::PlaneTooLarge => write!(
+                f,
+                "the unbounded board has too many cells, or spreads over too many chunks, to load"
+            ),
+            Self::PlaneOutOfReach => {
+                write!(f, "the unbounded board lies too far from the origin")
+            }
             Self::OutOfBounds => write!(f, "RLE body exceeds its declared dimensions"),
             Self::InvalidRun => write!(f, "RLE counts must be positive and followed by o, b, or $"),
             Self::InvalidRule(err) => write!(f, "unsupported rule in RLE header: {err}"),
@@ -202,44 +256,101 @@ fn parse_rle(source: &str) -> Result<ParsedRle, PatternParseError> {
     if source.len() > MAX_RLE_BYTES {
         return Err(PatternParseError::TooLarge);
     }
-    let mut header_line = None;
-    let mut name = None;
-    let mut body = String::new();
-
-    for raw_line in source.lines() {
-        let line = raw_line.trim();
-        if let Some(title) = line.strip_prefix("#N")
-            && name.is_none()
-            && !title.trim().is_empty()
-        {
-            name = Some(title.trim().to_owned());
-        }
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        if header_line.is_none() {
-            header_line = Some(line.to_string());
-        } else {
-            body.push_str(line);
-        }
-    }
-
-    let Some(header) = header_line else {
-        return Err(PatternParseError::MissingHeader);
-    };
-
+    let text = RleText::new(source)?;
     let RleHeader {
-        width: declared_w,
-        height: declared_h,
+        width,
+        height,
         rule,
-    } = parse_header(&header)?;
-    let mut cells = Vec::new();
-    let mut x = 0usize;
-    let mut y = 0usize;
-    if declared_w > MAX_PATTERN_SIDE || declared_h > MAX_PATTERN_SIDE {
+    } = text.header;
+    if width > MAX_PATTERN_SIDE || height > MAX_PATTERN_SIDE {
         return Err(PatternParseError::TooLarge);
     }
+    let mut cells = Vec::new();
+    // The bounds checks of the walk cap the cells at the declared area.
+    walk_rle(&text.body, width, height, |x, y, length| {
+        cells.extend((x..x + length).map(|x| (x, y)));
+        Ok(())
+    })?;
+    Ok(ParsedRle {
+        name: text.name,
+        cells,
+        width,
+        height,
+        rule,
+    })
+}
+
+/// Reads RLE of any size a run of live cells at a time. `visit` gets each run as
+/// `(x, y, length)` before it is expanded, and can stop the walk with an error.
+/// Returns the width, height, and rule of the header.
+pub fn read_rle_runs(
+    source: &str,
+    visit: impl FnMut(usize, usize, usize) -> Result<(), PatternParseError>,
+) -> Result<(usize, usize, Option<Rule>), PatternParseError> {
+    let text = RleText::new(source)?;
+    let RleHeader {
+        width,
+        height,
+        rule,
+    } = text.header;
+    walk_rle(&text.body, width, height, visit)?;
+    Ok((width, height, rule))
+}
+
+/// RLE taken apart into its lines.
+struct RleText {
+    /// From the first `#N` line, if any.
+    name: Option<String>,
+    header: RleHeader,
+    body: String,
+}
+
+impl RleText {
+    fn new(source: &str) -> Result<Self, PatternParseError> {
+        let mut header_line = None;
+        let mut name = None;
+        let mut body = String::new();
+
+        for raw_line in source.lines() {
+            let line = raw_line.trim();
+            if let Some(title) = line.strip_prefix("#N")
+                && name.is_none()
+                && !title.trim().is_empty()
+            {
+                name = Some(title.trim().to_owned());
+            }
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            if header_line.is_none() {
+                header_line = Some(line.to_string());
+            } else {
+                body.push_str(line);
+            }
+        }
+
+        let Some(header) = header_line else {
+            return Err(PatternParseError::MissingHeader);
+        };
+        Ok(Self {
+            name,
+            header: parse_header(&header)?,
+            body,
+        })
+    }
+}
+
+/// Calls `visit` with each run of live cells in `body` as `(x, y, length)`,
+/// which it may trust to lie within `width` × `height`.
+fn walk_rle(
+    body: &str,
+    width: usize,
+    height: usize,
+    mut visit: impl FnMut(usize, usize, usize) -> Result<(), PatternParseError>,
+) -> Result<(), PatternParseError> {
+    let mut x = 0usize;
+    let mut y = 0usize;
     let mut run: Option<usize> = None;
     let mut terminated = false;
 
@@ -261,18 +372,17 @@ fn parse_rle(source: &str) -> Result<ParsedRle, PatternParseError> {
                 }
                 if ch == '$' {
                     y = y.checked_add(count).ok_or(PatternParseError::Overflow)?;
-                    if y > declared_h {
+                    if y > height {
                         return Err(PatternParseError::OutOfBounds);
                     }
                     x = 0;
                 } else {
                     let end = x.checked_add(count).ok_or(PatternParseError::Overflow)?;
-                    if end > declared_w || y >= declared_h {
+                    if end > width || y >= height {
                         return Err(PatternParseError::OutOfBounds);
                     }
-                    // The bounds checks above cap the cells at the declared area.
                     if ch == 'o' {
-                        cells.extend((x..end).map(|x| (x, y)));
+                        visit(x, y, count)?;
                     }
                     x = end;
                 }
@@ -294,14 +404,7 @@ fn parse_rle(source: &str) -> Result<ParsedRle, PatternParseError> {
     if !terminated {
         return Err(PatternParseError::MissingTerminator);
     }
-
-    Ok(ParsedRle {
-        name,
-        cells,
-        width: declared_w,
-        height: declared_h,
-        rule,
-    })
+    Ok(())
 }
 
 struct RleHeader {
@@ -356,7 +459,8 @@ fn parse_header(header: &str) -> Result<RleHeader, PatternParseError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Pattern, PatternParseError};
+    use super::{Pattern, PatternParseError, RleWriter, read_rle_runs, to_rle};
+    use crate::board::Rule;
 
     #[test]
     fn parses_comments_and_run_lengths() {
@@ -575,5 +679,68 @@ mod tests {
     fn rejects_missing_terminator() {
         let result = Pattern::from_rle("Bad", "x = 3, y = 3\n3o$3o");
         assert_eq!(result.err(), Some(PatternParseError::MissingTerminator));
+    }
+
+    #[test]
+    fn the_writer_joins_pieces_of_a_run_and_skips_empty_rows_and_gaps() {
+        let mut writer = RleWriter::default();
+        writer.cells(2, 0, 64);
+        writer.cells(66, 0, 6);
+        writer.cells(80, 0, 1);
+        writer.cells(1, 4, 1);
+        assert_eq!(
+            writer.finish(81, 5, None, ""),
+            "x = 81, y = 5\n2b70o8bo4$bo!\n"
+        );
+    }
+
+    #[test]
+    fn long_rows_wrap_at_the_line_width_and_read_back() {
+        let cells: Vec<_> = (0..200).map(|x| (x * 2, 0)).collect();
+        let rle = to_rle(&cells, 399, 1, None, "");
+        let lines = rle.lines().skip(1);
+        assert!(lines.clone().count() > 1);
+        assert!(lines.clone().all(|line| line.len() <= 70), "{rle}");
+        assert_eq!(Pattern::from_rle("Long", &rle).unwrap().cells, cells);
+    }
+
+    #[test]
+    fn the_writer_starts_where_the_first_cell_is() {
+        let mut writer = RleWriter::default();
+        writer.cells(3, 2, 1);
+        assert_eq!(writer.finish(4, 3, None, ""), "x = 4, y = 3\n2$3bo!\n");
+    }
+
+    #[test]
+    fn cells_in_any_order_and_with_repeats_write_the_same() {
+        assert_eq!(
+            to_rle(&[(1, 1), (0, 0), (1, 1), (2, 1)], 3, 2, None, ""),
+            to_rle(&[(0, 0), (1, 1), (2, 1)], 3, 2, None, "")
+        );
+    }
+
+    #[test]
+    fn runs_read_at_any_size_and_stop_when_told_to() {
+        let source = "#C note\nx = 5000, y = 3000, rule = B36/S23\n4999bo2999$3o!";
+        let mut runs = Vec::new();
+        let (width, height, rule) = read_rle_runs(source, |x, y, length| {
+            runs.push((x, y, length));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!((width, height), (5000, 3000));
+        assert_eq!(rule, Some(Rule::parse("B36/S23").unwrap()));
+        assert_eq!(runs, vec![(4999, 0, 1), (0, 2999, 3)]);
+
+        // Before anything has to be laid out for it.
+        let huge = "x = 9000000000, y = 1\n9000000000o!";
+        let stopped = read_rle_runs(huge, |_, _, length| {
+            assert_eq!(length, 9_000_000_000);
+            Err(PatternParseError::PlaneTooLarge)
+        });
+        assert!(matches!(stopped, Err(PatternParseError::PlaneTooLarge)));
+
+        let past_the_end = read_rle_runs("x = 2, y = 1\n3o!", |_, _, _| Ok(()));
+        assert!(matches!(past_the_end, Err(PatternParseError::OutOfBounds)));
     }
 }

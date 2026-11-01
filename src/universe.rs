@@ -3,7 +3,10 @@
 //! address a cell, and a finite board takes only those it has.
 use crate::{
     board::{Board, BoundaryMode, Rule},
-    sparse_board::{SparseBoard, SparseSnapshot, UnboundedRuleError},
+    patterns::{PatternParseError, RleWriter, read_rle_runs},
+    sparse_board::{
+        PLANE_CHUNKS_MAX, PLANE_EXPORT_CELLS_MAX, SparseBoard, SparseSnapshot, UnboundedRuleError,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -274,13 +277,158 @@ pub fn board_from_plane(
     board
 }
 
+/// How far from the origin a file may put cells. Far past anywhere a run can
+/// get to, and short of where arithmetic on coordinates could overflow.
+const PLANE_REACH: i64 = 1 << 61;
+
+fn within_reach(start: i64, span: usize) -> bool {
+    let reach = -PLANE_REACH..=PLANE_REACH;
+    span <= PLANE_REACH as usize && reach.contains(&start) && reach.contains(&(start + span as i64))
+}
+
+/// A plane's live cells as RLE, cropped to their bounding box.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaneRle {
+    pub rle: String,
+    /// The lowest corner of the box, which is where the RLE starts.
+    pub origin: (i64, i64),
+    pub width: usize,
+    pub height: usize,
+}
+
+/// `None` for a plane with no live cells. Walks runs of chunks rather than
+/// laying out the bounding box, which needn't fit in memory.
+pub fn plane_to_rle(plane: &SparseBoard, comment: &str) -> Option<PlaneRle> {
+    let (min, max) = plane.live_bounds()?;
+    let mut writer = RleWriter::default();
+    plane.for_each_live_run(|x, y, length| {
+        writer.cells((x - min.0) as usize, (y - min.1) as usize, length);
+    });
+    let (width, height) = ((max.0 - min.0 + 1) as usize, (max.1 - min.1 + 1) as usize);
+    Some(PlaneRle {
+        rle: writer.finish(width, height, Some(plane.rule()), comment),
+        origin: min,
+        width,
+        height,
+    })
+}
+
+/// The cells of `source` with its first at `origin`, and the rule of its header,
+/// which is the caller's to apply. Runs are checked before they are expanded, so
+/// a short file can't ask for more than the plane may hold.
+pub fn plane_from_rle(
+    source: &str,
+    origin: (i64, i64),
+) -> Result<(SparseBoard, Option<Rule>), PatternParseError> {
+    // A run stops only once past the budget, and what it saved has to reopen.
+    plane_within(source, origin, PLANE_EXPORT_CELLS_MAX, 2 * PLANE_CHUNKS_MAX)
+}
+
+fn plane_within(
+    source: &str,
+    origin: (i64, i64),
+    cells_max: usize,
+    chunks_max: usize,
+) -> Result<(SparseBoard, Option<Rule>), PatternParseError> {
+    let mut plane = SparseBoard::default();
+    let mut cells = 0usize;
+    let (_, _, rule) = read_rle_runs(source, |x, y, length| {
+        cells = cells.saturating_add(length);
+        if cells > cells_max || plane.chunk_count() >= chunks_max {
+            return Err(PatternParseError::PlaneTooLarge);
+        }
+        if !within_reach(origin.0, x + length) || !within_reach(origin.1, y + 1) {
+            return Err(PatternParseError::PlaneOutOfReach);
+        }
+        for x in x..x + length {
+            plane.populate(origin.0 + x as i64, origin.1 + y as i64);
+        }
+        Ok(())
+    })?;
+    Ok((plane, rule))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Universe, board_from_plane, plane_from_board};
+    use super::{
+        PLANE_REACH, Universe, board_from_plane, plane_from_board, plane_from_rle, plane_to_rle,
+        plane_within,
+    };
     use crate::{
         board::{Board, BoundaryMode, Rule},
+        patterns::PatternParseError,
         sparse_board::{SparseBoard, UnboundedRuleError},
     };
+
+    fn sorted(plane: &SparseBoard) -> Vec<(i64, i64)> {
+        let mut cells: Vec<_> = plane.live_cells().collect();
+        cells.sort_unstable();
+        cells
+    }
+
+    #[test]
+    fn rle_brings_the_plane_back_where_it_was() {
+        let mut plane = SparseBoard::default();
+        plane.set_rule(Rule::parse("B36/S23").unwrap()).unwrap();
+        let far = 1i64 << 40;
+        for cell in [
+            (-far, far),
+            (-far + 1, far),
+            (-far + 63, far),
+            (-far + 64, far),
+            (-far + 900, far + 100),
+            (-far - 5, far + 3),
+        ] {
+            plane.populate(cell.0, cell.1);
+        }
+        let export = plane_to_rle(&plane, "").unwrap();
+        assert_eq!(export.origin, (-far - 5, far));
+        assert_eq!((export.width, export.height), (906, 101));
+
+        let (restored, rule) = plane_from_rle(&export.rle, export.origin).unwrap();
+        assert_eq!(rule, Some(plane.rule()));
+        assert_eq!(sorted(&restored), sorted(&plane));
+        assert_eq!(restored.live_cells_count(), plane.live_cells_count());
+    }
+
+    #[test]
+    fn an_empty_plane_has_no_rle() {
+        assert_eq!(plane_to_rle(&SparseBoard::default(), ""), None);
+    }
+
+    #[test]
+    fn rle_stops_at_the_limits_of_the_plane_before_expanding_a_run() {
+        let too_long = |result: Result<_, PatternParseError>| {
+            matches!(result, Err(PatternParseError::PlaneTooLarge))
+        };
+        let run = "x = 90000000000, y = 1\n90000000000o!";
+        assert!(too_long(plane_from_rle(run, (0, 0))));
+
+        // Up to the limit of live cells, and one past it.
+        let three = "x = 3, y = 1\n3o!";
+        assert!(plane_within(three, (0, 0), 3, 8).is_ok());
+        assert!(too_long(plane_within(three, (0, 0), 2, 8)));
+
+        // Three chunks, of which the last would be one too many.
+        let spread = "x = 201, y = 1\no99bo99bo!";
+        assert!(plane_within(spread, (0, 0), 8, 3).is_ok());
+        assert!(too_long(plane_within(spread, (0, 0), 8, 2)));
+    }
+
+    #[test]
+    fn rle_stays_within_reach_of_the_origin() {
+        let glider = "x = 2, y = 2\n2o$bo!";
+        let at = |x, y| plane_from_rle(glider, (x, y)).map(|_| ());
+        let out = Err(PatternParseError::PlaneOutOfReach);
+        assert_eq!(at(PLANE_REACH - 2, 0), Ok(()));
+        assert_eq!(at(PLANE_REACH - 1, 0), out);
+        assert_eq!(at(0, PLANE_REACH - 2), Ok(()));
+        assert_eq!(at(0, PLANE_REACH - 1), out);
+        assert_eq!(at(-PLANE_REACH, -PLANE_REACH), Ok(()));
+        assert_eq!(at(-PLANE_REACH - 1, 0), out);
+        assert_eq!(at(0, i64::MIN), out);
+        assert_eq!(at(i64::MAX, 0), out);
+    }
 
     fn finite() -> Universe {
         Universe::Finite(Board::new(16, 8))

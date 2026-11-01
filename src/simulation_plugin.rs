@@ -139,6 +139,31 @@ mod tests {
     }
 
     #[test]
+    fn a_board_out_of_room_stops_a_max_speed_run_and_says_why() {
+        use crate::shared::EditFeedback;
+        use bevy::{ecs::system::RunSystemOnce, prelude::*};
+
+        let mut sim = running_simulation();
+        sim.app.set_unbounded().unwrap();
+        sim.app.populate_board(3, 3);
+        sim.app.set_chunk_budget(1);
+        sim.app.set_max_speed();
+        let mut world = World::new();
+        world.insert_resource(sim);
+        world.init_resource::<Time>();
+        world.init_resource::<EditFeedback>();
+        world.run_system_once(super::advance_simulation).unwrap();
+
+        let sim = world.resource::<Simulation>();
+        assert!(!sim.app.is_running());
+        assert_eq!(sim.app.epoch, 0);
+        assert_eq!(
+            world.resource::<EditFeedback>().message,
+            "Paused · the board reached its memory limit"
+        );
+    }
+
+    #[test]
     fn steps_accumulate_across_frames() {
         let mut sim = running_simulation();
         run_due_steps(&mut sim, Duration::from_millis(60));

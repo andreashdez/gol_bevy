@@ -832,6 +832,7 @@ fn sync(
                 | Action::RulePreset(_)
                 | Action::Theme(_)
                 | Action::Edges(_)
+                | Action::Unbounded
         ) {
             accessible.set_toggled(if selected {
                 accesskit::Toggled::True

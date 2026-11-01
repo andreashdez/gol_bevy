@@ -32,6 +32,14 @@ const MIN_BAND_CHUNKS: usize = 16;
 /// Nothing else bounds the list, as a run may cross new chunks forever between syncs.
 const DIRTY_CHUNKS_MAX: usize = 1 << 14;
 
+/// Chunks a run may reach before it pauses. A chunk's cells take 512 bytes, so
+/// this is half a gigabyte of them, with its bookkeeping and history on top.
+pub const PLANE_CHUNKS_MAX: usize = 1 << 20;
+
+/// Live cells that can be written out, as RLE or to a workspace file. Far more
+/// than fit a workspace unless most of them are in long runs.
+pub const PLANE_EXPORT_CELLS_MAX: usize = 1 << 26;
+
 /// Returned for rules that would light every cell of the plane in one generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnboundedRuleError;
@@ -53,6 +61,44 @@ pub enum DirtyChunks {
     Chunks(HashMap<ChunkKey, Chunk>),
 }
 
+/// A rectangle of cells, from its lowest corner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CellRect {
+    pub left: i64,
+    pub bottom: i64,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl CellRect {
+    /// A `width` × `height` rectangle with the origin in its middle, where a board
+    /// of that size would land on the plane.
+    pub fn around_origin(width: usize, height: usize) -> Self {
+        Self {
+            left: -((width / 2) as i64),
+            bottom: -((height / 2) as i64),
+            width,
+            height,
+        }
+    }
+
+    /// The middle of this rectangle, at most `side` cells across each way.
+    pub fn middle(self, side: usize) -> Self {
+        let keep = |start: i64, length: usize| {
+            let kept = length.min(side);
+            (start + ((length - kept) / 2) as i64, kept)
+        };
+        let (left, width) = keep(self.left, self.width);
+        let (bottom, height) = keep(self.bottom, self.height);
+        Self {
+            left,
+            bottom,
+            width,
+            height,
+        }
+    }
+}
+
 /// A grid of square blocks over part of the plane, for drawing it. A block is
 /// `1 << level` cells across, and `left` and `bottom` are multiples of that, so
 /// blocks line up with chunks however far the grid is from the origin.
@@ -68,6 +114,29 @@ pub struct BlockGrid {
 }
 
 impl BlockGrid {
+    /// The finest grid of at most `side` blocks each way over the inclusive
+    /// bounds. Lining up with its own blocks can cost it a level.
+    pub fn covering((min, max): ((i64, i64), (i64, i64)), side: usize) -> Self {
+        let span = (max.0 - min.0 + 1).max(max.1 - min.1 + 1) as u64;
+        let mut level = span.div_ceil(side as u64).next_power_of_two().ilog2();
+        loop {
+            let block = 1i64 << level;
+            let (left, bottom) = (min.0.div_euclid(block), min.1.div_euclid(block));
+            let width = (max.0.div_euclid(block) - left + 1) as usize;
+            let height = (max.1.div_euclid(block) - bottom + 1) as usize;
+            if width.max(height) <= side {
+                return Self {
+                    left: left * block,
+                    bottom: bottom * block,
+                    level,
+                    width,
+                    height,
+                };
+            }
+            level += 1;
+        }
+    }
+
     /// One past the last cell in each direction.
     fn end(&self) -> (i64, i64) {
         let span = |blocks: usize| (blocks as i64).saturating_mul(1 << self.level);
@@ -228,6 +297,52 @@ impl SparseBoard {
         self.live_count = 0;
         self.mark_dirty_full();
         true
+    }
+
+    /// Replaces every cell of `rect`, asking `alive` about each in turn, row by
+    /// row from the lowest and left to right.
+    pub fn replace_rect(&mut self, rect: CellRect, mut alive: impl FnMut() -> bool) {
+        let right = rect.left + rect.width as i64;
+        for y in rect.bottom..rect.bottom + rect.height as i64 {
+            let mut x = rect.left;
+            while x < right {
+                let (key, col, row) = locate(x, y);
+                let cols = (right - x).min(CHUNK_SIZE - col as i64) as usize;
+                let mut cells = 0;
+                for bit in col..col + cols {
+                    cells |= u64::from(alive()) << bit;
+                }
+                self.write_row(key, row, (u64::MAX >> (64 - cols)) << col, cells);
+                x += cols as i64;
+            }
+        }
+        self.mark_dirty_full();
+    }
+
+    /// Sets the cells of a row that `mask` selects.
+    fn write_row(&mut self, key: ChunkKey, row: usize, mask: u64, cells: u64) {
+        let old = self.chunks.get(&key).map_or(0, |chunk| chunk[row]);
+        let flipped = (old ^ cells) & mask;
+        if flipped == 0 {
+            return;
+        }
+        let new = old ^ flipped;
+        let chunk = self
+            .chunks
+            .entry(key)
+            .or_insert_with(|| Arc::new(EMPTY_CHUNK));
+        Arc::make_mut(chunk)[row] = new;
+        if new == 0 && **chunk == EMPTY_CHUNK {
+            self.chunks.remove(&key);
+        }
+        self.live_count =
+            (self.live_count + new.count_ones() as usize).saturating_sub(old.count_ones() as usize);
+        let rows = ChangedRows {
+            any: 1 << row,
+            west: (flipped & 1) << row,
+            east: (flipped >> LAST_LINE) << row,
+        };
+        wake(&mut self.active, key, rows);
     }
 
     pub fn step(&mut self) -> bool {
@@ -406,6 +521,32 @@ impl SparseBoard {
                 }
             }
         });
+    }
+
+    /// Calls `visit` with each run of live cells as `(x, y, length)`, row by row
+    /// from the lowest and left to right, the order RLE wants them in. A run
+    /// across chunks comes in pieces.
+    pub fn for_each_live_run(&self, mut visit: impl FnMut(i64, i64, usize)) {
+        let mut chunks: Vec<_> = self.chunks.iter().collect();
+        chunks.sort_unstable_by_key(|(key, _)| (key.1, key.0));
+        for band in chunks.chunk_by(|a, b| a.0.1 == b.0.1) {
+            for row in 0..CHUNK_SIZE as usize {
+                for (key, chunk) in band {
+                    let (left, bottom) = chunk_origin(**key);
+                    let mut cells = chunk[row];
+                    while cells != 0 {
+                        let start = cells.trailing_zeros();
+                        let length = (cells >> start).trailing_ones();
+                        visit(
+                            left + i64::from(start),
+                            bottom + row as i64,
+                            length as usize,
+                        );
+                        cells &= u64::MAX.checked_shl(start + length).unwrap_or(0);
+                    }
+                }
+            }
+        }
     }
 
     /// Chunks in memory, each of [`CHUNK_SIZE`] squared bits plus some overhead.
@@ -703,7 +844,8 @@ fn next_row(around: &Around, row: usize, mask: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockGrid, CHUNK_SIZE, DIRTY_CHUNKS_MAX, DirtyChunks, SparseBoard, UnboundedRuleError,
+        BlockGrid, CHUNK_SIZE, CellRect, DIRTY_CHUNKS_MAX, DirtyChunks, SparseBoard,
+        UnboundedRuleError,
     };
     use crate::board::{Board, BoundaryMode, Rule};
     use std::collections::{HashMap, HashSet};
@@ -1172,5 +1314,194 @@ mod tests {
         }
         assert_eq!(board.take_dirty_chunks(), DirtyChunks::Full);
         assert_eq!(board.take_dirty_chunks(), DirtyChunks::None);
+    }
+
+    #[test]
+    fn replacing_a_rectangle_matches_setting_each_cell_by_hand() {
+        let rect = CellRect {
+            left: -70,
+            bottom: -3,
+            width: 150,
+            height: 70,
+        };
+        let draws = |seed| {
+            let mut state: u32 = seed;
+            move || {
+                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                state >> 16 & 3 == 0
+            }
+        };
+        let mut plane = SparseBoard::default();
+        // Cells inside to lose, and outside to keep, on both sides of a chunk edge.
+        for cell in [(-70, -3), (79, 66), (-71, 0), (80, 0), (0, -4), (0, 67)] {
+            plane.populate(cell.0, cell.1);
+        }
+        let mut by_hand = plane.clone();
+        let mut alive = draws(1);
+        for y in rect.bottom..rect.bottom + rect.height as i64 {
+            for x in rect.left..rect.left + rect.width as i64 {
+                if alive() {
+                    by_hand.populate(x, y);
+                } else {
+                    by_hand.depopulate(x, y);
+                }
+            }
+        }
+        plane.replace_rect(rect, draws(1));
+        assert_eq!(sorted(plane.live_cells()), sorted(by_hand.live_cells()));
+        assert_eq!(plane.live_cells_count(), by_hand.live_cells_count());
+        assert_eq!(plane.chunk_count(), by_hand.chunk_count());
+        // Waking the same rows, so that the two go on to the same place.
+        for _ in 0..6 {
+            plane.step();
+            by_hand.step();
+            assert_eq!(sorted(plane.live_cells()), sorted(by_hand.live_cells()));
+        }
+    }
+
+    #[test]
+    fn replacing_a_rectangle_wakes_the_chunks_beside_it() {
+        // A block that has gone quiet, and a cell across the chunk edge that makes
+        // the corner next to the block come alive, which only a woken chunk finds.
+        let one_cell = |left, bottom| CellRect {
+            left,
+            bottom,
+            width: 1,
+            height: 1,
+        };
+        for (block, cell, birth) in [
+            ([(62, 10), (63, 10), (62, 11), (63, 11)], (64, 12), (63, 12)),
+            ([(64, 10), (65, 10), (64, 11), (65, 11)], (63, 12), (64, 12)),
+        ] {
+            let mut plane = board_with(block);
+            while plane.step() {}
+            plane.step();
+            plane.replace_rect(one_cell(cell.0, cell.1), || true);
+            plane.step();
+            assert!(plane.is_alive(birth.0, birth.1), "{cell:?}");
+        }
+    }
+
+    #[test]
+    fn replacing_a_rectangle_drops_chunks_it_empties_and_redraws_everything() {
+        let mut plane = SparseBoard::default();
+        plane.populate(3, 3);
+        assert_eq!(plane.take_dirty_chunks(), DirtyChunks::Full);
+        plane.replace_rect(CellRect::around_origin(256, 256), || false);
+        assert_eq!(plane.chunk_count(), 0);
+        assert_eq!(plane.live_cells_count(), 0);
+        assert_eq!(plane.take_dirty_chunks(), DirtyChunks::Full);
+    }
+
+    #[test]
+    fn replacing_cells_a_snapshot_holds_leaves_the_snapshot_alone() {
+        let mut plane = SparseBoard::default();
+        plane.populate(3, 3);
+        let snapshot = plane.snapshot();
+        plane.replace_rect(CellRect::around_origin(32, 32), || true);
+        plane.restore(snapshot);
+        assert_eq!(sorted(plane.live_cells()), vec![(3, 3)]);
+    }
+
+    fn live_runs(plane: &SparseBoard) -> Vec<(i64, i64, usize)> {
+        let mut runs = Vec::new();
+        plane.for_each_live_run(|x, y, length| runs.push((x, y, length)));
+        runs
+    }
+
+    #[test]
+    fn live_runs_come_row_by_row_from_the_lowest_and_cover_every_cell() {
+        let mut plane = SparseBoard::default();
+        let cells = [
+            (-1, -65),
+            (-65, -1),
+            (0, -1),
+            (5, 0),
+            (6, 0),
+            (-100, 0),
+            (70, 0),
+            (70, 200),
+        ];
+        for (x, y) in cells {
+            plane.populate(x, y);
+        }
+        assert_eq!(
+            live_runs(&plane),
+            vec![
+                (-1, -65, 1),
+                (-65, -1, 1),
+                (0, -1, 1),
+                (-100, 0, 1),
+                (5, 0, 2),
+                (70, 0, 1),
+                (70, 200, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_run_to_the_edge_of_a_chunk_ends_there_and_the_next_begins_beyond_it() {
+        let mut plane = SparseBoard::default();
+        plane.replace_rect(
+            CellRect {
+                left: 0,
+                bottom: 0,
+                width: 70,
+                height: 1,
+            },
+            || true,
+        );
+        assert_eq!(live_runs(&plane), vec![(0, 0, 64), (64, 0, 6)]);
+    }
+
+    #[test]
+    fn a_grid_covers_its_bounds_in_blocks_of_its_own_alignment() {
+        for (min, max, side) in [
+            ((0, 0), (0, 0), 280),
+            ((-1, -1), (0, 0), 2),
+            ((-300, 5), (900, 20), 280),
+            ((1 << 40, -(1 << 41)), ((1 << 40) + 5, 1 << 41), 280),
+            ((-1000, -1000), (-999, -999), 1),
+            // Two blocks wide at the level its span asks for, until it goes up one.
+            ((1, 1), (2, 2), 1),
+        ] {
+            let grid = BlockGrid::covering((min, max), side);
+            let block = 1i64 << grid.level;
+            assert!(grid.width.max(grid.height) <= side, "{grid:?}");
+            assert_eq!(
+                (grid.left.rem_euclid(block), grid.bottom.rem_euclid(block)),
+                (0, 0)
+            );
+            assert!(grid.block(min.0, min.1).is_some(), "{grid:?}");
+            assert!(grid.block(max.0, max.1).is_some(), "{grid:?}");
+            assert!(grid.block(max.0, min.1).is_some(), "{grid:?}");
+        }
+    }
+
+    #[test]
+    fn a_grid_uses_the_side_it_is_given() {
+        let grid = BlockGrid::covering(((0, 0), (279, 99)), 280);
+        assert_eq!((grid.level, grid.width, grid.height), (0, 280, 100));
+        assert_eq!(BlockGrid::covering(((0, 0), (280, 0)), 280).level, 1);
+    }
+
+    #[test]
+    fn the_middle_of_a_rectangle_stays_in_the_middle() {
+        let rect = CellRect {
+            left: -100,
+            bottom: 7,
+            width: 100,
+            height: 20,
+        };
+        assert_eq!(rect.middle(100), rect);
+        let middle = rect.middle(10);
+        assert_eq!((middle.left, middle.width), (-55, 10));
+        assert_eq!((middle.bottom, middle.height), (12, 10));
+    }
+
+    #[test]
+    fn a_rectangle_around_the_origin_is_where_a_board_lands() {
+        let board = CellRect::around_origin(4, 3);
+        assert_eq!((board.left, board.bottom), (-2, -1));
     }
 }

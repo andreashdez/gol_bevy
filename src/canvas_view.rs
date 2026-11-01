@@ -149,9 +149,10 @@ fn update_viewport(
     let board = (settings.cols, settings.rows);
     let fit = camera_scale_to_fit_board(size, board.0, board.1);
     // The plane's view owes nothing to the size of the board it might return to.
+    // Unless it's the first view there is, as when a run starts out on the plane.
     let unbounded = sim.is_some_and(|sim| sim.app.board.finite().is_none());
     if let Projection::Orthographic(ortho) = &mut *projection
-        && !unbounded
+        && (!unbounded || view.board.is_none())
     {
         if view.board != Some(board) {
             transform.translation.x = 0.0;
@@ -182,6 +183,9 @@ fn follow_plane(
     if view.on_plane && !unbounded {
         view.fit_camera(&mut sim, &mut transform, &mut projection);
         sim.plane_origin = (0, 0);
+    }
+    if std::mem::take(&mut sim.fit_view) {
+        view.fit_camera(&mut sim, &mut transform, &mut projection);
     }
     // Undo can return to a plane whose cells are nowhere near this view.
     if !view.on_plane
@@ -393,6 +397,51 @@ mod tests {
         fit(&mut world);
         assert_eq!(world.get::<Transform>(camera).unwrap().translation.x, 0.0);
         assert_eq!(scale_of(&world, camera), 3.0);
+    }
+
+    #[test]
+    fn asking_for_a_fit_frames_the_cells_of_a_plane_already_on_show() {
+        let mut app = unbounded_app();
+        app.populate_board(1 << 40, 7);
+        let (mut world, _) = plane_world(app);
+        world.run_system_once(follow_plane).unwrap();
+        world.resource_mut::<Simulation>().plane_origin = (0, 0);
+        world.run_system_once(follow_plane).unwrap();
+        assert_eq!(world.resource::<Simulation>().plane_origin, (0, 0));
+
+        world.resource_mut::<Simulation>().fit_view = true;
+        world.run_system_once(follow_plane).unwrap();
+        let sim = world.resource::<Simulation>();
+        assert_eq!(sim.plane_origin, (1 << 40, 7));
+        assert!(!sim.fit_view);
+    }
+
+    #[test]
+    fn a_run_that_starts_on_the_plane_starts_at_the_fitted_zoom_and_keeps_its_own() {
+        let mut world = World::new();
+        world.insert_resource(BoardSettings {
+            cols: 128,
+            rows: 128,
+            fill_canvas: false,
+        });
+        world.init_resource::<CanvasView>();
+        world.insert_resource(Simulation::new(unbounded_app()));
+        world.spawn((Window::default(), PrimaryWindow));
+        let camera = world.spawn((Camera2d, MainCamera)).id();
+        world.run_system_once(update_viewport).unwrap();
+        let fitted = world.resource::<CanvasView>().fit_scale;
+        assert_eq!(scale_of(&world, camera), fitted);
+
+        // After that, the size it would return to is no reason to touch the view.
+        if let Projection::Orthographic(ortho) = &mut *world.get_mut::<Projection>(camera).unwrap()
+        {
+            ortho.scale = 7.0;
+        }
+        world.get_mut::<Transform>(camera).unwrap().translation.x = 50.0;
+        world.resource_mut::<BoardSettings>().cols = 256;
+        world.run_system_once(update_viewport).unwrap();
+        assert_eq!(scale_of(&world, camera), 7.0);
+        assert_eq!(world.get::<Transform>(camera).unwrap().translation.x, 50.0);
     }
 
     #[test]

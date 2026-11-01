@@ -18,6 +18,19 @@ impl Default for RandomizeSettings {
 }
 
 impl RandomizeSettings {
+    /// Whether each cell in turn is alive, from a local SplitMix64 sequence.
+    pub(crate) fn draws(self) -> impl FnMut() -> bool {
+        let mut state = self.seed.unwrap_or_else(|| fastrand::u64(..));
+        move || {
+            state = state.wrapping_add(0x9E3779B97F4A7C15);
+            let mut value = state;
+            value = (value ^ (value >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+            value = (value ^ (value >> 27)).wrapping_mul(0x94D049BB133111EB);
+            value ^= value >> 31;
+            value % 100 < u64::from(self.density_percent)
+        }
+    }
+
     pub fn new(density_percent: u8, seed: Option<u64>) -> Option<Self> {
         (density_percent <= 100).then_some(Self {
             density_percent,
@@ -365,14 +378,9 @@ impl Board {
     /// algorithm keeps seeded boards independent of dependency RNG changes and
     /// other random operations. Arithmetic deliberately wraps at 64 bits.
     pub fn populate_random_with(&mut self, settings: RandomizeSettings) {
-        let mut state = settings.seed.unwrap_or_else(|| fastrand::u64(..));
+        let mut draw = settings.draws();
         for cell in &mut self.current {
-            state = state.wrapping_add(0x9E3779B97F4A7C15);
-            let mut value = state;
-            value = (value ^ (value >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-            value = (value ^ (value >> 27)).wrapping_mul(0x94D049BB133111EB);
-            value ^= value >> 31;
-            *cell = u8::from(value % 100 < u64::from(settings.density_percent));
+            *cell = u8::from(draw());
         }
         self.live_count = count_live(&self.current);
         self.mark_dirty_full();

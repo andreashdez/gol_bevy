@@ -101,7 +101,7 @@ pub const BINDING_RANDOMIZE: KeyBinding = KeyBinding {
     chars: &["r"],
     keys: &[],
     caps: &["R"],
-    action: "Randomize the board",
+    action: "Randomize the board or view",
 };
 pub const BINDING_CLEAR: KeyBinding = KeyBinding {
     chars: &["x"],
@@ -395,6 +395,8 @@ pub struct Simulation {
     /// with the camera, to keep what's on screen close to the origin however far
     /// the plane has been explored.
     pub plane_origin: (i64, i64),
+    /// Set to have the camera frame the board on the next frame.
+    pub fit_view: bool,
 }
 
 impl Simulation {
@@ -406,6 +408,7 @@ impl Simulation {
             step_samples: 0,
             rate: RateMeter::default(),
             plane_origin: (0, 0),
+            fit_view: false,
         }
     }
 
@@ -541,7 +544,16 @@ impl EditFeedback {
 
     pub fn randomize(&mut self, app: &mut GolApp) {
         app.randomize_board();
-        self.show("Board randomized · U to undo");
+        self.show(format!("{} randomized · U to undo", randomized_what(app)));
+    }
+}
+
+/// What randomizing covers, for telling the user: on the unbounded board, an area
+/// that doesn't follow from anything on screen once the view is larger.
+pub fn randomized_what(app: &GolApp) -> Cow<'static, str> {
+    match app.randomize_area() {
+        Some(area) => format!("{} × {} cells", area.width, area.height).into(),
+        None => "Board".into(),
     }
 }
 

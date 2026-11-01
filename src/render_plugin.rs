@@ -46,7 +46,7 @@ pub(crate) struct BoardSprite;
 /// the engine's step loop pays nothing for them. A cell stops ageing once its
 /// colour has settled.
 #[derive(Resource, Default)]
-struct CellAges {
+pub(crate) struct CellAges {
     ages: Vec<u8>,
     /// The generation counter at the last sync, to tell how many generations ran since.
     epoch: usize,

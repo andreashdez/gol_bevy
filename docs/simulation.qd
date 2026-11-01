@@ -91,8 +91,8 @@ A finite board's edges need a rule of their own, and an unbounded board does awa
 | **Fixed** | Everything outside the board counts as dead. A pale wall marks the edge.                   |
 | **Unbounded** | No edges: the board grows as far as the pattern does, in every direction. Rules with `B0` can't run here, as every empty cell would be born. |
 
-**Wrap** and **Fixed** are saved between runs. Unlike the rule, switching between them is not an edit, so undo does not change it.
+All three are saved between runs. Unlike the rule, switching between **Wrap** and **Fixed** is not an edit, so undo does not change it.
 
 Moving to or from **Unbounded** is an edit, because leaving keeps only the cells that fit the board. Undo brings the rest back, with the board you left.
 
-An unbounded board can't yet be randomized, exported, or saved as a workspace, the minimap doesn't appear, and the mode isn't remembered between runs. Anything that sends out gliders never repeats, so **Pause when settled** won't trigger.
+Memory still runs out on an unbounded board, so a run pauses with a notice once the board reaches 1,048,576 chunks of 64 × 64 cells, which is about half a gigabyte of them. Clearing, undoing, or erasing enough to free chunks lets it carry on. Anything that sends out gliders never repeats, so **Pause when settled** won't trigger.

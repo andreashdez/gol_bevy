@@ -2,6 +2,7 @@
 use crate::{
     board::{BoundaryMode, RandomizeSettings, Rule},
     shared::{BoardSettings, CellAge, GridOverlay, Simulation, StartupSet, Theme},
+    universe::{Universe, plane_from_board},
 };
 use bevy::prelude::*;
 use bevy::{
@@ -52,12 +53,19 @@ struct PersistedSettings {
     theme: Theme,
 }
 
+/// The saved kind of edges: those of a finite board, or none at all.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Edges {
+    Finite(BoundaryMode),
+    Unbounded,
+}
+
 /// What the simulation is started with. The simulation only exists once the
 /// world is built, so these wait in a resource until then.
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
 struct SimulationSettings {
     rule: Option<Rule>,
-    boundary: Option<BoundaryMode>,
+    edges: Option<Edges>,
     tick_rate_ms: Option<u64>,
     max_speed: Option<bool>,
     pause_when_settled: Option<bool>,
@@ -69,7 +77,12 @@ impl SimulationSettings {
     fn of(sim: &Simulation) -> Self {
         Self {
             rule: Some(sim.app.board.rule()),
-            boundary: sim.app.board.boundary_mode(),
+            edges: Some(
+                sim.app
+                    .board
+                    .boundary_mode()
+                    .map_or(Edges::Unbounded, Edges::Finite),
+            ),
             tick_rate_ms: Some(sim.app.tick_rate_ms()),
             max_speed: Some(sim.app.is_max_speed()),
             pause_when_settled: Some(sim.app.pause_when_settled()),
@@ -87,8 +100,16 @@ impl SimulationSettings {
         if let Some(rule) = self.rule {
             sim.app.board.set_rule(rule);
         }
-        if let Some(mode) = self.boundary {
-            sim.app.board.set_boundary_mode(mode);
+        match self.edges {
+            Some(Edges::Finite(mode)) => sim.app.board.set_boundary_mode(mode),
+            // A hand-edited file can pair this with a B0 rule, which stays finite.
+            Some(Edges::Unbounded) => {
+                let plane = sim.app.board.finite().map(plane_from_board);
+                if let Some(Ok(plane)) = plane {
+                    sim.app.board = Universe::Unbounded(plane);
+                }
+            }
+            None => {}
         }
         if let Some(tick_rate_ms) = self.tick_rate_ms {
             sim.app.set_tick_rate_ms(tick_rate_ms);
@@ -284,10 +305,10 @@ fn persist_settings(
     if let Some(rule) = simulation.rule {
         contents.push_str(&format!("rule = \"{rule}\"\n"));
     }
-    if let Some(mode) = simulation.boundary {
+    if let Some(edges) = simulation.edges {
         contents.push_str(&format!(
             "boundary_mode = \"{}\"\n",
-            boundary_storage_str(mode)
+            edges_storage_str(edges)
         ));
     }
     if let Some(tick_rate_ms) = simulation.tick_rate_ms {
@@ -342,7 +363,7 @@ fn parse_settings_from_toml(contents: &str) -> ParsedSettings {
             "cell_age" => parsed.cell_age = value.parse::<bool>().ok(),
             "theme" => parsed.theme = theme_from_storage_str(value),
             "rule" => parsed.simulation.rule = Rule::parse(value).ok(),
-            "boundary_mode" => parsed.simulation.boundary = boundary_from_storage_str(value),
+            "boundary_mode" => parsed.simulation.edges = edges_from_storage_str(value),
             "tick_rate_ms" => parsed.simulation.tick_rate_ms = value.parse::<u64>().ok(),
             "max_speed" => parsed.simulation.max_speed = value.parse::<bool>().ok(),
             "pause_when_settled" => {
@@ -363,17 +384,19 @@ fn parse_settings_from_toml(contents: &str) -> ParsedSettings {
     parsed
 }
 
-fn boundary_storage_str(mode: BoundaryMode) -> &'static str {
-    match mode {
-        BoundaryMode::Wrap => "wrap",
-        BoundaryMode::Fixed => "fixed",
+fn edges_storage_str(edges: Edges) -> &'static str {
+    match edges {
+        Edges::Finite(BoundaryMode::Wrap) => "wrap",
+        Edges::Finite(BoundaryMode::Fixed) => "fixed",
+        Edges::Unbounded => "unbounded",
     }
 }
 
-fn boundary_from_storage_str(value: &str) -> Option<BoundaryMode> {
+fn edges_from_storage_str(value: &str) -> Option<Edges> {
     match value {
-        "wrap" => Some(BoundaryMode::Wrap),
-        "fixed" => Some(BoundaryMode::Fixed),
+        "wrap" => Some(Edges::Finite(BoundaryMode::Wrap)),
+        "fixed" => Some(Edges::Finite(BoundaryMode::Fixed)),
+        "unbounded" => Some(Edges::Unbounded),
         _ => None,
     }
 }
@@ -700,6 +723,41 @@ mod persistence_tests {
         // Restoring settings is not an edit the user could undo.
         assert!(!restored.app.can_undo());
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn the_unbounded_board_is_remembered_with_its_rule_and_without_an_edit() {
+        let directory = crate::test_support::TestDirectory::new();
+        let path = directory.0.join("settings.toml");
+        let mut world = persistence_world(path.clone());
+        let highlife = Rule::parse("B36/S23").unwrap();
+        let app = &mut world.resource_mut::<Simulation>().into_inner().app;
+        app.set_rule(highlife);
+        app.set_unbounded().unwrap();
+        world.run_system_once(persist_settings).unwrap();
+        world.resource_mut::<Time<Real>>().advance_by(SAVE_DEBOUNCE);
+        world.run_system_once(persist_settings).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("boundary_mode = \"unbounded\""), "{saved}");
+
+        let settings = parse_settings_from_toml(&saved).simulation;
+        let mut restored = Simulation::new(crate::app::App::new(16, 16));
+        settings.apply_to(&mut restored);
+        assert_eq!(restored.app.board.size(), None);
+        assert_eq!(restored.app.board.rule(), highlife);
+        assert!(!restored.app.can_undo());
+        // It's what the next save will find, too.
+        assert_eq!(SimulationSettings::of(&restored).edges, settings.edges);
+    }
+
+    #[test]
+    fn a_hand_edited_b0_rule_keeps_the_board_finite() {
+        let settings =
+            parse_settings_from_toml("rule = \"B0/S8\"\nboundary_mode = \"unbounded\"\n");
+        let mut restored = Simulation::new(crate::app::App::new(16, 16));
+        settings.simulation.apply_to(&mut restored);
+        assert_eq!(restored.app.board.size(), Some((16, 16)));
+        assert_eq!(restored.app.rule_label(), "B0/S8");
     }
 
     #[test]

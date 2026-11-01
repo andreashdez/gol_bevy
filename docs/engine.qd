@@ -79,6 +79,8 @@ Rules with B0 are refused, because every empty cell would be born and the plane 
 
 A board-sized texture can't exist here, so one the size of the canvas shows what's in view. When zoomed out, each texel covers a square block of cells, lit if any of them is alive, and blocks are aligned to their own size so that panning moves them whole. Painting costs the lesser of what's in view and what's in memory, however large the pattern. Cell ages are kept only for chunks in view at one texel per cell, so a chunk scrolling in starts out settled, and trails don't show when zoomed out.
 
+A run stops at `PLANE_CHUNKS_MAX`, about half a gigabyte of chunks, with bookkeeping and history on top. Edits aren't held to it, as they can't outrun the person making them and randomizing a view stops at 2048 × 2048 cells. A bounding box needn't fit in memory, so RLE is read and written a run of cells at a time. Writing walks sorted chunks, and reading checks each run before expanding it, so a short file can't ask for more than the plane may hold. A file may hold twice the budget's chunks, or a run that stopped just past it couldn't reopen.
+
 ## Rendering
 
 The minimap counts live cells per block with the same vectorized sum as the population, about 2 ms on a 2048 × 2048 board. It runs five times a second, and only while the map is showing.
