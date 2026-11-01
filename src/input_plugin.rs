@@ -197,7 +197,9 @@ fn handle_mouse(
         return;
     };
 
-    let (cols, rows) = sim.app.board.size();
+    let Some((cols, rows)) = sim.app.board.size() else {
+        return;
+    };
     let Some((col, row)) = world_to_cell(world_pos, cols, rows) else {
         return;
     };

@@ -61,7 +61,11 @@ Each generation has a 64-bit fingerprint: the XOR of a fixed key for every cell 
 
 ## Unbounded board
 
-`src/sparse_board.rs` holds `SparseBoard`, a board with no edges. The app does not use it yet: it is the engine for a planned unbounded mode, with the same rules and the same kind of live count, fingerprint, and dirty tracking as `Board`.
+`src/sparse_board.rs` holds `SparseBoard`, a board with no edges, with the same rules and the same kind of live count, fingerprint, and dirty tracking as `Board`.
+
+The app runs on `Universe` from `src/universe.rs`, which is either kind of board and addresses cells with signed coordinates, so the same edits and stepping work on both. What needs edges or a fixed size asks for the finite board and skips the rest. The interface can't reach the unbounded board yet, because drawing it needs a view that isn't tied to a board size.
+
+`App::set_unbounded` moves the cells onto the plane with the centre of the board at the origin, and choosing edges again moves them back, keeping only the cells that fit the board. Either way undo history is cleared, as it is for a resize, because snapshots only fit the kind of board that took them.
 
 Cells have signed 64-bit coordinates and live in a map of 64 × 64 chunks, so memory follows the live cells. A chunk stores one bit per cell, one `u64` per row, and is removed as soon as it empties. Stepping adds up the neighbours of a whole row of 64 cells at once, with each count held across four words, one for each binary digit. This is why a full board runs faster here than the byte-per-cell scan does.
 

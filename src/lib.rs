@@ -14,4 +14,5 @@ pub mod sparse_board;
 #[cfg(test)]
 mod test_support;
 pub mod ui_input;
+pub mod universe;
 pub mod workspace;

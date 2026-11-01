@@ -77,7 +77,10 @@ impl Workspace {
         app: &crate::app::App,
         patterns: &[Pattern],
     ) -> Result<Self, WorkspaceError> {
-        let (width, height) = app.board.size();
+        let Some(board) = app.board.finite() else {
+            return Err(invalid("Unbounded boards cannot be saved yet."));
+        };
+        let (width, height) = board.size();
         if !(BOARD_SIZE_MIN..=BOARD_SIZE_MAX).contains(&width)
             || !(BOARD_SIZE_MIN..=BOARD_SIZE_MAX).contains(&height)
         {
@@ -101,7 +104,7 @@ impl Workspace {
         }
         let cells: Vec<_> = (0..height)
             .flat_map(|y| (0..width).map(move |x| (x, y)))
-            .filter(|&(x, y)| app.board.is_alive(x, y))
+            .filter(|&(x, y)| board.is_alive(x, y))
             .collect();
         Ok(Self {
             format: "gol-bevy-workspace".into(),
@@ -110,7 +113,7 @@ impl Workspace {
             height,
             generation: app.epoch as u64,
             rule: app.rule_label(),
-            boundary: match app.board.boundary_mode() {
+            boundary: match board.boundary_mode() {
                 BoundaryMode::Wrap => "wrap",
                 BoundaryMode::Fixed => "fixed",
             }
@@ -119,7 +122,7 @@ impl Workspace {
             max_speed: app.is_max_speed(),
             random_density_percent: app.randomize_settings().density_percent(),
             random_seed: app.randomize_settings().seed(),
-            board_rle: to_rle(&cells, width, height, Some(app.board.rule()), ""),
+            board_rle: to_rle(&cells, width, height, Some(board.rule()), ""),
             imported_patterns: patterns
                 .iter()
                 .map(|pattern| StoredPattern {
@@ -264,11 +267,11 @@ mod tests {
         restored
             .restore_workspace(Workspace::read(&path).unwrap())
             .unwrap();
-        assert_eq!(restored.board.size(), (40, 24));
+        assert_eq!(restored.board.size(), Some((40, 24)));
         assert_eq!(restored.board.snapshot_cells(), original);
         assert_eq!(restored.epoch, 812);
         assert_eq!(restored.rule_label(), "B36/S23");
-        assert_eq!(restored.board.boundary_mode(), BoundaryMode::Fixed);
+        assert_eq!(restored.board.boundary_mode(), Some(BoundaryMode::Fixed));
         assert_eq!(restored.tick_rate_ms(), 137);
         assert!(restored.is_max_speed());
         assert_eq!(restored.randomize_settings(), app.randomize_settings());
@@ -297,7 +300,7 @@ mod tests {
             .restore_workspace(Workspace::read(&path).unwrap())
             .unwrap();
         assert_eq!(restored.board.live_cells_count(), 0);
-        assert_eq!(restored.board.size(), (16, 16));
+        assert_eq!(restored.board.size(), Some((16, 16)));
         assert!(!restored.is_max_speed());
         assert_eq!(restored.pattern_count(), Pattern::builtin_count());
         assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);

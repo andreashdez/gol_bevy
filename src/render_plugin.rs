@@ -22,7 +22,7 @@ pub struct RenderPlugin;
 
 /// The board cell under the pointer, as `(col, row)` with row 0 at the bottom.
 #[derive(Resource, Default)]
-pub struct HoveredCell(pub Option<(usize, usize)>);
+pub struct HoveredCell(pub Option<(i64, i64)>);
 
 #[derive(Component)]
 struct GhostPreviewCell;
@@ -198,7 +198,7 @@ struct PatternPreviewPool {
 struct BoundaryWallPulse {
     timer: Timer,
     active: bool,
-    last_mode: BoundaryMode,
+    last_mode: Option<BoundaryMode>,
     pulses_done: u8,
 }
 
@@ -207,7 +207,7 @@ impl Default for BoundaryWallPulse {
         Self {
             timer: Timer::from_seconds(0.35, TimerMode::Repeating),
             active: false,
-            last_mode: BoundaryMode::Wrap,
+            last_mode: Some(BoundaryMode::Wrap),
             pulses_done: 0,
         }
     }
@@ -363,7 +363,7 @@ fn apply_board_settings(
         return;
     }
     let (cols, rows) = (settings.cols, settings.rows);
-    if sim.app.board.size() == (cols, rows)
+    if sim.app.board.size() == Some((cols, rows))
         && (canvas.texture.cols, canvas.texture.rows) == (cols, rows)
     {
         return;
@@ -394,7 +394,9 @@ fn render_grid(
     if !grid_overlay.enabled {
         return;
     }
-    let (cols, rows) = sim.app.board.size();
+    let Some((cols, rows)) = sim.app.board.size() else {
+        return;
+    };
     if cols == 0 || rows == 0 {
         return;
     }
@@ -474,7 +476,12 @@ fn sync_cells(
         return;
     }
 
-    let (cols, rows) = sim.app.board.size();
+    let app = &mut sim.app;
+    let epoch = app.epoch;
+    let Some(board) = app.board.finite_mut() else {
+        return;
+    };
+    let (cols, rows) = board.size();
     // A resize rebuilds the texture and marks the board fully dirty, so bailing
     // out on a mismatch defers the repaint by a frame rather than dropping it.
     if cols == 0 || rows == 0 || cols != board_texture.cols || rows != board_texture.rows {
@@ -487,12 +494,11 @@ fn sync_cells(
         return;
     };
 
-    let dirty = sim.app.board.take_dirty_cells();
-    let epoch = sim.app.epoch;
+    let dirty = board.take_dirty_cells();
     // Undo and resetting the counter move it backwards; neither is a generation.
     let steps = u8::try_from(epoch.saturating_sub(style.ages.epoch)).unwrap_or(u8::MAX);
     style.ages.epoch = epoch;
-    let board = &sim.app.board;
+    let board = &*board;
     let by_age = style.cell_age.enabled;
     let palette = CellPalette::new(style.theme.board(), by_age);
     let len = cols * rows;
@@ -553,7 +559,7 @@ fn sync_boundary_wall_visibility(
     let mode = sim.app.board.boundary_mode();
     if mode != pulse.last_mode {
         pulse.last_mode = mode;
-        pulse.active = mode == BoundaryMode::Fixed;
+        pulse.active = mode == Some(BoundaryMode::Fixed);
         if pulse.active {
             pulse.timer.reset();
             pulse.pulses_done = 0;
@@ -565,7 +571,7 @@ fn sync_boundary_wall_visibility(
     }
     let colors = theme.board();
 
-    let visibility = if mode == BoundaryMode::Fixed {
+    let visibility = if mode == Some(BoundaryMode::Fixed) {
         Visibility::Visible
     } else {
         Visibility::Hidden
@@ -630,15 +636,20 @@ fn sync_pattern_preview(
         hide_preview_cells(&preview_pool, &mut preview_q);
         return;
     };
+    let Some((cols, rows)) = sim.app.board.size() else {
+        hide_preview_cells(&preview_pool, &mut preview_q);
+        return;
+    };
     ensure_preview_pool(&mut commands, &mut preview_pool, pattern.len(), ghost);
-    let (cols, rows) = sim.app.board.size();
 
-    let origin_col = cursor_col.saturating_sub(width / 2);
-    let origin_row = cursor_row.saturating_sub(height / 2);
+    let (origin_col, origin_row) = sim
+        .app
+        .board
+        .stamp_origin((cursor_col, cursor_row), (width, height));
 
     // Outline the footprint, clipped to the board like the cells themselves.
-    let end_col = (origin_col + width).min(cols);
-    let end_row = (origin_row + height).min(rows);
+    let end_col = (origin_col + width as i64).min(cols as i64);
+    let end_row = (origin_row + height as i64).min(rows as i64);
     if end_col > origin_col && end_row > origin_row {
         let first = cell_to_world(origin_col, origin_row, cols, rows).truncate();
         let last = cell_to_world(end_col - 1, end_row - 1, cols, rows).truncate();
@@ -657,9 +668,9 @@ fn sync_pattern_preview(
             *visibility = Visibility::Hidden;
             continue;
         };
-        let col = origin_col + dx;
-        let row = origin_row + dy;
-        if col >= cols || row >= rows {
+        let col = origin_col + dx as i64;
+        let row = origin_row + dy as i64;
+        if !sim.app.board.contains(col, row) {
             *visibility = Visibility::Hidden;
             continue;
         }
@@ -704,8 +715,9 @@ fn update_hovered_cell(
     let Some(world) = cursor_world(camera, transform, cursor) else {
         return;
     };
-    let (cols, rows) = sim.app.board.size();
-    hovered.0 = world_to_cell(world, cols, rows);
+    if let Some((cols, rows)) = sim.app.board.size() {
+        hovered.0 = world_to_cell(world, cols, rows);
+    }
 }
 
 fn render_hover_cell(
@@ -722,7 +734,9 @@ fn render_hover_cell(
     if sim.app.tool() == EditTool::Stamp && sim.app.has_selected_pattern() {
         return;
     }
-    let (cols, rows) = sim.app.board.size();
+    let Some((cols, rows)) = sim.app.board.size() else {
+        return;
+    };
     let erasing = sim.app.tool() == EditTool::Erase || mouse_buttons.pressed(MouseButton::Right);
     let color = if erasing {
         theme.board().hover_erase
@@ -765,8 +779,8 @@ mod tests {
         let (cols, rows) = (4, 3);
         // A cell higher up in world space must sit earlier in the texture.
         for row in 1..rows {
-            let lower = cell_to_world(0, row - 1, cols, rows).y;
-            let upper = cell_to_world(0, row, cols, rows).y;
+            let lower = cell_to_world(0, row as i64 - 1, cols, rows).y;
+            let upper = cell_to_world(0, row as i64, cols, rows).y;
             assert!(upper > lower);
             assert!(
                 texel_offset(row * cols, cols, rows) < texel_offset((row - 1) * cols, cols, rows)
@@ -824,6 +838,34 @@ mod tests {
             data[offset..offset + 4],
             color_to_texel(Theme::Dark.board().live)
         );
+    }
+
+    #[test]
+    fn syncing_cells_leaves_the_texture_alone_on_the_unbounded_board() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let mut app = GolApp::new(4, 3);
+        app.set_unbounded().unwrap();
+        app.board.populate(1, 2);
+        world.insert_resource(Simulation::new(app));
+        world.insert_resource(RedrawRequested(true));
+        world.insert_resource(Theme::Dark);
+        world.insert_resource(CellAge { enabled: false });
+        world.init_resource::<CellAges>();
+        let mut images = Assets::<Image>::default();
+        let handle = create_board_image(&mut images, 4, 3, Theme::Dark.board().dead);
+        world.insert_resource(images);
+        world.insert_resource(BoardTexture {
+            handle: handle.clone(),
+            cols: 4,
+            rows: 3,
+        });
+        world.run_system_once(sync_cells).unwrap();
+
+        let images = world.resource::<Assets<Image>>();
+        let data = images.get(&handle).unwrap().data.as_ref().unwrap();
+        let dead = color_to_texel(Theme::Dark.board().dead);
+        assert!(data.as_chunks::<4>().0.iter().all(|&texel| texel == dead));
     }
 
     #[test]

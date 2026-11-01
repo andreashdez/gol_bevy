@@ -419,7 +419,7 @@ type StatusText<'a> = (
 );
 
 /// What the board looked like last frame, to tell a jump from a tick.
-type BoardShape = (usize, (usize, usize), usize);
+type BoardShape = (usize, Option<(usize, usize)>, usize);
 
 pub(super) fn sync_status(
     sim: Res<Simulation>,
@@ -452,15 +452,15 @@ pub(super) fn sync_status(
             Token::Line
         }));
     }
-    let (cols, rows) = sim.app.board.size();
+    let size = sim.app.board.size();
     let live = sim.app.board.live_cells_count();
     // A cleared or resized board, or a generation counter that went back,
     // makes the readouts start over at their own widths. Each then grows to
     // its current number again; ordinary ticks still never shrink them.
-    let jumped = last.is_some_and(|(epoch, size, count)| {
-        sim.app.epoch < epoch || size != (cols, rows) || (live == 0 && count != 0)
+    let jumped = last.is_some_and(|(epoch, last_size, count)| {
+        sim.app.epoch < epoch || last_size != size || (live == 0 && count != 0)
     });
-    *last = Some((sim.app.epoch, (cols, rows), live));
+    *last = Some((sim.app.epoch, size, live));
     for (mut text, mut color, readout, mut node, keep) in &mut texts {
         if jumped && let Some(keep) = keep {
             set_if_neq!(node.min_width, keep.0);
@@ -490,9 +490,13 @@ pub(super) fn sync_status(
             // Counted from the top left, like RLE and other Life tools.
             Readout::Pointer => hovered
                 .0
-                .map(|(col, row)| format!("({col}, {})", rows - 1 - row))
+                .zip(size)
+                .map(|((col, row), (_, rows))| format!("({col}, {})", rows as i64 - 1 - row))
                 .unwrap_or_default(),
-            Readout::Board => format!("{cols} × {rows} cells"),
+            Readout::Board => size.map_or_else(
+                || "Unbounded".to_owned(),
+                |(cols, rows)| format!("{cols} × {rows} cells"),
+            ),
         };
         if text.0 != value {
             text.0 = value;

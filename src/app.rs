@@ -1,7 +1,9 @@
 use crate::{
-    board::{self, RandomizeSettings, Rule},
+    board::{self, BoundaryMode, RandomizeSettings, Rule},
     patterns::{Pattern, PatternParseError},
     settle::{SettleWatch, Settled},
+    sparse_board::UnboundedRuleError,
+    universe::{CellSnapshot, Universe, board_from_plane, plane_from_board},
 };
 use std::collections::VecDeque;
 
@@ -31,7 +33,7 @@ pub struct BoardExport {
 
 #[derive(Debug)]
 struct EditSnapshot {
-    cells: Vec<u8>,
+    cells: CellSnapshot,
     epoch: usize,
     rule: Rule,
 }
@@ -45,7 +47,8 @@ const EDIT_HISTORY_BYTE_BUDGET: usize = 16 * 1024 * 1024;
 /// Keeps a history within both the edit-count cap and the byte budget, always
 /// retaining at least one entry.
 fn push_bounded(history: &mut VecDeque<EditSnapshot>, snapshot: EditSnapshot) {
-    let limit = (EDIT_HISTORY_BYTE_BUDGET / snapshot.cells.len().max(1)).clamp(1, EDIT_HISTORY_MAX);
+    let limit =
+        (EDIT_HISTORY_BYTE_BUDGET / snapshot.cells.bytes().max(1)).clamp(1, EDIT_HISTORY_MAX);
     while history.len() >= limit {
         history.pop_front();
     }
@@ -130,7 +133,10 @@ pub struct App {
     /// Live cells per generation of this run, oldest first.
     population_history: VecDeque<usize>,
 
-    pub board: board::Board,
+    /// The size the board has, or has to return to from the unbounded board.
+    finite_size: (usize, usize),
+
+    pub board: Universe,
 }
 
 impl App {
@@ -140,7 +146,7 @@ impl App {
 
     /// Constructs a new instance of [`App`].
     pub fn new(cols: usize, rows: usize) -> Self {
-        let board = board::Board::new(cols, rows);
+        let board = Universe::Finite(board::Board::new(cols, rows));
         Self {
             should_quit: false,
             epoch: 0,
@@ -166,6 +172,7 @@ impl App {
             pause_when_settled: false,
             auto_paused: None,
             population_history: VecDeque::with_capacity(POPULATION_HISTORY),
+            finite_size: (cols, rows),
             board,
         }
     }
@@ -236,17 +243,56 @@ impl App {
     }
 
     pub fn toggle_boundary_mode(&mut self) {
-        self.board.toggle_boundary_mode();
-        self.settle.reset();
-        self.needs_redraw = true;
+        self.set_boundary_mode(match self.board.boundary_mode() {
+            Some(BoundaryMode::Wrap) => BoundaryMode::Fixed,
+            _ => BoundaryMode::Wrap,
+        });
     }
 
-    pub fn set_boundary_mode(&mut self, mode: crate::board::BoundaryMode) {
-        if mode != self.board.boundary_mode() {
+    /// Choosing edges on the unbounded board returns to a finite one, keeping
+    /// only the cells that fit it, as any resize does.
+    pub fn set_boundary_mode(&mut self, mode: BoundaryMode) {
+        if let Universe::Unbounded(plane) = &self.board {
+            let (cols, rows) = self.finite_size;
+            let board = board_from_plane(plane, cols, rows, mode);
+            self.replace_board(Universe::Finite(board));
+            return;
+        }
+        if Some(mode) != self.board.boundary_mode() {
             self.settle.reset();
         }
         self.board.set_boundary_mode(mode);
         self.needs_redraw = true;
+    }
+
+    /// Moves the board onto the unbounded plane, which can't hold a B0 rule.
+    /// Returns whether it moved.
+    pub fn set_unbounded(&mut self) -> Result<bool, UnboundedRuleError> {
+        let Universe::Finite(board) = &self.board else {
+            return Ok(false);
+        };
+        let plane = plane_from_board(board)?;
+        self.replace_board(Universe::Unbounded(plane));
+        Ok(true)
+    }
+
+    fn replace_board(&mut self, board: Universe) {
+        self.board = board;
+        self.forget_layout();
+    }
+
+    /// Snapshots hold cells for the board that took them, so they no longer fit.
+    fn forget_layout(&mut self) {
+        self.undo_history.clear();
+        self.redo_history.clear();
+        self.forget_run();
+        self.end_stroke();
+        self.needs_redraw = true;
+    }
+
+    /// The board's size, or the one it will have on leaving the unbounded board.
+    pub fn finite_size(&self) -> (usize, usize) {
+        self.finite_size
     }
 
     pub fn boundary_mode_label(&self) -> &'static str {
@@ -383,9 +429,14 @@ impl App {
     }
 
     pub fn randomize_board(&mut self) {
+        if self.board.finite().is_none() {
+            return;
+        }
         self.end_stroke();
         self.save_edit();
-        self.board.populate_random_with(self.randomize_settings);
+        if let Some(board) = self.board.finite_mut() {
+            board.populate_random_with(self.randomize_settings);
+        }
         self.needs_redraw = true;
     }
 
@@ -400,9 +451,8 @@ impl App {
         }
     }
 
-    pub fn populate_board(&mut self, col: usize, row: usize) {
-        let (cols, rows) = self.board.size();
-        if col >= cols || row >= rows || self.board.is_alive(col, row) {
+    pub fn populate_board(&mut self, col: i64, row: i64) {
+        if !self.board.contains(col, row) || self.board.is_alive(col, row) {
             return;
         }
         self.save_edit();
@@ -411,7 +461,7 @@ impl App {
         }
     }
 
-    pub fn depopulate_board(&mut self, col: usize, row: usize) {
+    pub fn depopulate_board(&mut self, col: i64, row: i64) {
         if !self.board.is_alive(col, row) {
             return;
         }
@@ -422,13 +472,11 @@ impl App {
     }
 
     pub fn resize_board(&mut self, new_cols: usize, new_rows: usize) {
-        if self.board.resize(new_cols, new_rows) {
-            // Snapshots hold cells in the old layout, so they no longer fit.
-            self.undo_history.clear();
-            self.redo_history.clear();
-            self.forget_run();
-            self.end_stroke();
-            self.needs_redraw = true;
+        self.finite_size = (new_cols, new_rows);
+        if let Universe::Finite(board) = &mut self.board
+            && board.resize(new_cols, new_rows)
+        {
+            self.forget_layout();
         }
     }
 
@@ -480,7 +528,7 @@ impl App {
     /// Changes the board rule as an undoable edit, so undo can return to the old
     /// rule. Returns whether the rule actually changed.
     pub fn set_rule(&mut self, rule: Rule) -> bool {
-        if rule == self.board.rule() {
+        if rule == self.board.rule() || !self.board.allows_rule(rule) {
             return false;
         }
         self.end_stroke();
@@ -514,7 +562,9 @@ impl App {
         let mut restored = Self::new(decoded.width, decoded.height);
         restored.board.set_rule(decoded.rule);
         restored.board.set_boundary_mode(decoded.boundary);
-        restored.board.restore_cells(decoded.cells);
+        restored
+            .board
+            .restore_cells(CellSnapshot::Finite(decoded.cells));
         restored.epoch = decoded.generation;
         restored.randomize_settings = decoded.randomize_settings;
         restored.set_tick_rate_ms(decoded.tick_rate_ms);
@@ -528,12 +578,14 @@ impl App {
     }
 
     /// The live cells cropped to their bounding box, as RLE with the board rule
-    /// in the header. `None` for an empty board.
+    /// in the header. `None` for an empty board, and for the unbounded board,
+    /// whose bounding box needn't fit in memory.
     pub fn board_to_rle(&self) -> Option<BoardExport> {
-        let (cols, rows) = self.board.size();
+        let board = self.board.finite()?;
+        let (cols, rows) = board.size();
         let live: Vec<(usize, usize)> = (0..rows)
             .flat_map(|y| (0..cols).map(move |x| (x, y)))
-            .filter(|&(x, y)| self.board.is_alive(x, y))
+            .filter(|&(x, y)| board.is_alive(x, y))
             .collect();
         let min_x = live.iter().map(|cell| cell.0).min()?;
         let min_y = live.iter().map(|cell| cell.1).min()?;
@@ -652,7 +704,7 @@ impl App {
         })
     }
 
-    pub fn place_selected_pattern_at(&mut self, col: usize, row: usize) {
+    pub fn place_selected_pattern_at(&mut self, col: i64, row: i64) {
         let Some((cells, width, height)) = self.selected_pattern.and_then(|idx| {
             self.patterns
                 .get(idx)
@@ -669,15 +721,15 @@ impl App {
         pattern: &[(usize, usize)],
         width: usize,
         height: usize,
-        center_col: usize,
-        center_row: usize,
+        center_col: i64,
+        center_row: i64,
     ) {
-        let origin_x = center_col.saturating_sub(width / 2);
-        let origin_y = center_row.saturating_sub(height / 2);
-        let (cols, rows) = self.board.size();
+        let (origin_x, origin_y) = self
+            .board
+            .stamp_origin((center_col, center_row), (width, height));
         let changes_board = pattern.iter().any(|&(dx, dy)| {
-            let (col, row) = (origin_x + dx, origin_y + dy);
-            col < cols && row < rows && !self.board.is_alive(col, row)
+            let (col, row) = (origin_x + dx as i64, origin_y + dy as i64);
+            self.board.contains(col, row) && !self.board.is_alive(col, row)
         });
         if !changes_board {
             return;
@@ -687,7 +739,9 @@ impl App {
         let mut changed = false;
 
         for &(dx, dy) in pattern {
-            changed |= self.board.populate(origin_x + dx, origin_y + dy);
+            changed |= self
+                .board
+                .populate(origin_x + dx as i64, origin_y + dy as i64);
         }
 
         if changed {
@@ -845,16 +899,201 @@ mod tests {
 
     fn stamp_centered(app: &mut App, pattern: PatternKind) {
         app.select_pattern(pattern);
-        let (cols, rows) = app.board.size();
-        app.place_selected_pattern_at(cols / 2, rows / 2);
+        let (cols, rows) = app.finite_size();
+        app.place_selected_pattern_at(cols as i64 / 2, rows as i64 / 2);
+    }
+
+    fn unbounded_app() -> App {
+        let mut app = App::new(16, 16);
+        assert_eq!(app.set_unbounded(), Ok(true));
+        app
     }
 
     /// A board with a blinker, and its cells before any generation has run.
-    fn blinker_board() -> (App, Vec<u8>) {
+    fn blinker_board() -> (App, CellSnapshot) {
         let mut app = App::new(16, 16);
         stamp_centered(&mut app, PatternKind::Blinker);
         let cells = app.board.snapshot_cells();
         (app, cells)
+    }
+
+    #[test]
+    fn the_unbounded_board_edits_and_runs_past_where_a_finite_one_stops() {
+        let mut app = unbounded_app();
+        assert_eq!(app.board.size(), None);
+        for x in -1..=1 {
+            app.populate_board(x - 5000, -5000);
+        }
+        assert_eq!(app.board.live_cells_count(), 3);
+
+        app.increment_epoch();
+        assert!(app.board.is_alive(-5000, -5001));
+        assert!(app.board.is_alive(-5000, -4999));
+        assert_eq!(app.population_change(), Some(0));
+
+        app.depopulate_board(-5000, -5000);
+        assert_eq!(app.board.live_cells_count(), 2);
+    }
+
+    #[test]
+    fn undo_and_reset_work_on_the_unbounded_board() {
+        let mut app = unbounded_app();
+        app.populate_board(-3, -3);
+        let drawn = app.board.snapshot_cells();
+        app.populate_board(-4, -3);
+        assert!(app.undo());
+        assert_eq!(app.board.snapshot_cells(), drawn);
+        assert!(app.redo());
+        assert_eq!(app.board.live_cells_count(), 2);
+
+        let edited = app.board.snapshot_cells();
+        app.increment_epoch();
+        assert_eq!(app.board.live_cells_count(), 0);
+        assert!(app.reset_to_start());
+        assert_eq!(app.board.snapshot_cells(), edited);
+    }
+
+    #[test]
+    fn stamps_can_land_past_the_origin_only_on_the_unbounded_board() {
+        let mut app = unbounded_app();
+        app.select_pattern(PatternKind::Blinker);
+        app.place_selected_pattern_at(-40, -40);
+        assert_eq!(app.board.live_cells_count(), 3);
+
+        // The same cursor is off a finite board, where stamps start at its edge.
+        let mut app = App::new(16, 16);
+        app.select_pattern(PatternKind::Blinker);
+        app.place_selected_pattern_at(-40, -40);
+        assert_eq!(app.board.live_cells_count(), 3);
+        assert!(app.board.is_alive(0, 0));
+    }
+
+    #[test]
+    fn a_finite_board_ignores_edits_off_its_edges() {
+        let mut app = App::new(16, 16);
+        app.populate_board(-1, 0);
+        app.populate_board(0, 16);
+        app.depopulate_board(-1, 0);
+        assert_eq!(app.board.live_cells_count(), 0);
+        assert!(!app.can_undo());
+    }
+
+    #[test]
+    fn a_blinker_settles_on_the_unbounded_board_and_a_glider_does_not() {
+        let mut app = unbounded_app();
+        stamp_centered(&mut app, PatternKind::Blinker);
+        for _ in 0..4 {
+            app.increment_epoch();
+        }
+        assert!(app.settled().is_some());
+
+        let mut app = unbounded_app();
+        stamp_centered(&mut app, PatternKind::Glider);
+        for _ in 0..200 {
+            app.increment_epoch();
+        }
+        assert_eq!(app.settled(), None, "it never returns to the same cells");
+    }
+
+    #[test]
+    fn b0_rules_stay_off_the_unbounded_board_without_touching_history() {
+        let b0 = Rule::parse("B0/S").unwrap();
+        let mut app = unbounded_app();
+        assert!(!app.set_rule(b0));
+        assert_eq!(app.board.rule(), Rule::LIFE);
+        assert!(!app.can_undo());
+
+        // A finite board may hold one, and then can't move to the plane.
+        let mut app = App::new(16, 16);
+        assert!(app.set_rule(b0));
+        assert_eq!(app.set_unbounded(), Err(UnboundedRuleError));
+        assert_eq!(app.board.size(), Some((16, 16)));
+        assert!(app.can_undo(), "a refused move forgets nothing");
+    }
+
+    #[test]
+    fn moving_onto_the_plane_keeps_the_cells_and_the_run_counter() {
+        let mut app = App::new(16, 16);
+        app.populate_board(8, 8);
+        app.populate_board(0, 0);
+        app.increment_epoch();
+        app.populate_board(8, 8);
+        let epoch = app.epoch;
+
+        assert_eq!(app.set_unbounded(), Ok(true));
+        assert_eq!(app.set_unbounded(), Ok(false), "it is already there");
+        assert!(app.board.is_alive(0, 0));
+        assert_eq!(app.board.live_cells_count(), 1);
+        assert_eq!(app.epoch, epoch);
+        assert!(!app.can_undo(), "snapshots don't fit the new board");
+        assert!(!app.can_redo());
+        assert!(!app.can_reset_to_start());
+        assert!(app.take_redraw());
+    }
+
+    #[test]
+    fn choosing_edges_returns_to_a_finite_board_of_the_old_size() {
+        let mut app = App::new(16, 8);
+        assert_eq!(app.set_unbounded(), Ok(true));
+        app.populate_board(0, 0);
+        app.populate_board(100, 100);
+
+        app.set_boundary_mode(BoundaryMode::Fixed);
+        assert_eq!(app.board.size(), Some((16, 8)));
+        assert_eq!(app.board.boundary_mode(), Some(BoundaryMode::Fixed));
+        assert_eq!(app.board.live_cells_count(), 1);
+        assert!(app.board.is_alive(8, 4));
+        assert!(!app.can_undo());
+    }
+
+    #[test]
+    fn toggling_edges_on_the_unbounded_board_returns_to_a_wrapping_one() {
+        let mut app = unbounded_app();
+        assert_eq!(app.boundary_mode_label(), "Unbounded");
+        app.toggle_boundary_mode();
+        assert_eq!(app.board.boundary_mode(), Some(BoundaryMode::Wrap));
+        app.toggle_boundary_mode();
+        assert_eq!(app.board.boundary_mode(), Some(BoundaryMode::Fixed));
+    }
+
+    #[test]
+    fn resizing_the_unbounded_board_only_changes_the_size_to_return_to() {
+        let mut app = unbounded_app();
+        app.populate_board(0, 0);
+        let drawn = app.board.snapshot_cells();
+        app.populate_board(1, 0);
+        app.resize_board(32, 64);
+        assert_eq!(app.finite_size(), (32, 64));
+        assert_eq!(app.board.size(), None);
+        assert!(app.undo(), "nothing about the plane changed");
+        assert_eq!(app.board.snapshot_cells(), drawn);
+
+        app.set_boundary_mode(BoundaryMode::Wrap);
+        assert_eq!(app.board.size(), Some((32, 64)));
+    }
+
+    #[test]
+    fn what_needs_a_finite_board_declines_the_unbounded_one() {
+        let mut app = unbounded_app();
+        app.populate_board(0, 0);
+        assert_eq!(app.board_to_rle(), None);
+        assert!(app.workspace().is_err());
+
+        let mut app = unbounded_app();
+        app.randomize_board();
+        assert_eq!(app.board.live_cells_count(), 0);
+        assert!(!app.can_undo(), "nothing changed to undo");
+    }
+
+    #[test]
+    fn a_stamp_with_nothing_new_on_the_board_is_not_an_edit() {
+        let mut app = App::new(8, 8);
+        app.select_pattern(PatternKind::Blinker);
+        // Its third cell is off the board, and the two it can reach are alive.
+        app.board.populate(6, 0);
+        app.board.populate(7, 0);
+        app.place_selected_pattern_at(7, 0);
+        assert!(!app.can_undo());
     }
 
     #[test]
@@ -1065,7 +1304,7 @@ mod tests {
 
         // Choosing the mode already in use changes nothing.
         let mut app = settled();
-        app.set_boundary_mode(app.board.boundary_mode());
+        app.set_boundary_mode(app.board.boundary_mode().unwrap());
         assert!(app.settled().is_some());
     }
 
@@ -1234,7 +1473,11 @@ mod tests {
 
         let pattern = Pattern::from_rle("export", &export.rle).unwrap();
         assert_eq!(pattern.rule, Some(app.board.rule()));
-        let mut read_back: Vec<_> = pattern.cells.iter().map(|&(x, y)| (x + 9, y + 5)).collect();
+        let mut read_back: Vec<_> = pattern
+            .cells
+            .iter()
+            .map(|&(x, y)| (x as i64 + 9, y as i64 + 5))
+            .collect();
         read_back.sort_unstable();
         let mut expected = cells.to_vec();
         expected.sort_unstable();
@@ -1273,7 +1516,10 @@ mod tests {
         assert_eq!(app.epoch, 1);
         assert!(!app.is_running());
         assert_eq!(app.board.snapshot_cells(), expected);
-        assert_eq!(app.board.take_dirty_cells(), board::DirtyCells::Full);
+        assert_eq!(
+            app.board.finite_mut().unwrap().take_dirty_cells(),
+            board::DirtyCells::Full
+        );
         app.increment_epoch();
         assert_eq!(app.board.snapshot_cells(), next.snapshot_cells());
     }

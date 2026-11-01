@@ -807,7 +807,7 @@ fn sync(
             Action::FillCanvas => board.fill_canvas,
             Action::PauseWhenSettled => sim.app.pause_when_settled(),
             Action::Theme(choice) => *theme == *choice,
-            Action::Edges(mode) => sim.app.board.boundary_mode() == *mode,
+            Action::Edges(mode) => sim.app.board.boundary_mode() == Some(*mode),
             Action::RulePreset(index) => dialogs::RULE_PRESETS
                 .get(*index)
                 .is_some_and(|(_, rule)| sim.app.rule_label() == *rule),
@@ -1594,11 +1594,11 @@ mod tests {
     fn the_status_bar_edges_button_switches_both_ways() {
         use crate::board::BoundaryMode;
         let mut app = GolApp::new(8, 8);
-        assert_eq!(app.board.boundary_mode(), BoundaryMode::Wrap);
+        assert_eq!(app.board.boundary_mode(), Some(BoundaryMode::Wrap));
         apply_action(Action::ToggleEdges, &mut app);
-        assert_eq!(app.board.boundary_mode(), BoundaryMode::Fixed);
+        assert_eq!(app.board.boundary_mode(), Some(BoundaryMode::Fixed));
         apply_action(Action::ToggleEdges, &mut app);
-        assert_eq!(app.board.boundary_mode(), BoundaryMode::Wrap);
+        assert_eq!(app.board.boundary_mode(), Some(BoundaryMode::Wrap));
     }
 
     #[test]

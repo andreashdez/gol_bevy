@@ -69,7 +69,7 @@ impl SimulationSettings {
     fn of(sim: &Simulation) -> Self {
         Self {
             rule: Some(sim.app.board.rule()),
-            boundary: Some(sim.app.board.boundary_mode()),
+            boundary: sim.app.board.boundary_mode(),
             tick_rate_ms: Some(sim.app.tick_rate_ms()),
             max_speed: Some(sim.app.is_max_speed()),
             pause_when_settled: Some(sim.app.pause_when_settled()),
@@ -686,7 +686,10 @@ mod persistence_tests {
         let mut restored = Simulation::new(crate::app::App::new(128, 64));
         simulation.apply_to(&mut restored);
         assert_eq!(restored.app.board.rule(), highlife);
-        assert_eq!(restored.app.board.boundary_mode(), BoundaryMode::Fixed);
+        assert_eq!(
+            restored.app.board.boundary_mode(),
+            Some(BoundaryMode::Fixed)
+        );
         assert_eq!(restored.app.tick_rate_ms(), 100);
         assert!(restored.app.is_max_speed());
         assert!(restored.app.pause_when_settled());

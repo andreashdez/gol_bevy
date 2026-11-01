@@ -55,8 +55,15 @@ pub enum DirtyChunks {
 
 /// Chunks of an earlier state. They are shared with the board until it changes
 /// them, so taking a snapshot costs a pointer per chunk.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SparseSnapshot(HashMap<ChunkKey, Arc<Chunk>>);
+
+impl SparseSnapshot {
+    /// Memory the snapshot could be holding on its own, once the board has moved on.
+    pub fn bytes(&self) -> usize {
+        self.0.len() * size_of::<Chunk>()
+    }
+}
 
 /// Which rows of a chunk changed: any of their cells, and those in its first and
 /// last columns, which is what the chunks either side of it can see.

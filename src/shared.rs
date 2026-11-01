@@ -686,7 +686,7 @@ pub fn board_size_for_window(window: &Window) -> (usize, usize) {
     (cols.max(1), rows.max(1))
 }
 
-pub fn cell_to_world(col: usize, row: usize, cols: usize, rows: usize) -> Vec3 {
+pub fn cell_to_world(col: i64, row: i64, cols: usize, rows: usize) -> Vec3 {
     let width = cols as f32 * CELL_SIZE;
     let height = rows as f32 * CELL_SIZE;
     let x = -width / 2.0 + CELL_SIZE * 0.5 + col as f32 * CELL_SIZE;
@@ -694,7 +694,7 @@ pub fn cell_to_world(col: usize, row: usize, cols: usize, rows: usize) -> Vec3 {
     Vec3::new(x, y, 0.0)
 }
 
-pub fn world_to_cell(world: Vec2, cols: usize, rows: usize) -> Option<(usize, usize)> {
+pub fn world_to_cell(world: Vec2, cols: usize, rows: usize) -> Option<(i64, i64)> {
     let width = cols as f32 * CELL_SIZE;
     let height = rows as f32 * CELL_SIZE;
 
@@ -709,7 +709,7 @@ pub fn world_to_cell(world: Vec2, cols: usize, rows: usize) -> Option<(usize, us
     let col = (local_x / CELL_SIZE).floor() as usize;
     let row = (local_y / CELL_SIZE).floor() as usize;
     if col < cols && row < rows {
-        return Some((col, row));
+        return Some((col as i64, row as i64));
     }
     None
 }

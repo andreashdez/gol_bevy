@@ -220,7 +220,7 @@ fn dialog_action(
         }
         Action::Settings | Action::EditRule => {
             state.drafts.rule_first = *action == Action::EditRule;
-            let (width, height) = state.sim.app.board.size();
+            let (width, height) = state.sim.app.finite_size();
             state.drafts.width = width.to_string();
             state.drafts.height = height.to_string();
             state.drafts.rule = state.sim.app.rule_label();
@@ -592,7 +592,7 @@ fn confirm_open(state: &mut DialogState) {
         return;
     };
     state.sim.app.restore_decoded(decoded);
-    let (width, height) = state.sim.app.board.size();
+    let (width, height) = state.sim.app.finite_size();
     state.board.set(width, height);
     state.board.fill_canvas = false;
     state.sim.accumulator = std::time::Duration::ZERO;
@@ -621,7 +621,11 @@ fn apply_rule(state: &mut DialogState, rule: Rule, name: Option<&str>) {
         Some(name) => format!("{name} ({rule})"),
         None => rule.to_string(),
     };
-    state.drafts.error = false;
+    state.drafts.error = !state.sim.app.board.allows_rule(rule);
+    if state.drafts.error {
+        state.drafts.feedback = format!("{described} would fill the unbounded board.");
+        return;
+    }
     state.drafts.feedback = if state.sim.app.set_rule(rule) {
         format!("Rule set to {described}. U undoes the change.")
     } else {
@@ -722,9 +726,12 @@ pub(super) fn update_dialogs(
                 state.drafts.feedback.clone()
             }
             DialogReadout::Diagnostics => {
-                let (width, height) = state.sim.app.board.size();
+                let size = state.sim.app.board.size().map_or_else(
+                    || "unbounded".to_owned(),
+                    |(width, height)| format!("{width} x {height}"),
+                );
                 format!(
-                    "Board                 {width} x {height}\nGeneration            {}\nLiving cells          {}\nRule                  {}\n\nAverage step          {:.3} ms\nTick interval         {}\nMeasured rate         {:.1} gen/s\nSamples               {}\nDense fallback        {}%\n\nPlayback continues while this view is open.",
+                    "Board                 {size}\nGeneration            {}\nLiving cells          {}\nRule                  {}\n\nAverage step          {:.3} ms\nTick interval         {}\nMeasured rate         {:.1} gen/s\nSamples               {}\nDense fallback        {}%\n\nPlayback continues while this view is open.",
                     state.sim.app.epoch,
                     state.sim.app.board.live_cells_count(),
                     state.sim.app.rule_label(),
@@ -1772,7 +1779,10 @@ mod tests {
             world.resource::<NativeUi>().dialog,
             Some(DialogKind::ConfirmOpen)
         );
-        assert_eq!(world.resource::<Simulation>().app.board.size(), (8, 8));
+        assert_eq!(
+            world.resource::<Simulation>().app.board.size(),
+            Some((8, 8))
+        );
         let cancel = world.spawn(Action::CancelOpenWorkspace).id();
         world.trigger(Activate { entity: cancel });
         assert_eq!(
@@ -1780,7 +1790,10 @@ mod tests {
             Some(DialogKind::Import)
         );
         assert!(world.resource::<Drafts>().pending_open.is_none());
-        assert_eq!(world.resource::<Simulation>().app.board.size(), (8, 8));
+        assert_eq!(
+            world.resource::<Simulation>().app.board.size(),
+            Some((8, 8))
+        );
         assert!(world.resource::<Simulation>().app.is_running());
 
         // Closing the prompt (Escape or Close) also drops the pending file.
@@ -1790,7 +1803,10 @@ mod tests {
             entity: close_button,
         });
         assert!(world.resource::<Drafts>().pending_open.is_none());
-        assert_eq!(world.resource::<Simulation>().app.board.size(), (8, 8));
+        assert_eq!(
+            world.resource::<Simulation>().app.board.size(),
+            Some((8, 8))
+        );
 
         // Confirming replaces the workspace and resets playback state.
         world.resource_mut::<NativeUi>().dialog = Some(DialogKind::Import);

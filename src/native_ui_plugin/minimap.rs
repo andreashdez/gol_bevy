@@ -174,7 +174,10 @@ pub(super) fn sync(
     else {
         return;
     };
-    let (cols, rows) = state.sim.app.board.size();
+    let Some(cells) = state.sim.app.board.finite() else {
+        return;
+    };
+    let (cols, rows) = cells.size();
     let canvas = canvas_rect(window.size());
     let board = board_rect(cols, rows);
     let centre = transform.translation.truncate();
@@ -235,7 +238,7 @@ pub(super) fn sync(
         progress.drawn = Some((cols, rows));
         progress.since_redraw = 0.0;
         let (width, height) = (cols.min(MAX_TEXELS), rows.min(MAX_TEXELS));
-        let alpha = coverage(&state.sim.app.board, width, height);
+        let alpha = coverage(cells, width, height);
         images
             .insert(handle().id(), image(&alpha, width, height))
             .expect("the static minimap handle is valid");

@@ -1,7 +1,7 @@
 .docname {Architecture}
 .include {docs}
 
-gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`app`, `board`, `patterns`) knows nothing about Bevy's UI or rendering, so it is tested directly.
+gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`app`, `board`, `sparse_board`, `universe`, `patterns`) knows nothing about Bevy's UI or rendering, so it is tested directly.
 
 ## Source layout
 
@@ -12,6 +12,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
       - app.rs
       - board.rs
       - sparse_board.rs
+      - universe.rs
       - settle.rs
       - patterns.rs
       - shared.rs
