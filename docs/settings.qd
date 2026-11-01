@@ -11,6 +11,8 @@ Pick a preset (128², 256², 512², or 1024²) to fill in the size, or type a **
 
 Resizing keeps the cells that fit in the new size, fits the board into view, and clears the [undo history](editing.qd#history-limits).
 
+An unbounded board has no size, so here you choose the one it returns to when you pick **Wrap** or **Fixed**, and how much of it survives. Undo steps that lead back to a finite board of another size are dropped.
+
 ### Fill canvas
 
 The **Fill canvas** switch is on by default. It sizes the board to the canvas, so **Fit board** shows it edge to edge at 100% with no empty border. While it is on, the board follows the canvas: resizing the window resizes the board too. The palette floats over the canvas, so it has no effect on the board.
@@ -22,7 +24,7 @@ Switch it off to keep the current size from then on; with it off, resizing the w
 ## Simulation
 
 - **Rule:** pick **Life**, **HighLife**, **Day & Night**, or **Seeds**, or type a rulestring and click **Apply**. See [Rules](simulation.qd#rules) for the notation.
-- **Edges:** choose **Wrap** or **Fixed**. See [Edges](simulation.qd#edges).
+- **Edges:** choose **Wrap**, **Fixed**, or **Unbounded**. See [Edges](simulation.qd#edges).
 - **Pause when settled** pauses playback once the board stops changing or starts repeating. It is off by default. See [When the board settles](simulation.qd#when-the-board-settles).
 - **Reset generation counter** sets the generation back to 0 without touching the cells.
 
@@ -30,7 +32,7 @@ Switch it off to keep the current size from then on; with it off, resizing the w
 
 Drag the **Density** slider, or focus it and use the arrow keys, to choose 0–100%. It applies as it moves. Optionally enter a **Seed** from 0 to 18446744073709551615 and click **Apply**; a blank seed means a fresh board each time. The default is 25% with no seed. The same seed, density, and board dimensions reproduce the same starting layout; share all three to repeat an experiment. Use the same rule and edge mode to reproduce its evolution.
 
-The toolbar's Randomize button and .keybinding {R} use these preferences. **Randomize now** applies the entered seed and replaces the board immediately as one undoable edit. An invalid seed leaves both the preferences and the board unchanged.
+The toolbar's Randomize button and .keybinding {R} use these preferences. **Randomize now** applies the entered seed and replaces the board immediately as one undoable edit. An invalid seed leaves both the preferences and the board unchanged. On an unbounded board they [fill the view](editing.qd) instead.
 
 Density is a probability per cell, so the population is approximate. At 0% the board
 is empty; at 100% it is full. Rule, edges, and generation counter stay as they are.

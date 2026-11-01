@@ -14,12 +14,12 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 | .keybinding {Space}     | Run or pause                 |
 | .keybinding {J}         | Step one generation          |
 | .keybinding {B}         | Reset to start               |
-| .keybinding {R}         | Randomize the board          |
+| .keybinding {R}         | Randomize the board or view  |
 | .keybinding {X}         | Clear the board              |
 | .keybinding {0}         | Reset the generation counter |
 | .keybinding {plus}      | Speed up (past 40 gen/s: ∞)   |
 | .keybinding {minus}     | Slow down                    |
-| .keybinding {M}         | Toggle wrapping or fixed edges |
+| .keybinding {M}         | Switch between wrapping, fixed, and unbounded edges |
 
 ## Editing
 

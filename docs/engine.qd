@@ -59,6 +59,28 @@ Each generation has a 64-bit fingerprint: the XOR of a fixed key for every cell 
 
 `settle` compares each fingerprint with the last 128, which is how a repeating board is noticed. Each generation follows only from the one before it, so one repeat means the board repeats until edited. Edits do not update the fingerprint, so anything that changes the board other than stepping starts the comparison over.
 
+## Unbounded board
+
+`src/sparse_board.rs` holds `SparseBoard`, a board with no edges, with the same rules and the same kind of live count, fingerprint, and dirty tracking as `Board`.
+
+The app runs on `Universe` from `src/universe.rs`, which is either kind of board and addresses cells with signed coordinates, so the same edits and stepping work on both. What needs edges or a fixed size asks for the finite board and skips the rest.
+
+`App::set_unbounded` moves the cells onto the plane with the centre of the board at the origin, and choosing edges again moves them back, keeping only the cells that fit the board. Both are ordinary edits: a snapshot records what it takes to bring back the board that took it, so undo can cross between the two and nothing is lost.
+
+Cells have signed 64-bit coordinates and live in a map of 64 × 64 chunks, so memory follows the live cells. A chunk stores one bit per cell, one `u64` per row, and is removed as soon as it empties. Stepping adds up the neighbours of a whole row of 64 cells at once, with each count held across four words, one for each binary digit. This is why a full board runs faster here than the byte-per-cell scan does.
+
+There is no separate frontier or dense path. A cell can only change after it or a neighbour has, so the board schedules each row beside one that changed, reaching into the neighbouring chunks where the change touches an edge. A lone glider costs a few rows, and a settled pattern costs nothing.
+
+Chunks are shared behind `Arc`, so a snapshot only copies pointers and a chunk is copied if it changes while a snapshot holds it.
+
+Rules with B0 are refused, because every empty cell would be born and the plane would fill in one generation.
+
+`src/plane_view.rs` draws the plane. World space is `f32`, which can't address cells far from the origin, so `Simulation::plane_origin` names the cell at the world origin and moves to meet a camera that has drifted, by a whole number of cells so nothing on screen shifts. The camera, the pointer, and everything else stay in ordinary world coordinates.
+
+A board-sized texture can't exist here, so one the size of the canvas shows what's in view. When zoomed out, each texel covers a square block of cells, lit if any of them is alive, and blocks are aligned to their own size so that panning moves them whole. Painting costs the lesser of what's in view and what's in memory, however large the pattern. Cell ages are kept only for chunks in view at one texel per cell, so a chunk scrolling in starts out settled, and trails don't show when zoomed out.
+
+A run stops at `PLANE_CHUNKS_MAX`, about half a gigabyte of chunks, with bookkeeping and history on top. Edits aren't held to it, as they can't outrun the person making them and randomizing a view stops at 2048 × 2048 cells. A bounding box needn't fit in memory, so RLE is read and written a run of cells at a time. Writing walks sorted chunks, and reading checks each run before expanding it, so a short file can't ask for more than the plane may hold. A file may hold twice the budget's chunks, or a run that stopped just past it couldn't reopen.
+
 ## Rendering
 
 The minimap counts live cells per block with the same vectorized sum as the population, about 2 ms on a 2048 × 2048 board. It runs five times a second, and only while the map is showing.
@@ -79,5 +101,7 @@ At a fixed speed, a frame runs at most 8 generations to catch up, then drops any
 - the interior fast path against boundary-aware counting
 - banded scans against a single band
 - the live count and the dirty and frontier bookkeeping after every kind of change
+
+`sparse_board.rs` checks stepping against a brute-force simulation and against `Board`, with extra attention to chunk edges and corners, since a row left unscheduled would silently give wrong cells rather than fail. It also checks banded steps against serial ones, the known final population of the R-pentomino, and that a glider stays in a handful of chunks.
 
 `patterns.rs` evolves the built-in oscillators and spaceships and checks that they behave as named. It also checks that the Gosper glider gun fires one glider every 30 generations, and that Diehard vanishes after exactly 130.

@@ -1,6 +1,6 @@
 //! Everyday controls, shortcut hints, and first-use guidance.
 use super::*;
-use crate::shared::{CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, MainCamera};
+use crate::shared::{CAMERA_ZOOM_MIN, MainCamera};
 use bevy::{
     a11y::AccessibilityNode,
     text::{FontFeatureTag, Justify},
@@ -75,6 +75,7 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::Edges(crate::board::BoundaryMode::Fixed) => {
             "Cells beyond the edges count as dead · M switches"
         }
+        Action::Unbounded => "No edges: the board grows as far as the pattern does · M switches",
         Action::Tool(EditTool::Draw) => "Draw · 1 · paint cells with the left mouse button",
         Action::Tool(EditTool::Erase) => "Erase · 2 · clear cells; right-drag also erases",
         Action::Tool(EditTool::Stamp) => {
@@ -94,7 +95,7 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::Theme(_) => "Switch the colours of the board and interface · saved automatically",
         Action::ApplyRule => "Use the rulestring above, written in B/S notation",
         Action::EditRule => "The board's rule · click to change it in Settings",
-        Action::ToggleEdges => "Switch between wrapping and fixed edges · M",
+        Action::ToggleEdges => "Switch between wrapping, fixed, and unbounded edges · M",
         Action::ExportRle => "Copy the live cells to the clipboard as RLE",
         Action::SaveWorkspace => {
             if cfg!(target_os = "macos") {
@@ -122,6 +123,7 @@ pub(super) fn navigate(
     event: On<Activate>,
     actions: Query<&Action>,
     view: Res<crate::canvas_view::CanvasView>,
+    mut sim: ResMut<Simulation>,
     mut cameras: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
 ) {
     let Ok(action) = actions.get(event.entity) else {
@@ -129,7 +131,7 @@ pub(super) fn navigate(
     };
     if let Ok((mut transform, mut projection)) = cameras.single_mut() {
         match action {
-            Action::FitBoard => view.fit_camera(&mut transform, &mut projection),
+            Action::FitBoard => view.fit_camera(&mut sim, &mut transform, &mut projection),
             Action::ZoomIn | Action::ZoomOut => {
                 if let Projection::Orthographic(ortho) = &mut *projection {
                     let factor = if *action == Action::ZoomIn {
@@ -137,11 +139,20 @@ pub(super) fn navigate(
                     } else {
                         1.25
                     };
-                    ortho.scale = (ortho.scale * factor).clamp(CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX);
+                    ortho.scale = (ortho.scale * factor).clamp(CAMERA_ZOOM_MIN, sim.zoom_max());
                 }
             }
             _ => {}
         }
+    }
+}
+
+/// The plane zooms out far enough to round down to nothing.
+fn zoom_label(percent: f32) -> String {
+    if percent < 1.0 {
+        "<1%".to_owned()
+    } else {
+        format!("{percent:.0}%")
     }
 }
 
@@ -419,7 +430,7 @@ type StatusText<'a> = (
 );
 
 /// What the board looked like last frame, to tell a jump from a tick.
-type BoardShape = (usize, (usize, usize), usize);
+type BoardShape = (usize, Option<(usize, usize)>, usize);
 
 pub(super) fn sync_status(
     sim: Res<Simulation>,
@@ -452,15 +463,15 @@ pub(super) fn sync_status(
             Token::Line
         }));
     }
-    let (cols, rows) = sim.app.board.size();
+    let size = sim.app.board.size();
     let live = sim.app.board.live_cells_count();
     // A cleared or resized board, or a generation counter that went back,
     // makes the readouts start over at their own widths. Each then grows to
     // its current number again; ordinary ticks still never shrink them.
-    let jumped = last.is_some_and(|(epoch, size, count)| {
-        sim.app.epoch < epoch || size != (cols, rows) || (live == 0 && count != 0)
+    let jumped = last.is_some_and(|(epoch, last_size, count)| {
+        sim.app.epoch < epoch || last_size != size || (live == 0 && count != 0)
     });
-    *last = Some((sim.app.epoch, (cols, rows), live));
+    *last = Some((sim.app.epoch, size, live));
     for (mut text, mut color, readout, mut node, keep) in &mut texts {
         if jumped && let Some(keep) = keep {
             set_if_neq!(node.min_width, keep.0);
@@ -487,12 +498,18 @@ pub(super) fn sync_status(
                     crate::settle::Settled::label,
                 )
             }
-            // Counted from the top left, like RLE and other Life tools.
+            // Counted downwards, like RLE and other Life tools.
             Readout::Pointer => hovered
                 .0
-                .map(|(col, row)| format!("({col}, {})", rows - 1 - row))
+                .map(|(col, row)| match size {
+                    Some((_, rows)) => format!("({col}, {})", rows as i64 - 1 - row),
+                    None => format!("({col}, {})", -row),
+                })
                 .unwrap_or_default(),
-            Readout::Board => format!("{cols} × {rows} cells"),
+            // The edges button says the board is unbounded, and there's no size to add.
+            Readout::Board => size
+                .map(|(cols, rows)| format!("{cols} × {rows} cells"))
+                .unwrap_or_default(),
         };
         if text.0 != value {
             text.0 = value;
@@ -633,7 +650,7 @@ pub(super) fn sync_footer(
     if let Ok(Projection::Orthographic(ortho)) = cameras.single()
         && let Ok(mut text) = zoom.single_mut()
     {
-        let value = format!("{:.0}%", view.fit_scale / ortho.scale * 100.0);
+        let value = zoom_label(view.fit_scale / ortho.scale * 100.0);
         if text.0 != value {
             text.0 = value;
         }
@@ -716,6 +733,13 @@ pub(super) fn sync_feedback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zoom_labels_never_read_as_nothing() {
+        assert_eq!(super::zoom_label(300.0), "300%");
+        assert_eq!(super::zoom_label(1.0), "1%");
+        assert_eq!(super::zoom_label(0.04), "<1%");
+    }
 
     #[test]
     fn readout_widths_start_over_when_the_board_jumps_but_not_when_it_ticks() {

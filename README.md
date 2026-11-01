@@ -53,6 +53,7 @@ fit, and the corner-brackets button beside it is **Fit board**. Middle-button dr
 pans without editing cells.
 While part of the board is out of view, a minimap in the canvas's bottom-right corner
 shows the whole board with a frame around what is visible; click or drag it to move the view.
+On an unbounded board it runs from the live cells to the view, and appears while any live cell is out of sight.
 Window and layout changes retain the pan position and zoom relative to the fitted
 view. Drawing and stamp previews stay inside the canvas, including on Retina displays.
 The built-in library covers spaceships, oscillators (blinker, pulsar, pentadecathlon), the
@@ -116,7 +117,8 @@ is 25% with a blank seed, which uses a fresh seed each time. With a fixed seed,
 the same density and board dimensions reproduce the same cell layout, independent
 of other random operations. Density is a probability per cell, so the resulting
 population is approximate; 0% clears the board and 100% fills it. Randomization
-keeps the current rule, boundary mode, and generation counter.
+keeps the current rule, boundary mode, and generation counter. On an unbounded board
+it fills the view, up to 2048 × 2048 cells in the middle of it, and leaves the rest.
 
 Board size, rule, boundary mode, speed, pause when settled, randomization preferences, the grid, cell age, and the theme are saved between runs
 in `settings.toml`, in a `gol-bevy` folder in the platform's settings location:
@@ -153,11 +155,13 @@ A workspace preserves the full board dimensions and cell positions, generation, 
 boundary mode, playback speed, randomization preferences, and imported patterns, including their names and rules.
 Opening validates the whole file first, then asks before replacing your workspace.
 Replacing pauses playback, clears undo/redo, and turns Fill canvas off so the loaded
-dimensions stay intact. Display settings continue to use
+dimensions stay intact. An unbounded board is saved with its cells where they are, and opens with them in view.
+Display settings continue to use
 `settings.toml`; selection, camera position, and cell-age trails are not stored.
 Workspace files use versioned JSON with RLE cell data. Limits are 32 MiB per file,
 256 imported patterns, 1024 bytes per pattern name, and 4,194,304 live cells across
-the imported library. The board doesn't count toward the cell limit, so even a full
+the imported library. An unbounded board can hold up to 67,108,864 live cells. A finite
+board doesn't count toward the cell limit, so even a full
 2048 × 2048 board can be saved. Import enforces the same library limits, so anything
 you have imported can always be saved. Imported patterns can now be kept between runs by
 saving a workspace; there is no automatic session recovery.
@@ -179,7 +183,7 @@ just ci-local
 | `B` | Reset to start |
 | `+` | Speed up |
 | `−` | Slow down |
-| `M` | Wrap / fixed edges |
+| `M` | Wrap / fixed / unbounded edges |
 | `0` | Reset generation counter |
 
 ### Editing
@@ -191,7 +195,7 @@ just ci-local
 | `3` | Stamp tool |
 | `Left drag` | Draw or erase with the tool |
 | `Right drag` | Erase |
-| `R` | Randomize the board |
+| `R` | Randomize the board or view |
 | `X` | Clear the board |
 | `U` or `Cmd/Ctrl+Z` | Undo and pause |
 | `Cmd/Ctrl+Shift+Z` | Redo |
@@ -328,7 +332,7 @@ CPU profiling options:
 
 Benchmark targets:
 
-- `benches/board_step.rs`: `board::step` + dirty-cell extraction for sparse glider and deterministic noise scenarios across 256/512/1024 boards, plus a dense group that steps a freshly seeded 512/1024/2048 board each iteration so it always measures the dense scan.
+- `benches/board_step.rs`: `board::step` + dirty-cell extraction for sparse glider and deterministic noise scenarios across 256/512/1024 boards, plus a dense group that steps a freshly seeded 512/1024/2048 board each iteration so it always measures the dense scan, and the same glider and fresh noise on `SparseBoard`.
 - `benches/dense_crossover.rs`: times the frontier step against the dense scan on soup covering a growing share of the board, to tune the dense fallback threshold.
 
 ## Development

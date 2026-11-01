@@ -7,9 +7,9 @@ use crate::{
         BINDING_RESET_EPOCH, BINDING_RESET_TO_START, BINDING_ROTATE_STAMP, BINDING_RUN_PAUSE,
         BINDING_SLOW_DOWN, BINDING_SPEED_UP, BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE,
         BINDING_TOGGLE_DIAGNOSTICS, BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP,
-        BINDING_TOGGLE_PALETTE, CAMERA_PAN_SPEED, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN,
-        CAMERA_ZOOM_STEP, DiagnosticsOverlay, EditFeedback, GridOverlay, MainCamera, Simulation,
-        TOOL_SHORTCUTS, TypedKeys, UpdateSet, collect_typed_keys, world_to_cell,
+        BINDING_TOGGLE_PALETTE, CAMERA_PAN_SPEED, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP,
+        DiagnosticsOverlay, EditFeedback, GridOverlay, MainCamera, Simulation, TOOL_SHORTCUTS,
+        TypedKeys, UpdateSet, collect_typed_keys,
     },
     ui_input::{UiInputCapture, canvas_keyboard_available},
 };
@@ -197,8 +197,7 @@ fn handle_mouse(
         return;
     };
 
-    let (cols, rows) = sim.app.board.size();
-    let Some((col, row)) = world_to_cell(world_pos, cols, rows) else {
+    let Some((col, row)) = sim.cell_map().world_to_cell(world_pos) else {
         return;
     };
 
@@ -231,6 +230,7 @@ fn handle_camera_zoom(
     mut wheel_events: MessageReader<MouseWheel>,
     mut camera_q: Query<&mut Projection, With<MainCamera>>,
     capture: Res<UiInputCapture>,
+    sim: Res<Simulation>,
 ) {
     if capture.pointer {
         wheel_events.clear();
@@ -252,7 +252,7 @@ fn handle_camera_zoom(
         return;
     };
     let factor = (1.0 - total_scroll * CAMERA_ZOOM_STEP).clamp(0.5, 2.0);
-    ortho.scale = (ortho.scale * factor).clamp(CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX);
+    ortho.scale = (ortho.scale * factor).clamp(CAMERA_ZOOM_MIN, sim.zoom_max());
 }
 
 fn handle_camera_pan(
@@ -329,6 +329,7 @@ fn handle_camera_reset(
     view: Res<CanvasView>,
     keys: Res<ButtonInput<KeyCode>>,
     typed: Res<TypedKeys>,
+    mut sim: ResMut<Simulation>,
     mut camera_q: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
 ) {
     if !BINDING_RESET_CAMERA.just_pressed(&keys, &typed) {
@@ -336,7 +337,7 @@ fn handle_camera_reset(
     }
 
     if let Ok((mut transform, mut projection)) = camera_q.single_mut() {
-        view.fit_camera(&mut transform, &mut projection);
+        view.fit_camera(&mut sim, &mut transform, &mut projection);
     }
 }
 
@@ -447,6 +448,60 @@ mod tests {
             world.resource::<Simulation>().app.board.live_cells_count(),
             1
         );
+    }
+
+    /// A click at the world origin, on a plane whose origin is at `origin`.
+    fn click_on_plane(origin: (i64, i64), button: MouseButton) -> crate::app::App {
+        use bevy::camera::{ComputedCameraValues, RenderTargetInfo};
+        let mut world = World::new();
+        let mut buttons = ButtonInput::<MouseButton>::default();
+        buttons.press(button);
+        world.insert_resource(buttons);
+        world.init_resource::<UiInputCapture>();
+        world.init_resource::<EditFeedback>();
+        let mut app = crate::app::App::new(8, 8);
+        app.set_unbounded().unwrap();
+        app.board.populate(origin.0, origin.1);
+        let mut sim = Simulation::new(app);
+        sim.plane_origin = origin;
+        world.insert_resource(sim);
+        let mut window = Window::default();
+        window.resolution.set(800.0, 600.0);
+        window.set_cursor_position(Some(Vec2::new(400.5, 299.5)));
+        world.spawn((window, PrimaryWindow));
+        world.spawn((
+            MainCamera,
+            GlobalTransform::default(),
+            Camera {
+                computed: ComputedCameraValues {
+                    target_info: Some(RenderTargetInfo {
+                        physical_size: UVec2::new(800, 600),
+                        scale_factor: 1.0,
+                    }),
+                    clip_from_view: Mat4::IDENTITY,
+                    ..default()
+                },
+                ..default()
+            },
+        ));
+        world.run_system_once(handle_mouse).unwrap();
+        world.remove_resource::<Simulation>().unwrap().app
+    }
+
+    #[test]
+    fn the_mouse_edits_the_plane_at_its_origin_however_far_out_that_is() {
+        let origin = (-(1 << 40), 1 << 41);
+        let app = click_on_plane((origin.0 + 3, origin.1), MouseButton::Left);
+        assert!(app.board.is_alive(origin.0 + 3, origin.1));
+        assert_eq!(
+            app.board.live_cells_count(),
+            1,
+            "that cell was alive already"
+        );
+
+        // The origin's cell is what the click lands on, so it can be erased too.
+        let app = click_on_plane(origin, MouseButton::Right);
+        assert_eq!(app.board.live_cells_count(), 0);
     }
 
     #[test]

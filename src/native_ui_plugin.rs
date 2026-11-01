@@ -223,6 +223,7 @@ enum Action {
     Clear,
     /// Chooses wrapping or fixed edges.
     Edges(crate::board::BoundaryMode),
+    Unbounded,
     /// Switches between wrapping and fixed edges, from the status bar.
     ToggleEdges,
 }
@@ -670,6 +671,10 @@ fn apply_action(action: Action, app: &mut GolApp) {
         Action::Randomize => app.randomize_board(),
         Action::Clear => app.clear_board(),
         Action::Edges(mode) => app.set_boundary_mode(mode),
+        // Disabled for the one rule that refuses, so the error can't reach here.
+        Action::Unbounded => {
+            let _ = app.set_unbounded();
+        }
         Action::ToggleEdges => app.toggle_boundary_mode(),
         Action::ResetEpoch => app.reset_epoch(),
         Action::PauseWhenSettled => app.set_pause_when_settled(!app.pause_when_settled()),
@@ -786,6 +791,7 @@ fn sync(
             Action::SpeedAdjust(_) => {
                 sim.app.is_max_speed() || controls::fixed_rate(&sim.app) >= controls::MAX_FIXED_RATE
             }
+            Action::Unbounded => !sim.app.board.allows_unbounded(),
             _ => false,
         };
         if disabled {
@@ -807,7 +813,8 @@ fn sync(
             Action::FillCanvas => board.fill_canvas,
             Action::PauseWhenSettled => sim.app.pause_when_settled(),
             Action::Theme(choice) => *theme == *choice,
-            Action::Edges(mode) => sim.app.board.boundary_mode() == *mode,
+            Action::Edges(mode) => sim.app.board.boundary_mode() == Some(*mode),
+            Action::Unbounded => sim.app.board.finite().is_none(),
             Action::RulePreset(index) => dialogs::RULE_PRESETS
                 .get(*index)
                 .is_some_and(|(_, rule)| sim.app.rule_label() == *rule),
@@ -825,6 +832,7 @@ fn sync(
                 | Action::RulePreset(_)
                 | Action::Theme(_)
                 | Action::Edges(_)
+                | Action::Unbounded
         ) {
             accessible.set_toggled(if selected {
                 accesskit::Toggled::True
@@ -907,7 +915,11 @@ fn sync(
                         "Play".to_string()
                     }),
                     Action::EditRule => Some(sim.app.rule_label()),
-                    Action::ToggleEdges => Some(format!("{} edges", sim.app.boundary_mode_label())),
+                    Action::ToggleEdges => Some(if sim.app.board.finite().is_some() {
+                        format!("{} edges", sim.app.boundary_mode_label())
+                    } else {
+                        sim.app.boundary_mode_label().to_owned()
+                    }),
                     _ => None,
                 };
                 if let Some(value) = replacement
@@ -1591,14 +1603,29 @@ mod tests {
     }
 
     #[test]
-    fn the_status_bar_edges_button_switches_both_ways() {
+    fn the_status_bar_edges_button_steps_through_every_mode() {
         use crate::board::BoundaryMode;
         let mut app = GolApp::new(8, 8);
-        assert_eq!(app.board.boundary_mode(), BoundaryMode::Wrap);
+        assert_eq!(app.board.boundary_mode(), Some(BoundaryMode::Wrap));
         apply_action(Action::ToggleEdges, &mut app);
-        assert_eq!(app.board.boundary_mode(), BoundaryMode::Fixed);
+        assert_eq!(app.board.boundary_mode(), Some(BoundaryMode::Fixed));
         apply_action(Action::ToggleEdges, &mut app);
-        assert_eq!(app.board.boundary_mode(), BoundaryMode::Wrap);
+        assert_eq!(app.board.boundary_mode(), None);
+        apply_action(Action::ToggleEdges, &mut app);
+        assert_eq!(app.board.boundary_mode(), Some(BoundaryMode::Wrap));
+    }
+
+    #[test]
+    fn the_unbounded_edges_action_moves_onto_the_plane_unless_the_rule_refuses() {
+        let mut app = GolApp::new(8, 8);
+        apply_action(Action::Unbounded, &mut app);
+        assert_eq!(app.board.boundary_mode(), None);
+
+        let mut app = GolApp::new(8, 8);
+        app.set_rule(crate::board::Rule::parse("B0/S").unwrap());
+        assert!(!app.board.allows_unbounded());
+        apply_action(Action::Unbounded, &mut app);
+        assert!(app.board.finite().is_some());
     }
 
     #[test]

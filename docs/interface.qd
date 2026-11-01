@@ -47,6 +47,8 @@ The canvas leaves only a thin gap around the board, and a fitted board leaves on
 
 The board is fitted into the canvas on startup, after a board size change, and when you press .keybinding {V} or click **Fit board**. When the window size changes, the view keeps its pan position and its zoom relative to the fitted view.
 
+On an unbounded board, .keybinding {V} and **Fit board** frame the live cells instead, wherever they are.
+
 The zoom percentage is relative to **Fit board** (100%). Middle-button panning must start on the canvas and stops when the pointer enters a control or leaves the window.
 
 ### Minimap
@@ -54,6 +56,8 @@ The zoom percentage is relative to **Fit board** (100%). Middle-button panning m
 While part of the board is out of view, a small map of the whole board appears in the bottom-right corner of the canvas, with a frame around what the canvas shows. Click the map to centre the view there, or drag to move it. Clicks on the map never edit the board, and scrolling over it does not zoom.
 
 The map shows where cells are alive rather than every cell, so a lone glider stays visible on the largest board. It refreshes five times a second, and disappears once the whole board is in view again.
+
+An unbounded board has no whole to show, so its map runs from the live cells to the view, and appears while any live cell is out of sight. The further apart they are, the less a click on the map can aim, so use .keybinding {V} to frame them all.
 
 With **fixed** edges, a pale wall outlines the board and pulses briefly when you switch to that mode. With **wrapping** edges, the wall is hidden.
 
@@ -85,7 +89,7 @@ From left to right:
 - The generation counter.
 - The number of living cells, how the latest generation changed it, and, from 900 pixels wide, a line of the population over the last 256 generations of the run. The change reads `+12`, `−12`, or `±0` for a stable population. The change disappears after an edit, undo, or counter reset, since it no longer describes the board. Once the board [settles](simulation.qd#when-the-board-settles), `stable` or `period 2` takes its place; hover over it to see the generation that began.
 - The rule. Click it to open [Settings](settings.qd#simulation) with the rulestring ready to edit.
-- The [edge mode](simulation.qd#edges), **Wrap edges** or **Fixed edges**, from 850 pixels wide. Click it to switch, like .keybinding {M}.
+- The [edge mode](simulation.qd#edges), **Wrap edges**, **Fixed edges**, or **Unbounded**, from 850 pixels wide. Click it to switch, like .keybinding {M}.
 - The cell under the pointer, as `(x, y)` counted from the top-left cell `(0, 0)`, while the pointer is over the board.
 
 From 1010 pixels wide, the status bar also shows the board size. Numbers use tabular digits and keep the widest size they have reached, so the readouts stay close together without shifting as digits change. Clearing or resizing the board, or resetting the generation counter, lets them shrink back to fit. The zoom controls sit at the right end. The status bar is a single 48-pixel row at every window size.

@@ -26,6 +26,7 @@ Times `Board::step` together with dirty-cell extraction, which is what each fram
 - **sparse:** a glider on 256, 512, and 1024 boards, which stays on the frontier path
 - **noise:** deterministic random fills at 30% and 45% density on the same sizes
 - **dense:** a freshly seeded 512, 1024, and 2048 board on every iteration, so it always measures the dense scan
+- **sparse board:** the glider and the fresh 30% noise on `SparseBoard`, with its dirty chunks extracted, to compare the two boards directly
 
 ### dense_crossover
 

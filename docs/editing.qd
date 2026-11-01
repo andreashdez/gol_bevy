@@ -44,6 +44,7 @@ counter. In Settings, **Randomization** lets you choose a whole-number density f
 0–100% (25% by default), and an optional seed. Leave the seed blank for a fresh board
 each time; the same seed, density, and dimensions repeat the same cell layout.
 The density slider applies as it moves and the seed applies with **Apply**; **Randomize now** also replaces the board.
+An unbounded board has too many cells to replace, so Randomize fills the view and leaves everything else as it is. That stops at 2048 × 2048 cells in the middle of the view, and the notice says how much it filled.
 Density is a probability for each cell, so the population is approximate. At 0% the
 board is empty; at 100% every cell is alive.
 
@@ -87,8 +88,10 @@ rule, boundary mode, playback speed, randomization density and seed, and importe
 Replacing pauses playback, clears undo/redo, and turns Fill canvas off. Invalid files
 are reported without asking, and leave the current workspace intact.
 
+An unbounded board is saved with its cells where they are, and the size it returns to. It opens with its live cells in view, and builds from before unbounded boards can't read that file. Finite boards are saved as they always were.
+
 Files are versioned JSON containing RLE data. Limits are 32 MiB per file, 256 imported
 patterns, 1024 bytes per pattern name, and 4,194,304 live cells across the imported
-patterns. The board doesn't count toward the cell limit. Camera position,
+patterns. A finite board doesn't count toward the cell limit; an unbounded one is limited to 67,108,864 live cells, though at 32 MiB a file runs out sooner unless they are in long runs. Camera position,
 active stamp, cell-age trails, and undo history are not saved. Display settings remain
 in the separate settings file. Saving is explicit; there is no automatic recovery.

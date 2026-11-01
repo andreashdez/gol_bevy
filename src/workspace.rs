@@ -1,13 +1,20 @@
 //! Versioned workspace files. Decode completely before touching the live app.
 use crate::{
-    board::{BoundaryMode, RandomizeSettings, Rule},
+    board::{Board, BoundaryMode, RandomizeSettings, Rule},
     patterns::{MAX_LIBRARY_CELLS, MAX_LIBRARY_PATTERNS, MAX_PATTERN_NAME_BYTES, Pattern, to_rle},
     shared::{BOARD_SIZE_MAX, BOARD_SIZE_MIN},
+    sparse_board::PLANE_EXPORT_CELLS_MAX,
+    universe::{Universe, plane_from_rle, plane_to_rle},
 };
 use serde::{Deserialize, Serialize};
 use std::{io::Read, path::Path};
 
 const MAX_WORKSPACE_BYTES: u64 = 32 * 1024 * 1024;
+const FORMAT: &str = "gol-bevy-workspace";
+const FINITE_VERSION: u32 = 1;
+/// Finite boards stay at the old version, for builds that know no other.
+const UNBOUNDED_VERSION: u32 = 2;
+const UNBOUNDED: &str = "unbounded";
 
 #[derive(Debug)]
 pub struct WorkspaceError(String);
@@ -51,6 +58,10 @@ pub struct Workspace {
     #[serde(default)]
     random_seed: Option<u64>,
     board_rle: String,
+    /// On an unbounded board, the lowest corner of `board_rle`. `width` and
+    /// `height` are then the size of the finite board it returns to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    plane_origin: Option<(i64, i64)>,
     imported_patterns: Vec<StoredPattern>,
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,12 +74,10 @@ pub(crate) struct DecodedWorkspace {
     pub width: usize,
     pub height: usize,
     pub generation: usize,
-    pub rule: Rule,
-    pub boundary: BoundaryMode,
     pub tick_rate_ms: u64,
     pub max_speed: bool,
     pub randomize_settings: RandomizeSettings,
-    pub cells: Vec<u8>,
+    pub board: Universe,
     pub patterns: Vec<Pattern>,
 }
 
@@ -77,7 +86,7 @@ impl Workspace {
         app: &crate::app::App,
         patterns: &[Pattern],
     ) -> Result<Self, WorkspaceError> {
-        let (width, height) = app.board.size();
+        let (width, height) = app.finite_size();
         if !(BOARD_SIZE_MIN..=BOARD_SIZE_MAX).contains(&width)
             || !(BOARD_SIZE_MIN..=BOARD_SIZE_MAX).contains(&height)
         {
@@ -99,27 +108,47 @@ impl Workspace {
                 ));
             }
         }
-        let cells: Vec<_> = (0..height)
-            .flat_map(|y| (0..width).map(move |x| (x, y)))
-            .filter(|&(x, y)| app.board.is_alive(x, y))
-            .collect();
+        let rule = app.board.rule();
+        let (version, boundary, board_rle, plane_origin) = match &app.board {
+            Universe::Finite(board) => {
+                let cells: Vec<_> = (0..height)
+                    .flat_map(|y| (0..width).map(move |x| (x, y)))
+                    .filter(|&(x, y)| board.is_alive(x, y))
+                    .collect();
+                let boundary = match board.boundary_mode() {
+                    BoundaryMode::Wrap => "wrap",
+                    BoundaryMode::Fixed => "fixed",
+                };
+                let rle = to_rle(&cells, width, height, Some(rule), "");
+                (FINITE_VERSION, boundary, rle, None)
+            }
+            Universe::Unbounded(plane) => {
+                if plane.live_cells_count() > PLANE_EXPORT_CELLS_MAX {
+                    return Err(invalid(
+                        "An unbounded board can be saved with at most 67,108,864 live cells.",
+                    ));
+                }
+                let (rle, origin) = plane_to_rle(plane, "").map_or_else(
+                    || (to_rle(&[], 0, 0, Some(rule), ""), (0, 0)),
+                    |export| (export.rle, export.origin),
+                );
+                (UNBOUNDED_VERSION, UNBOUNDED, rle, Some(origin))
+            }
+        };
         Ok(Self {
-            format: "gol-bevy-workspace".into(),
-            version: 1,
+            format: FORMAT.into(),
+            version,
             width,
             height,
             generation: app.epoch as u64,
             rule: app.rule_label(),
-            boundary: match app.board.boundary_mode() {
-                BoundaryMode::Wrap => "wrap",
-                BoundaryMode::Fixed => "fixed",
-            }
-            .into(),
+            boundary: boundary.into(),
             tick_rate_ms: app.tick_rate_ms(),
             max_speed: app.is_max_speed(),
             random_density_percent: app.randomize_settings().density_percent(),
             random_seed: app.randomize_settings().seed(),
-            board_rle: to_rle(&cells, width, height, Some(app.board.rule()), ""),
+            board_rle,
+            plane_origin,
             imported_patterns: patterns
                 .iter()
                 .map(|pattern| StoredPattern {
@@ -138,7 +167,7 @@ impl Workspace {
     }
 
     pub(crate) fn decode(self) -> Result<DecodedWorkspace, WorkspaceError> {
-        if self.format != "gol-bevy-workspace" || self.version != 1 {
+        if self.format != FORMAT || !(FINITE_VERSION..=UNBOUNDED_VERSION).contains(&self.version) {
             return Err(invalid("Unsupported workspace format or version."));
         }
         if !(BOARD_SIZE_MIN..=BOARD_SIZE_MAX).contains(&self.width)
@@ -155,18 +184,12 @@ impl Workspace {
             RandomizeSettings::new(self.random_density_percent, self.random_seed)
                 .ok_or_else(|| invalid("Random density must be between 0 and 100 percent."))?;
         let rule = Rule::parse(&self.rule).map_err(|e| WorkspaceError(e.to_string()))?;
-        let boundary = match self.boundary.as_str() {
-            "wrap" => BoundaryMode::Wrap,
-            "fixed" => BoundaryMode::Fixed,
+        let board = match self.boundary.as_str() {
+            "wrap" => self.decode_board(rule, BoundaryMode::Wrap)?,
+            "fixed" => self.decode_board(rule, BoundaryMode::Fixed)?,
+            UNBOUNDED if self.version == UNBOUNDED_VERSION => self.decode_plane(rule)?,
             _ => return Err(invalid("Invalid workspace boundary mode.")),
         };
-        let board = Pattern::from_rle("Board", &self.board_rle)
-            .map_err(|e| WorkspaceError(e.to_string()))?;
-        if (board.width, board.height) != (self.width, self.height) || board.rule != Some(rule) {
-            return Err(invalid(
-                "Board RLE dimensions or rule disagree with workspace metadata.",
-            ));
-        }
         if self.imported_patterns.len() > MAX_LIBRARY_PATTERNS {
             return Err(invalid(
                 "A workspace can contain at most 256 imported patterns.",
@@ -190,22 +213,54 @@ impl Workspace {
             }
             patterns.push(pattern);
         }
-        let mut cells = vec![0; self.width * self.height];
-        for (x, y) in board.cells {
-            cells[y * self.width + x] = 1;
-        }
         Ok(DecodedWorkspace {
             width: self.width,
             height: self.height,
             generation,
-            rule,
-            boundary,
             tick_rate_ms: self.tick_rate_ms,
             max_speed: self.max_speed,
             randomize_settings,
-            cells,
+            board,
             patterns,
         })
+    }
+
+    fn decode_board(&self, rule: Rule, mode: BoundaryMode) -> Result<Universe, WorkspaceError> {
+        let pattern = Pattern::from_rle("Board", &self.board_rle)
+            .map_err(|e| WorkspaceError(e.to_string()))?;
+        if (pattern.width, pattern.height) != (self.width, self.height)
+            || pattern.rule != Some(rule)
+        {
+            return Err(invalid(
+                "Board RLE dimensions or rule disagree with workspace metadata.",
+            ));
+        }
+        let mut cells = vec![0; self.width * self.height];
+        for (x, y) in pattern.cells {
+            cells[y * self.width + x] = 1;
+        }
+        let mut board = Board::new(self.width, self.height);
+        board.set_rule(rule);
+        board.set_boundary_mode(mode);
+        board.restore_cells(cells);
+        Ok(Universe::Finite(board))
+    }
+
+    fn decode_plane(&self, rule: Rule) -> Result<Universe, WorkspaceError> {
+        let origin = self
+            .plane_origin
+            .ok_or_else(|| invalid("An unbounded board needs its position."))?;
+        let (mut plane, declared) =
+            plane_from_rle(&self.board_rle, origin).map_err(|e| WorkspaceError(e.to_string()))?;
+        if declared != Some(rule) {
+            return Err(invalid(
+                "Board RLE dimensions or rule disagree with workspace metadata.",
+            ));
+        }
+        plane
+            .set_rule(rule)
+            .map_err(|e| WorkspaceError(e.to_string()))?;
+        Ok(Universe::Unbounded(plane))
     }
 
     pub fn read(path: &Path) -> Result<Self, WorkspaceError> {
@@ -264,11 +319,11 @@ mod tests {
         restored
             .restore_workspace(Workspace::read(&path).unwrap())
             .unwrap();
-        assert_eq!(restored.board.size(), (40, 24));
+        assert_eq!(restored.board.size(), Some((40, 24)));
         assert_eq!(restored.board.snapshot_cells(), original);
         assert_eq!(restored.epoch, 812);
         assert_eq!(restored.rule_label(), "B36/S23");
-        assert_eq!(restored.board.boundary_mode(), BoundaryMode::Fixed);
+        assert_eq!(restored.board.boundary_mode(), Some(BoundaryMode::Fixed));
         assert_eq!(restored.tick_rate_ms(), 137);
         assert!(restored.is_max_speed());
         assert_eq!(restored.randomize_settings(), app.randomize_settings());
@@ -297,10 +352,120 @@ mod tests {
             .restore_workspace(Workspace::read(&path).unwrap())
             .unwrap();
         assert_eq!(restored.board.live_cells_count(), 0);
-        assert_eq!(restored.board.size(), (16, 16));
+        assert_eq!(restored.board.size(), Some((16, 16)));
         assert!(!restored.is_max_speed());
         assert_eq!(restored.pattern_count(), Pattern::builtin_count());
         assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
+    }
+
+    fn plane_app() -> App {
+        let mut app = App::new(40, 24);
+        app.set_rule(Rule::parse("B36/S23").unwrap());
+        app.set_unbounded().unwrap();
+        app
+    }
+
+    fn live_cells(app: &App) -> Vec<(i64, i64)> {
+        let Universe::Unbounded(plane) = &app.board else {
+            panic!("the board is unbounded");
+        };
+        let mut cells: Vec<_> = plane.live_cells().collect();
+        cells.sort_unstable();
+        cells
+    }
+
+    fn plane_json(app: &App) -> serde_json::Value {
+        serde_json::to_value(app.workspace().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn an_unbounded_board_round_trips_through_a_file() {
+        let directory = TestDirectory::new();
+        let path = directory.0.join("plane.golw");
+        let mut app = plane_app();
+        let far = 1i64 << 40;
+        for (x, y) in [(far, -far), (far + 1, -far), (far + 2, -far), (-far, far)] {
+            app.populate_board(x, y);
+        }
+        app.epoch = 812;
+        app.workspace().unwrap().write(&path).unwrap();
+
+        let mut restored = App::new(8, 8);
+        restored
+            .restore_workspace(Workspace::read(&path).unwrap())
+            .unwrap();
+        assert_eq!(live_cells(&restored), live_cells(&app));
+        assert_eq!(restored.epoch, 812);
+        assert_eq!(restored.rule_label(), "B36/S23");
+        assert_eq!(restored.finite_size(), (40, 24));
+        assert!(!restored.can_undo() && !restored.can_redo());
+
+        // And it carries on as the original does.
+        restored.increment_epoch();
+        app.increment_epoch();
+        assert_eq!(live_cells(&restored), live_cells(&app));
+
+        // The size in the file is the one it goes back to.
+        restored.set_boundary_mode(BoundaryMode::Wrap);
+        assert_eq!(restored.board.size(), Some((40, 24)));
+    }
+
+    #[test]
+    fn an_empty_unbounded_board_round_trips() {
+        let mut restored = App::new(8, 8);
+        restored
+            .restore_workspace(plane_app().workspace().unwrap())
+            .unwrap();
+        assert_eq!(restored.board.size(), None);
+        assert_eq!(restored.board.live_cells_count(), 0);
+        assert_eq!(restored.rule_label(), "B36/S23");
+    }
+
+    #[test]
+    fn only_an_unbounded_board_needs_the_newer_version() {
+        let finite = serde_json::to_value(App::new(16, 16).workspace().unwrap()).unwrap();
+        assert_eq!(finite["version"], 1);
+        assert!(finite.get("plane_origin").is_none());
+
+        let plane = plane_json(&plane_app());
+        assert_eq!(plane["version"], 2);
+        assert_eq!(plane["boundary"], "unbounded");
+        assert_eq!(plane["plane_origin"], serde_json::json!([0, 0]));
+    }
+
+    #[test]
+    fn invalid_unbounded_workspaces_never_replace_the_current_app() {
+        let mut app = plane_app();
+        app.populate_board(5, 6);
+        let original = plane_json(&app);
+        let rule = "rule = B36/S23";
+        let bad_fields = [
+            ("version", serde_json::json!(1)),
+            ("plane_origin", serde_json::Value::Null),
+            ("plane_origin", serde_json::json!([i64::MAX, 0])),
+            ("rule", serde_json::json!("B0/S23")),
+            ("rule", serde_json::json!("B3/S23")),
+            ("board_rle", serde_json::json!("x = 1, y = 1\no!")),
+            (
+                "board_rle",
+                serde_json::json!(format!("x = 9000000000, y = 1, {rule}\n9000000000o!")),
+            ),
+        ];
+        for (key, value) in bad_fields {
+            let mut broken = original.clone();
+            broken[key] = value.clone();
+            let workspace = serde_json::from_value(broken).unwrap();
+            assert!(app.restore_workspace(workspace).is_err(), "{key}: {value}");
+            assert_eq!(plane_json(&app), original);
+        }
+
+        // B0 in both places agrees, and still can't go on the plane.
+        let mut broken = original.clone();
+        broken["rule"] = serde_json::json!("B0/S23");
+        broken["board_rle"] = serde_json::json!("x = 1, y = 1, rule = B0/S23\no!");
+        let workspace = serde_json::from_value(broken).unwrap();
+        let error = app.restore_workspace(workspace).unwrap_err();
+        assert!(error.to_string().contains("B0"), "{error}");
     }
 
     #[test]
@@ -353,7 +518,7 @@ mod tests {
         let original = serde_json::to_value(app.workspace().unwrap()).unwrap();
         let bad_fields = [
             ("format", serde_json::json!("other")),
-            ("version", serde_json::json!(2)),
+            ("version", serde_json::json!(3)),
             ("width", serde_json::json!(0)),
             ("height", serde_json::json!(2049)),
             ("rule", serde_json::json!("B9/S23")),

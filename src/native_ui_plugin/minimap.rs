@@ -1,8 +1,15 @@
 //! A map of the whole board that appears while part of it is out of view, with
 //! a frame around what the canvas shows. Clicking or dragging moves the view.
+//! The unbounded board has no whole, so its map runs from the live cells to the
+//! view and appears while any of those cells are out of sight.
 //! Like the icons, the map is a white mask tinted by [`ThemedImage`].
 use super::*;
-use crate::shared::{CELL_SIZE, MainCamera};
+use crate::{
+    plane_view::{grid_rect, view_cells},
+    shared::{CELL_SIZE, MainCamera},
+    sparse_board::{BlockGrid, CellRect, SparseBoard},
+    universe::Universe,
+};
 use bevy::{asset::uuid::Uuid, image::ImageSampler};
 use std::marker::PhantomData;
 
@@ -15,6 +22,12 @@ const MARGIN: f32 = 12.0;
 const BORDER: f32 = 1.0;
 /// Twice the largest side, for Retina displays.
 const MAX_TEXELS: usize = 280;
+/// A quarter of those on the unbounded board, whose cells tend to be specks a
+/// long way apart, each of which has to show up as more than a pixel.
+const MAX_PLANE_TEXELS: usize = MAX_TEXELS / 4;
+/// The share of its width the unbounded board's map leaves around what it shows,
+/// which would otherwise sit on the map's border, frame and all.
+const PLANE_MAP_MARGIN: i64 = 16;
 /// A smaller frame could not be seen. It stays centred on the view.
 const MIN_FRAME: f32 = 5.0;
 /// Seconds between redraws. Sampling a large board is cheap but not free.
@@ -54,7 +67,7 @@ pub(super) fn spawn(parent: &mut ChildSpawnerCommands) {
             ThemedBackground(Token::Field),
             ThemedBorder(Token::Line),
             ThemedImage(Token::Accent),
-            controls::Tooltip("The whole board · click or drag to move the view".into()),
+            controls::Tooltip("A map of the board · click or drag to move the view".into()),
             Hovered::default(),
             accessibility::named_node(accesskit::Role::Image, "Board overview"),
         ))
@@ -121,6 +134,39 @@ fn coverage(board: &crate::board::Board, width: usize, height: usize) -> Vec<u8>
         .collect()
 }
 
+/// Inclusive bounds of live cells.
+type LiveBounds = ((i64, i64), (i64, i64));
+
+/// Bounds around both the live cells and the view, so the map can show either.
+fn plane_extent((min, max): LiveBounds, view: CellRect) -> LiveBounds {
+    let (left, bottom) = (min.0.min(view.left), min.1.min(view.bottom));
+    let right = max.0.max(view.left + view.width as i64 - 1);
+    let top = max.1.max(view.bottom + view.height as i64 - 1);
+    let margin = (right - left).max(top - bottom) / PLANE_MAP_MARGIN;
+    (
+        (left - margin, bottom - margin),
+        (right + margin, top + margin),
+    )
+}
+
+/// Whether some of the bounds lie outside the view.
+fn hides_live_cells((min, max): LiveBounds, view: CellRect) -> bool {
+    min.0 < view.left
+        || min.1 < view.bottom
+        || max.0 >= view.left + view.width as i64
+        || max.1 >= view.bottom + view.height as i64
+}
+
+/// Alpha for each block of the grid, top row first. Blocks here can be any number
+/// of chunks across, so they only say whether anything lives there.
+fn plane_coverage(plane: &SparseBoard, grid: BlockGrid) -> Vec<u8> {
+    let mut alpha = vec![0; grid.width * grid.height];
+    plane.for_each_live_block(grid, |col, row| {
+        alpha[(grid.height - 1 - row) * grid.width + col] = 255;
+    });
+    alpha
+}
+
 fn image(coverage: &[u8], width: usize, height: usize) -> Image {
     let data = coverage
         .iter()
@@ -152,13 +198,50 @@ pub(super) struct MapState<'w, 's> {
     cameras: Query<'w, 's, (&'static mut Transform, &'static Projection), With<MainCamera>>,
 }
 
+/// What the map last drew of the unbounded board.
+#[derive(Clone, Copy)]
+struct PlaneMap {
+    live: LiveBounds,
+    grid: BlockGrid,
+}
+
 /// Carried between frames.
 #[derive(Default)]
 pub(super) struct MapProgress {
     since_redraw: f32,
     /// The board size last drawn, so a new board redraws at once.
     drawn: Option<(usize, usize)>,
+    plane: Option<PlaneMap>,
     dragging: bool,
+}
+
+impl MapProgress {
+    /// Redraws the map of the unbounded board if it's time to. A drag keeps the
+    /// grid it started with, or the map would slide around under the pointer.
+    fn redraw_plane(
+        &mut self,
+        plane: &SparseBoard,
+        view: CellRect,
+        images: &mut Assets<Image>,
+    ) -> Option<PlaneMap> {
+        if self.plane.is_some() && self.since_redraw < REFRESH {
+            return self.plane;
+        }
+        self.since_redraw = 0.0;
+        let kept = self.plane.filter(|_| self.dragging).map(|map| map.grid);
+        self.plane = plane.live_bounds().map(|live| PlaneMap {
+            live,
+            grid: kept
+                .unwrap_or_else(|| BlockGrid::covering(plane_extent(live, view), MAX_PLANE_TEXELS)),
+        });
+        if let Some(PlaneMap { grid, .. }) = self.plane {
+            let alpha = plane_coverage(plane, grid);
+            images
+                .insert(handle().id(), image(&alpha, grid.width, grid.height))
+                .expect("the static minimap handle is valid");
+        }
+        self.plane
+    }
 }
 
 pub(super) fn sync(
@@ -174,15 +257,40 @@ pub(super) fn sync(
     else {
         return;
     };
-    let (cols, rows) = state.sim.app.board.size();
     let canvas = canvas_rect(window.size());
-    let board = board_rect(cols, rows);
     let centre = transform.translation.truncate();
     let view = Rect::from_center_size(centre, canvas.size() * ortho.scale);
     let scale = ortho.scale;
+    progress.since_redraw += state.time.delta_secs();
+
+    let (board, hidden) = match &state.sim.app.board {
+        Universe::Finite(cells) => {
+            progress.plane = None;
+            let (cols, rows) = cells.size();
+            let board = board_rect(cols, rows);
+            (board, !shows_whole_board(view, board))
+        }
+        Universe::Unbounded(plane) => {
+            progress.drawn = None;
+            let origin = state.sim.plane_origin;
+            let seen = view_cells(view, origin);
+            let Some(map) = progress.redraw_plane(plane, seen, &mut images) else {
+                area.0 = None;
+                progress.dragging = false;
+                for mut node in &mut maps {
+                    set_if_neq!(node.display, Display::None);
+                }
+                return;
+            };
+            (
+                grid_rect(map.grid, origin),
+                hides_live_cells(map.live, seen),
+            )
+        }
+    };
 
     // A drag outlives the map's reason to show, so a jump cannot strand it.
-    let shown = progress.dragging || !shows_whole_board(view, board);
+    let shown = progress.dragging || hidden;
     let size = map_size(board.size(), canvas.size());
     let rect = Rect::from_corners(
         canvas.max - Vec2::splat(MARGIN) - size,
@@ -230,12 +338,15 @@ pub(super) fn sync(
         set_if_neq!(node.height, px(frame_size.y));
     }
 
-    progress.since_redraw += state.time.delta_secs();
+    let Some(cells) = state.sim.app.board.finite() else {
+        return;
+    };
+    let (cols, rows) = cells.size();
     if progress.drawn != Some((cols, rows)) || progress.since_redraw >= REFRESH {
         progress.drawn = Some((cols, rows));
         progress.since_redraw = 0.0;
         let (width, height) = (cols.min(MAX_TEXELS), rows.min(MAX_TEXELS));
-        let alpha = coverage(&state.sim.app.board, width, height);
+        let alpha = coverage(cells, width, height);
         images
             .insert(handle().id(), image(&alpha, width, height))
             .expect("the static minimap handle is valid");
@@ -315,5 +426,249 @@ mod tests {
         // Board row 0 is the map's bottom row: one cell of 16, then four.
         assert_eq!(alpha[0], 0);
         assert!(alpha[2] > 0 && alpha[3] > alpha[2]);
+    }
+
+    fn cells_at(left: i64, bottom: i64, width: usize, height: usize) -> CellRect {
+        CellRect {
+            left,
+            bottom,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn the_plane_map_runs_from_the_live_cells_to_the_view() {
+        let view = cells_at(-10, -10, 20, 20);
+        // 210 wide, for a margin of 13 on every side.
+        assert_eq!(
+            plane_extent(((100, -50), (200, 0)), view),
+            ((-23, -63), (213, 22))
+        );
+        assert_eq!(
+            plane_extent(((-50, 0), (0, 100)), view),
+            ((-56, -16), (15, 106))
+        );
+    }
+
+    #[test]
+    fn the_plane_map_only_matters_with_live_cells_out_of_view() {
+        let view = cells_at(0, 0, 10, 10);
+        assert!(!hides_live_cells(((0, 0), (9, 9)), view));
+        for bounds in [
+            ((-1, 0), (9, 9)),
+            ((0, -1), (9, 9)),
+            ((0, 0), (10, 9)),
+            ((0, 0), (9, 10)),
+        ] {
+            assert!(hides_live_cells(bounds, view), "{bounds:?}");
+        }
+    }
+
+    #[test]
+    fn plane_blocks_are_drawn_top_row_first() {
+        let mut plane = SparseBoard::default();
+        plane.populate(0, 0);
+        plane.populate(1 << 40, 1 << 40);
+        let grid = BlockGrid::covering(((0, 0), (1 << 40, 1 << 40)), 4);
+        let alpha = plane_coverage(&plane, grid);
+        assert_eq!(alpha.iter().filter(|&&texel| texel != 0).count(), 2);
+        assert_ne!(alpha[(grid.height - 1) * grid.width], 0, "bottom left");
+        assert_ne!(alpha[grid.width - 1], 0, "top right");
+    }
+
+    mod system {
+        use super::*;
+        use bevy::ecs::system::SystemId;
+
+        struct Map {
+            world: World,
+            sync: SystemId,
+            camera: Entity,
+            map: Entity,
+        }
+
+        impl Map {
+            fn new(app: crate::app::App) -> Self {
+                let mut world = World::new();
+                world.insert_resource(Simulation::new(app));
+                world.init_resource::<Assets<Image>>();
+                world.init_resource::<Time>();
+                world.init_resource::<ButtonInput<MouseButton>>();
+                world.init_resource::<UiInputRegions>();
+                world.init_resource::<MinimapArea>();
+                world.spawn((Window::default(), PrimaryWindow));
+                let camera = world.spawn((Camera2d, MainCamera)).id();
+                let map = world.spawn((Minimap, Node::default())).id();
+                world.spawn((MinimapFrame, Node::default()));
+                // Registered rather than run once, to keep its progress between frames.
+                let sync = world.register_system(sync);
+                Self {
+                    world,
+                    sync,
+                    camera,
+                    map,
+                }
+            }
+
+            fn frame(&mut self) {
+                self.world
+                    .resource_mut::<Time>()
+                    .advance_by(std::time::Duration::from_secs_f32(REFRESH));
+                self.world.run_system(self.sync).unwrap();
+            }
+
+            fn shown(&self) -> bool {
+                self.world.get::<Node>(self.map).unwrap().display != Display::None
+                    && self.world.resource::<MinimapArea>().0.is_some()
+            }
+
+            fn texture_size(&self) -> UVec2 {
+                let images = self.world.resource::<Assets<Image>>();
+                images.get(handle().id()).unwrap().size()
+            }
+
+            fn sim(&mut self) -> Mut<'_, Simulation> {
+                self.world.resource_mut::<Simulation>()
+            }
+
+            /// Presses or holds the button at a share of the way across the map.
+            fn drag_to(&mut self, share: Vec2) {
+                let area = self.world.resource::<MinimapArea>().0.unwrap();
+                let point = area.min + area.size() * share;
+                let mut windows = self.world.query::<&mut Window>();
+                let mut window = windows.single_mut(&mut self.world).unwrap();
+                window.set_cursor_position(Some(point));
+                self.world
+                    .resource_mut::<ButtonInput<MouseButton>>()
+                    .press(MouseButton::Left);
+                self.frame();
+                // Pressed only for the frame it began on.
+                self.world
+                    .resource_mut::<ButtonInput<MouseButton>>()
+                    .clear_just_pressed(MouseButton::Left);
+            }
+
+            fn release(&mut self) {
+                self.world
+                    .resource_mut::<ButtonInput<MouseButton>>()
+                    .release(MouseButton::Left);
+                self.frame();
+            }
+
+            fn camera_x(&self) -> f32 {
+                self.world
+                    .get::<Transform>(self.camera)
+                    .unwrap()
+                    .translation
+                    .x
+            }
+        }
+
+        fn unbounded() -> crate::app::App {
+            let mut app = crate::app::App::new(16, 16);
+            app.set_unbounded().unwrap();
+            app
+        }
+
+        #[test]
+        fn an_empty_plane_has_no_map() {
+            let mut map = Map::new(unbounded());
+            map.frame();
+            assert!(!map.shown());
+        }
+
+        #[test]
+        fn the_map_comes_and_goes_with_cells_out_of_view() {
+            let mut map = Map::new(unbounded());
+            map.sim().app.populate_board(1, 1);
+            map.frame();
+            assert!(!map.shown());
+
+            map.sim().app.populate_board(1 << 20, 0);
+            map.frame();
+            assert!(map.shown());
+            let side = map.texture_size().max_element() as usize;
+            assert!(
+                (MAX_PLANE_TEXELS / 2..=MAX_PLANE_TEXELS).contains(&side),
+                "{side}"
+            );
+
+            map.sim().app.depopulate_board(1 << 20, 0);
+            map.frame();
+            assert!(!map.shown());
+        }
+
+        #[test]
+        fn a_drag_jumps_the_view_across_a_map_that_holds_still() {
+            let mut map = Map::new(unbounded());
+            let far = 1i64 << 30;
+            map.sim().app.populate_board(far, 0);
+            map.frame();
+            let start = map.camera_x();
+            map.drag_to(Vec2::new(0.5, 0.5));
+            let middle = map.camera_x();
+            assert!(middle > start + (far as f32) * CELL_SIZE / 4.0, "{middle}");
+
+            // Cells appearing elsewhere mid-drag don't redefine what the map shows.
+            map.sim().app.populate_board(-far * 8, 0);
+            map.drag_to(Vec2::new(0.5, 0.5));
+            assert_eq!(map.camera_x(), middle);
+
+            map.release();
+            map.frame();
+            assert!(map.shown());
+            map.drag_to(Vec2::new(0.5, 0.5));
+            assert!(map.camera_x() < middle, "the map takes in the new cells");
+        }
+
+        #[test]
+        fn returning_to_the_same_board_redraws_its_map_at_once() {
+            let mut map = Map::new(crate::app::App::new(16, 16));
+            let camera = map.camera;
+            let mut projection = map.world.get_mut::<Projection>(camera).unwrap();
+            if let Projection::Orthographic(ortho) = &mut *projection {
+                ortho.scale = 0.01;
+            }
+            map.frame();
+            assert_eq!(map.texture_size(), UVec2::splat(16));
+
+            map.sim().app.set_unbounded().unwrap();
+            map.sim().app.populate_board(1 << 20, 0);
+            map.frame();
+            assert_ne!(map.texture_size(), UVec2::splat(16));
+
+            // With no time for the usual refresh to come round.
+            map.sim()
+                .app
+                .set_boundary_mode(crate::board::BoundaryMode::Wrap);
+            let mut time = map.world.resource_mut::<Time>();
+            time.advance_by(std::time::Duration::ZERO);
+            map.world.run_system(map.sync).unwrap();
+            assert_eq!(map.texture_size(), UVec2::splat(16));
+        }
+
+        #[test]
+        fn the_map_keeps_following_the_board_it_is_on() {
+            let mut map = Map::new(unbounded());
+            map.sim().app.populate_board(1 << 20, 0);
+            map.frame();
+            assert!(map.shown());
+            let plane_map = map.texture_size();
+
+            // Zoomed in so that the board needs a map too, of its own size.
+            let camera = map.camera;
+            let mut projection = map.world.get_mut::<Projection>(camera).unwrap();
+            if let Projection::Orthographic(ortho) = &mut *projection {
+                ortho.scale = 0.01;
+            }
+            map.sim()
+                .app
+                .set_boundary_mode(crate::board::BoundaryMode::Wrap);
+            map.frame();
+            assert!(map.shown());
+            assert_eq!(map.texture_size(), UVec2::splat(16));
+            assert_ne!(map.texture_size(), plane_map);
+        }
     }
 }

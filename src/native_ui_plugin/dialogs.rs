@@ -9,6 +9,7 @@ use crate::{
         BOARD_SIZE_MAX, BOARD_SIZE_MIN, BOARD_SIZE_PRESETS, BoardSettings, DiagnosticsOverlay,
         HelpSection, Theme, command_key, help_sections,
     },
+    universe::Universe,
 };
 use bevy::{
     clipboard::Clipboard,
@@ -119,6 +120,8 @@ pub(super) enum Field {
 pub(super) enum DialogReadout {
     Feedback,
     Diagnostics,
+    /// What the Board section's size is the size of.
+    BoardNote,
 }
 
 pub(super) struct NativeDialogsPlugin;
@@ -220,7 +223,7 @@ fn dialog_action(
         }
         Action::Settings | Action::EditRule => {
             state.drafts.rule_first = *action == Action::EditRule;
-            let (width, height) = state.sim.app.board.size();
+            let (width, height) = state.sim.app.finite_size();
             state.drafts.width = width.to_string();
             state.drafts.height = height.to_string();
             state.drafts.rule = state.sim.app.rule_label();
@@ -292,8 +295,13 @@ fn dialog_action(
                 let was_filling = std::mem::take(&mut state.board.fill_canvas);
                 state.board.set(width, height);
                 state.drafts.error = false;
+                let what = if state.sim.app.board.finite().is_some() {
+                    "Board size"
+                } else {
+                    "Size to return to"
+                };
                 state.drafts.feedback = format!(
-                    "Board size set to {width} × {height}. Your choice is saved automatically."
+                    "{what} set to {width} × {height}. Your choice is saved automatically."
                 );
                 if was_filling {
                     state.drafts.feedback.push_str(" Fill canvas is now off.");
@@ -339,7 +347,8 @@ fn dialog_action(
                         .unwrap_or_else(|| "a fresh seed each time".into());
                     state.drafts.feedback = if *action == Action::RandomizeNow {
                         format!(
-                            "Board randomized at {}% with {seed}. U to undo.",
+                            "{} randomized at {}% with {seed}. U to undo.",
+                            crate::shared::randomized_what(&state.sim.app),
                             settings.density_percent()
                         )
                     } else {
@@ -592,7 +601,9 @@ fn confirm_open(state: &mut DialogState) {
         return;
     };
     state.sim.app.restore_decoded(decoded);
-    let (width, height) = state.sim.app.board.size();
+    // Its cells may be anywhere, and a new size won't bring a plane into view.
+    state.sim.fit_view = state.sim.app.board.finite().is_none();
+    let (width, height) = state.sim.app.finite_size();
     state.board.set(width, height);
     state.board.fill_canvas = false;
     state.sim.accumulator = std::time::Duration::ZERO;
@@ -621,7 +632,11 @@ fn apply_rule(state: &mut DialogState, rule: Rule, name: Option<&str>) {
         Some(name) => format!("{name} ({rule})"),
         None => rule.to_string(),
     };
-    state.drafts.error = false;
+    state.drafts.error = !state.sim.app.board.allows_rule(rule);
+    if state.drafts.error {
+        state.drafts.feedback = format!("{described} would fill the unbounded board.");
+        return;
+    }
     state.drafts.feedback = if state.sim.app.set_rule(rule) {
         format!("Rule set to {described}. U undoes the change.")
     } else {
@@ -630,10 +645,13 @@ fn apply_rule(state: &mut DialogState, rule: Rule, name: Option<&str>) {
 }
 
 fn export_rle(state: &mut DialogState) {
-    let Some(export) = state.sim.app.board_to_rle() else {
-        state.drafts.error = true;
-        state.drafts.feedback = "The board is empty, so there is nothing to export.".into();
-        return;
+    let export = match state.sim.app.board_to_rle() {
+        Ok(export) => export,
+        Err(error) => {
+            state.drafts.error = true;
+            state.drafts.feedback = error.to_string();
+            return;
+        }
     };
     let copied = match state.clipboard.as_mut() {
         Some(clipboard) => clipboard
@@ -722,9 +740,17 @@ pub(super) fn update_dialogs(
                 state.drafts.feedback.clone()
             }
             DialogReadout::Diagnostics => {
-                let (width, height) = state.sim.app.board.size();
+                let size = match &state.sim.app.board {
+                    Universe::Finite(board) => {
+                        let (width, height) = board.size();
+                        format!("{width} x {height}")
+                    }
+                    Universe::Unbounded(plane) => {
+                        format!("unbounded, {} chunks", plane.chunk_count())
+                    }
+                };
                 format!(
-                    "Board                 {width} x {height}\nGeneration            {}\nLiving cells          {}\nRule                  {}\n\nAverage step          {:.3} ms\nTick interval         {}\nMeasured rate         {:.1} gen/s\nSamples               {}\nDense fallback        {}%\n\nPlayback continues while this view is open.",
+                    "Board                 {size}\nGeneration            {}\nLiving cells          {}\nRule                  {}\n\nAverage step          {:.3} ms\nTick interval         {}\nMeasured rate         {:.1} gen/s\nSamples               {}\nDense fallback        {}%\n\nPlayback continues while this view is open.",
                     state.sim.app.epoch,
                     state.sim.app.board.live_cells_count(),
                     state.sim.app.rule_label(),
@@ -739,6 +765,12 @@ pub(super) fn update_dialogs(
                     frontier_dense_threshold_percent_for_diagnostics()
                 )
             }
+            DialogReadout::BoardNote => if state.sim.app.board.finite().is_some() {
+                "Resizing keeps the cells that fit and clears undo history."
+            } else {
+                "The unbounded board has no size. This is the one it returns to when you choose Wrap or Fixed."
+            }
+            .to_owned(),
         };
         if text.0 != value {
             text.0 = value;
@@ -791,7 +823,9 @@ fn field(
 }
 
 /// A section title with a line saying what the section changes.
-fn heading(parent: &mut ChildSpawnerCommands, title: &str, description: &str) {
+/// Returns the description, which something else may want to keep up to date.
+fn heading(parent: &mut ChildSpawnerCommands, title: &str, description: &str) -> Entity {
+    let mut text = Entity::PLACEHOLDER;
     parent
         .spawn(Node {
             flex_direction: FlexDirection::Column,
@@ -802,8 +836,9 @@ fn heading(parent: &mut ChildSpawnerCommands, title: &str, description: &str) {
         })
         .with_children(|p| {
             p.spawn(label(title, 19.0, Token::Ink));
-            p.spawn(label(description, 14.0, Token::Muted));
+            text = p.spawn(label(description, 14.0, Token::Muted)).id();
         });
+    text
 }
 
 /// A single-line field: 10 px padding, a 1 px border, and 16 px text at
@@ -1426,7 +1461,8 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         p.spawn(row()).with_children(|p| { button(p, "Save workspace…", Action::SaveWorkspace); });
                     }
                     DialogKind::Settings => {
-                        heading(p, "Board", "Resizing keeps the cells that fit and clears undo history.");
+                        let note = heading(p, "Board", "");
+                        p.commands().entity(note).insert(DialogReadout::BoardNote);
                         switch(p, "Fill canvas", "Size the board to the canvas, and follow the window and palette", Action::FillCanvas);
                         p.spawn(row()).with_children(|p| {
                             for (size, _) in BOARD_SIZE_PRESETS { button(p, &format!("{size}²"), Action::BoardPreset(size)); }
@@ -1442,7 +1478,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                             for (index, (name, _)) in RULE_PRESETS.iter().enumerate() { button(p, name, Action::RulePreset(index)); }
                         });
                         apply_row(p, Action::ApplyRule, |p| inline_field(p, "Rulestring", &drafts.rule, Field::Rule, drafts.rule_first));
-                        setting(p, "Edges", |p| segmented(p, &[("Wrap", Action::Edges(BoundaryMode::Wrap)), ("Fixed", Action::Edges(BoundaryMode::Fixed))]));
+                        setting(p, "Edges", |p| segmented(p, &[("Wrap", Action::Edges(BoundaryMode::Wrap)), ("Fixed", Action::Edges(BoundaryMode::Fixed)), ("Unbounded", Action::Unbounded)]));
                         switch(p, "Pause when settled", "Stop once the board stops changing or starts repeating", Action::PauseWhenSettled);
                         p.spawn(row()).with_children(|p| { button(p, "Reset generation counter", Action::ResetEpoch); });
 
@@ -1720,6 +1756,91 @@ mod tests {
         assert!(world.resource::<Drafts>().feedback.contains("clipboard"));
     }
 
+    #[test]
+    fn export_reaches_the_clipboard_from_an_unbounded_board() {
+        let mut world = test_world(DialogKind::Export);
+        let app = &mut world.resource_mut::<Simulation>().into_inner().app;
+        app.set_unbounded().unwrap();
+        let export = world.spawn(Action::ExportRle).id();
+        world.trigger(Activate { entity: export });
+        assert!(world.resource::<Drafts>().feedback.contains("empty"));
+
+        world.resource_mut::<Simulation>().app.populate_board(-3, 3);
+        world.trigger(Activate { entity: export });
+        assert!(world.resource::<Drafts>().feedback.contains("clipboard"));
+    }
+
+    #[test]
+    fn the_board_section_says_what_its_size_means_on_each_board() {
+        let mut world = test_world(DialogKind::Settings);
+        world.init_resource::<Theme>();
+        let note = world
+            .spawn((
+                DialogReadout::BoardNote,
+                Text::default(),
+                ThemedText(Token::Muted),
+            ))
+            .id();
+        let text = |world: &mut World| {
+            world.run_system_once(update_dialogs).unwrap();
+            world.get::<Text>(note).unwrap().0.clone()
+        };
+        assert!(text(&mut world).contains("clears undo history"));
+        let app = &mut world.resource_mut::<Simulation>().into_inner().app;
+        app.set_unbounded().unwrap();
+        assert!(text(&mut world).contains("has no size"));
+    }
+
+    #[test]
+    fn a_size_set_on_the_plane_is_the_size_to_return_to() {
+        let mut world = test_world(DialogKind::Settings);
+        let app = &mut world.resource_mut::<Simulation>().into_inner().app;
+        app.set_unbounded().unwrap();
+        let mut drafts = world.resource_mut::<Drafts>();
+        drafts.width = "64".into();
+        drafts.height = "48".into();
+        let resize = world.spawn(Action::ResizeBoard).id();
+        world.trigger(Activate { entity: resize });
+        let feedback = &world.resource::<Drafts>().feedback;
+        assert!(
+            feedback.starts_with("Size to return to set to 64 × 48"),
+            "{feedback}"
+        );
+    }
+
+    #[test]
+    fn randomizing_the_plane_says_how_much_it_filled() {
+        let mut world = test_world(DialogKind::Settings);
+        let app = &mut world.resource_mut::<Simulation>().into_inner().app;
+        app.set_unbounded().unwrap();
+        let randomize = world.spawn(Action::RandomizeNow).id();
+        world.trigger(Activate { entity: randomize });
+        let feedback = &world.resource::<Drafts>().feedback;
+        assert!(
+            feedback.starts_with("32 × 32 cells randomized at 25%"),
+            "{feedback}"
+        );
+    }
+
+    #[test]
+    fn opening_an_unbounded_workspace_frames_its_cells_and_a_finite_one_does_not() {
+        let open = |world: &mut World, workspace: Workspace| {
+            let decoded = workspace.decode().unwrap();
+            world.resource_mut::<Drafts>().pending_open = Some(("plane.golw".into(), decoded));
+            let replace = world.spawn(Action::ConfirmOpenWorkspace).id();
+            world.trigger(Activate { entity: replace });
+        };
+        let mut world = test_world(DialogKind::ConfirmOpen);
+        let mut app = GolApp::new(32, 32);
+        open(&mut world, app.workspace().unwrap());
+        assert!(!world.resource::<Simulation>().fit_view);
+
+        app.set_unbounded().unwrap();
+        open(&mut world, app.workspace().unwrap());
+        assert!(world.resource::<Simulation>().fit_view);
+        assert_eq!(world.resource::<Simulation>().app.board.size(), None);
+    }
+
     /// Completes a file dialog as if the user had chosen `path`.
     fn choose(world: &mut World, request: FileRequest, path: Option<&Path>) {
         let path = path.map(Path::to_path_buf);
@@ -1772,7 +1893,10 @@ mod tests {
             world.resource::<NativeUi>().dialog,
             Some(DialogKind::ConfirmOpen)
         );
-        assert_eq!(world.resource::<Simulation>().app.board.size(), (8, 8));
+        assert_eq!(
+            world.resource::<Simulation>().app.board.size(),
+            Some((8, 8))
+        );
         let cancel = world.spawn(Action::CancelOpenWorkspace).id();
         world.trigger(Activate { entity: cancel });
         assert_eq!(
@@ -1780,7 +1904,10 @@ mod tests {
             Some(DialogKind::Import)
         );
         assert!(world.resource::<Drafts>().pending_open.is_none());
-        assert_eq!(world.resource::<Simulation>().app.board.size(), (8, 8));
+        assert_eq!(
+            world.resource::<Simulation>().app.board.size(),
+            Some((8, 8))
+        );
         assert!(world.resource::<Simulation>().app.is_running());
 
         // Closing the prompt (Escape or Close) also drops the pending file.
@@ -1790,7 +1917,10 @@ mod tests {
             entity: close_button,
         });
         assert!(world.resource::<Drafts>().pending_open.is_none());
-        assert_eq!(world.resource::<Simulation>().app.board.size(), (8, 8));
+        assert_eq!(
+            world.resource::<Simulation>().app.board.size(),
+            Some((8, 8))
+        );
 
         // Confirming replaces the workspace and resets playback state.
         world.resource_mut::<NativeUi>().dialog = Some(DialogKind::Import);

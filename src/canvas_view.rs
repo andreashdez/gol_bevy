@@ -2,25 +2,74 @@
 use crate::{
     native_ui_plugin::canvas_rect,
     shared::{
-        BoardSettings, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, MainCamera, UpdateSet,
-        board_size_for_canvas, camera_scale_to_fit_board,
+        BoardSettings, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CELL_SIZE, MainCamera, Simulation,
+        UpdateSet, board_size_for_canvas, camera_scale_to_fit_board, camera_scale_to_fit_pattern,
     },
+    universe::Universe,
 };
 use bevy::{camera::Viewport, prelude::*, window::PrimaryWindow};
+
+/// How far the camera may drift from the world origin before the plane's origin
+/// moves to meet it. World positions are good to a hundredth of a cell out here.
+const PLANE_DRIFT_MAX: f32 = (1 << 16) as f32;
 
 #[derive(Resource, Default)]
 pub struct CanvasView {
     pub fit_scale: f32,
     board: Option<(usize, usize)>,
+    /// The canvas size in logical points.
+    canvas: Vec2,
+    /// Whether the view is on the plane, to notice leaving it.
+    on_plane: bool,
 }
 
 impl CanvasView {
-    /// Centres the board and zooms so all of it fits the canvas.
-    pub fn fit_camera(&self, transform: &mut Transform, projection: &mut Projection) {
-        transform.translation.x = 0.0;
-        transform.translation.y = 0.0;
+    /// Whether the plane's live cells reach into view, or there are none to miss.
+    fn sees_live_cells(&self, sim: &Simulation, transform: &Transform, scale: f32) -> bool {
+        let Universe::Unbounded(plane) = &sim.app.board else {
+            return true;
+        };
+        let Some((min, max)) = plane.live_bounds() else {
+            return true;
+        };
+        let map = sim.cell_map();
+        let seen = Rect::from_center_size(transform.translation.truncate(), self.canvas * scale);
+        map.cell_to_world(min.0, min.1)
+            .truncate()
+            .cmple(seen.max)
+            .all()
+            && map
+                .cell_to_world(max.0, max.1)
+                .truncate()
+                .cmpge(seen.min)
+                .all()
+    }
+
+    /// Centres the board and zooms so all of it fits the canvas. On the plane
+    /// that means the live cells, or the origin's neighbourhood if there are none.
+    pub fn fit_camera(
+        &self,
+        sim: &mut Simulation,
+        transform: &mut Transform,
+        projection: &mut Projection,
+    ) {
+        let bounds = match &sim.app.board {
+            Universe::Finite(_) => None,
+            Universe::Unbounded(plane) => plane.live_bounds(),
+        };
+        let mut scale = self.fit_scale;
+        let mut centre = Vec2::ZERO;
+        if let Some((min, max)) = bounds {
+            let (width, height) = (max.0 - min.0 + 1, max.1 - min.1 + 1);
+            sim.plane_origin = (min.0 + width / 2, min.1 + height / 2);
+            // An odd width has its middle halfway across the origin's cell.
+            centre = Vec2::new((width % 2) as f32, (height % 2) as f32) * CELL_SIZE / 2.0;
+            scale = camera_scale_to_fit_pattern(self.canvas, width as f32, height as f32);
+        }
+        transform.translation.x = centre.x;
+        transform.translation.y = centre.y;
         if let Projection::Orthographic(ortho) = projection {
-            ortho.scale = self.fit_scale;
+            ortho.scale = scale;
         }
     }
 }
@@ -30,9 +79,12 @@ impl Plugin for CanvasViewPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CanvasView>().add_systems(
             Update,
-            update_viewport
-                .before(UpdateSet::Camera)
-                .after(crate::native_ui_plugin::NativeLayout),
+            (
+                update_viewport
+                    .before(UpdateSet::Camera)
+                    .after(crate::native_ui_plugin::NativeLayout),
+                follow_plane.in_set(UpdateSet::Resize),
+            ),
         );
     }
 }
@@ -59,6 +111,7 @@ fn update_viewport(
     mut settings: ResMut<BoardSettings>,
     mut view: ResMut<CanvasView>,
     mut cameras: Query<(&mut Camera, &mut Projection, &mut Transform), With<MainCamera>>,
+    sim: Option<Res<Simulation>>,
 ) {
     let Ok(window) = windows.single() else {
         return;
@@ -92,9 +145,15 @@ fn update_viewport(
             settings.set(cols, rows);
         }
     }
+    view.canvas = size;
     let board = (settings.cols, settings.rows);
     let fit = camera_scale_to_fit_board(size, board.0, board.1);
-    if let Projection::Orthographic(ortho) = &mut *projection {
+    // The plane's view owes nothing to the size of the board it might return to.
+    // Unless it's the first view there is, as when a run starts out on the plane.
+    let unbounded = sim.is_some_and(|sim| sim.app.board.finite().is_none());
+    if let Projection::Orthographic(ortho) = &mut *projection
+        && (!unbounded || view.board.is_none())
+    {
         if view.board != Some(board) {
             transform.translation.x = 0.0;
             transform.translation.y = 0.0;
@@ -108,6 +167,47 @@ fn update_viewport(
     }
     view.fit_scale = fit;
     view.board = Some(board);
+}
+
+/// Keeps the view steady across the plane: the origin moves to meet a camera that
+/// has drifted, and a finite board gets back a view of itself.
+fn follow_plane(
+    mut sim: ResMut<Simulation>,
+    mut view: ResMut<CanvasView>,
+    mut cameras: Query<(&mut Transform, &mut GlobalTransform, &mut Projection), With<MainCamera>>,
+) {
+    let Ok((mut transform, mut global, mut projection)) = cameras.single_mut() else {
+        return;
+    };
+    let unbounded = sim.app.board.finite().is_none();
+    if view.on_plane && !unbounded {
+        view.fit_camera(&mut sim, &mut transform, &mut projection);
+        sim.plane_origin = (0, 0);
+    }
+    if std::mem::take(&mut sim.fit_view) {
+        view.fit_camera(&mut sim, &mut transform, &mut projection);
+    }
+    // Undo can return to a plane whose cells are nowhere near this view.
+    if !view.on_plane
+        && unbounded
+        && let Projection::Orthographic(ortho) = &*projection
+        && !view.sees_live_cells(&sim, &transform, ortho.scale)
+    {
+        view.fit_camera(&mut sim, &mut transform, &mut projection);
+    }
+    view.on_plane = unbounded;
+
+    let drift = transform.translation.truncate();
+    if !unbounded || drift.abs().max_element() < PLANE_DRIFT_MAX {
+        return;
+    }
+    let cells = (drift / CELL_SIZE).round();
+    sim.plane_origin.0 += cells.x as i64;
+    sim.plane_origin.1 += cells.y as i64;
+    transform.translation -= (cells * CELL_SIZE).extend(0.0);
+    // Pointer mapping this frame uses this rather than `transform`, and has to
+    // agree with the origin that just moved.
+    *global = GlobalTransform::from(*transform);
 }
 
 /// Bevy converts points outside a viewport too; board interactions must not.
@@ -130,6 +230,219 @@ mod tests {
         camera::{CameraProjection, ComputedCameraValues, RenderTargetInfo},
         ecs::system::RunSystemOnce,
     };
+
+    fn plane_world(app: crate::app::App) -> (World, Entity) {
+        let mut world = World::new();
+        world.insert_resource(Simulation::new(app));
+        world.insert_resource(CanvasView {
+            fit_scale: 3.0,
+            board: Some((16, 16)),
+            canvas: Vec2::new(1000.0, 500.0),
+            on_plane: false,
+        });
+        let camera = world.spawn((Camera2d, MainCamera)).id();
+        (world, camera)
+    }
+
+    fn unbounded_app() -> crate::app::App {
+        let mut app = crate::app::App::new(16, 16);
+        app.set_unbounded().unwrap();
+        app
+    }
+
+    fn fit(world: &mut World) {
+        world
+            .run_system_once(
+                |mut sim: ResMut<Simulation>,
+                 view: Res<CanvasView>,
+                 mut cameras: Query<(&mut Transform, &mut Projection)>| {
+                    let (mut transform, mut projection) = cameras.single_mut().unwrap();
+                    view.fit_camera(&mut sim, &mut transform, &mut projection);
+                },
+            )
+            .unwrap();
+    }
+
+    fn scale_of(world: &World, camera: Entity) -> f32 {
+        match world.get::<Projection>(camera).unwrap() {
+            Projection::Orthographic(ortho) => ortho.scale,
+            _ => panic!("the camera is orthographic"),
+        }
+    }
+
+    #[test]
+    fn a_camera_far_from_the_world_origin_brings_the_plane_origin_with_it() {
+        let (mut world, camera) = plane_world(unbounded_app());
+        world.resource_mut::<Simulation>().plane_origin = (5, -5);
+        let start = Vec3::new(120_000.0, -240_006.0, 0.0);
+        world.get_mut::<Transform>(camera).unwrap().translation = start;
+        let before = world
+            .resource::<Simulation>()
+            .cell_map()
+            .world_to_cell(start.truncate());
+        world.run_system_once(follow_plane).unwrap();
+
+        let moved = world.get::<Transform>(camera).unwrap().translation;
+        assert!(moved.abs().max_element() < CELL_SIZE, "{moved}");
+        assert_eq!(
+            world.get::<GlobalTransform>(camera).unwrap().translation(),
+            moved
+        );
+        let sim = world.resource::<Simulation>();
+        assert_eq!(sim.plane_origin, (10_005, -20_006));
+        // The cell at the middle of the view is the same one as before.
+        assert_eq!(sim.cell_map().world_to_cell(moved.truncate()), before);
+    }
+
+    #[test]
+    fn a_camera_near_the_world_origin_leaves_the_plane_origin_alone() {
+        let (mut world, camera) = plane_world(unbounded_app());
+        let start = Vec3::new(PLANE_DRIFT_MAX - 1.0, 0.0, 0.0);
+        world.get_mut::<Transform>(camera).unwrap().translation = start;
+        world.run_system_once(follow_plane).unwrap();
+        assert_eq!(world.get::<Transform>(camera).unwrap().translation, start);
+        assert_eq!(world.resource::<Simulation>().plane_origin, (0, 0));
+    }
+
+    #[test]
+    fn a_camera_stays_put_on_a_finite_board() {
+        let (mut world, camera) = plane_world(crate::app::App::new(16, 16));
+        let start = Vec3::new(2.0 * PLANE_DRIFT_MAX, 0.0, 0.0);
+        world.get_mut::<Transform>(camera).unwrap().translation = start;
+        world.run_system_once(follow_plane).unwrap();
+        assert_eq!(world.get::<Transform>(camera).unwrap().translation, start);
+    }
+
+    #[test]
+    fn leaving_the_plane_shows_the_board_from_the_world_origin_again() {
+        let (mut world, camera) = plane_world(unbounded_app());
+        world.run_system_once(follow_plane).unwrap();
+        world.resource_mut::<Simulation>().plane_origin = (900, 900);
+        world.get_mut::<Transform>(camera).unwrap().translation = Vec3::splat(50.0).with_z(0.0);
+
+        let mut sim = world.resource_mut::<Simulation>();
+        sim.app.set_boundary_mode(crate::board::BoundaryMode::Wrap);
+        world.run_system_once(follow_plane).unwrap();
+
+        assert_eq!(world.resource::<Simulation>().plane_origin, (0, 0));
+        let at = world.get::<Transform>(camera).unwrap().translation;
+        assert_eq!(at.truncate(), Vec2::ZERO);
+        assert_eq!(scale_of(&world, camera), 3.0);
+    }
+
+    #[test]
+    fn arriving_on_a_plane_with_nothing_in_view_finds_the_cells() {
+        let mut app = unbounded_app();
+        app.populate_board(1 << 40, 1 << 40);
+        app.set_boundary_mode(crate::board::BoundaryMode::Wrap);
+        assert!(app.undo());
+        let (mut world, _) = plane_world(app);
+        world.run_system_once(follow_plane).unwrap();
+
+        let sim = world.resource::<Simulation>();
+        let cell = (1 << 40, 1 << 40);
+        assert_eq!(sim.plane_origin, cell);
+    }
+
+    #[test]
+    fn arriving_on_a_plane_with_cells_in_view_leaves_the_view_alone() {
+        let mut app = unbounded_app();
+        app.populate_board(3, 3);
+        let (mut world, camera) = plane_world(app);
+        world.get_mut::<Transform>(camera).unwrap().translation.x = 10.0;
+        world.run_system_once(follow_plane).unwrap();
+
+        assert_eq!(world.resource::<Simulation>().plane_origin, (0, 0));
+        assert_eq!(world.get::<Transform>(camera).unwrap().translation.x, 10.0);
+    }
+
+    #[test]
+    fn fitting_the_plane_frames_the_live_cells_however_far_away_they_are() {
+        let mut app = unbounded_app();
+        let far = 1 << 40;
+        app.populate_board(far, far);
+        app.populate_board(far + 4999, far + 99);
+        let (mut world, camera) = plane_world(app);
+        fit(&mut world);
+
+        let sim = world.resource::<Simulation>();
+        assert_eq!(sim.plane_origin, (far + 2500, far + 50));
+        let map = sim.cell_map();
+        let left = map.cell_to_world(far, far).x - CELL_SIZE / 2.0;
+        let right = map.cell_to_world(far + 4999, far).x + CELL_SIZE / 2.0;
+        let x = world.get::<Transform>(camera).unwrap().translation.x;
+        assert!(
+            ((left + right) / 2.0 - x).abs() < 0.01,
+            "{left} {right} {x}"
+        );
+        // Wider than tall, so the width sets the scale.
+        let scale = scale_of(&world, camera);
+        assert!(scale * 1000.0 >= right - left, "{scale}");
+        assert!(scale * 1000.0 < (right - left) * 1.1, "{scale}");
+    }
+
+    #[test]
+    fn fitting_a_small_pattern_stops_at_full_size() {
+        let mut app = unbounded_app();
+        app.populate_board(-3, 2);
+        let (mut world, camera) = plane_world(app);
+        fit(&mut world);
+        assert_eq!(scale_of(&world, camera), 1.0);
+    }
+
+    #[test]
+    fn fitting_an_empty_plane_returns_to_the_origin() {
+        let (mut world, camera) = plane_world(unbounded_app());
+        world.get_mut::<Transform>(camera).unwrap().translation.x = 900.0;
+        fit(&mut world);
+        assert_eq!(world.get::<Transform>(camera).unwrap().translation.x, 0.0);
+        assert_eq!(scale_of(&world, camera), 3.0);
+    }
+
+    #[test]
+    fn asking_for_a_fit_frames_the_cells_of_a_plane_already_on_show() {
+        let mut app = unbounded_app();
+        app.populate_board(1 << 40, 7);
+        let (mut world, _) = plane_world(app);
+        world.run_system_once(follow_plane).unwrap();
+        world.resource_mut::<Simulation>().plane_origin = (0, 0);
+        world.run_system_once(follow_plane).unwrap();
+        assert_eq!(world.resource::<Simulation>().plane_origin, (0, 0));
+
+        world.resource_mut::<Simulation>().fit_view = true;
+        world.run_system_once(follow_plane).unwrap();
+        let sim = world.resource::<Simulation>();
+        assert_eq!(sim.plane_origin, (1 << 40, 7));
+        assert!(!sim.fit_view);
+    }
+
+    #[test]
+    fn a_run_that_starts_on_the_plane_starts_at_the_fitted_zoom_and_keeps_its_own() {
+        let mut world = World::new();
+        world.insert_resource(BoardSettings {
+            cols: 128,
+            rows: 128,
+            fill_canvas: false,
+        });
+        world.init_resource::<CanvasView>();
+        world.insert_resource(Simulation::new(unbounded_app()));
+        world.spawn((Window::default(), PrimaryWindow));
+        let camera = world.spawn((Camera2d, MainCamera)).id();
+        world.run_system_once(update_viewport).unwrap();
+        let fitted = world.resource::<CanvasView>().fit_scale;
+        assert_eq!(scale_of(&world, camera), fitted);
+
+        // After that, the size it would return to is no reason to touch the view.
+        if let Projection::Orthographic(ortho) = &mut *world.get_mut::<Projection>(camera).unwrap()
+        {
+            ortho.scale = 7.0;
+        }
+        world.get_mut::<Transform>(camera).unwrap().translation.x = 50.0;
+        world.resource_mut::<BoardSettings>().cols = 256;
+        world.run_system_once(update_viewport).unwrap();
+        assert_eq!(scale_of(&world, camera), 7.0);
+        assert_eq!(world.get::<Transform>(camera).unwrap().translation.x, 50.0);
+    }
 
     #[test]
     fn the_largest_board_fits_at_the_minimum_window_size() {
