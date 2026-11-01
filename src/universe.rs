@@ -12,10 +12,16 @@ pub enum Universe {
     Unbounded(SparseBoard),
 }
 
-/// The cells of an earlier state, for restoring to the kind of board that took it.
+/// The cells of an earlier state, and what it takes to bring back the kind of
+/// board that held them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CellSnapshot {
-    Finite(Vec<u8>),
+    Finite {
+        cells: Vec<u8>,
+        cols: usize,
+        rows: usize,
+        mode: BoundaryMode,
+    },
     Unbounded(SparseSnapshot),
 }
 
@@ -23,9 +29,13 @@ impl CellSnapshot {
     /// Memory this holds, for keeping undo history within its budget.
     pub fn bytes(&self) -> usize {
         match self {
-            Self::Finite(cells) => cells.len(),
+            Self::Finite { cells, .. } => cells.len(),
             Self::Unbounded(snapshot) => snapshot.bytes(),
         }
+    }
+
+    pub fn is_unbounded(&self) -> bool {
+        matches!(self, Self::Unbounded(_))
     }
 }
 
@@ -113,6 +123,12 @@ impl Universe {
         }
     }
 
+    /// Whether a move onto the plane would be accepted, the rule being all that
+    /// can stand in its way.
+    pub fn allows_unbounded(&self) -> bool {
+        !self.rule().births_from_nothing()
+    }
+
     /// Returns whether the rule actually changed, which it won't if refused by
     /// [`allows_rule`](Self::allows_rule).
     pub fn set_rule(&mut self, rule: Rule) -> bool {
@@ -161,16 +177,46 @@ impl Universe {
 
     pub fn snapshot_cells(&self) -> CellSnapshot {
         match self {
-            Self::Finite(board) => CellSnapshot::Finite(board.snapshot_cells()),
+            Self::Finite(board) => {
+                let (cols, rows) = board.size();
+                CellSnapshot::Finite {
+                    cells: board.snapshot_cells(),
+                    cols,
+                    rows,
+                    mode: board.boundary_mode(),
+                }
+            }
             Self::Unbounded(plane) => CellSnapshot::Unbounded(plane.snapshot()),
         }
     }
 
+    /// Brings back the cells of `snapshot`, and the kind of board that held them
+    /// if this is the other kind. The rule is the caller's to restore.
     pub fn restore_cells(&mut self, snapshot: CellSnapshot) {
-        match (self, snapshot) {
-            (Self::Finite(board), CellSnapshot::Finite(cells)) => board.restore_cells(cells),
+        match (&mut *self, snapshot) {
+            (Self::Finite(board), CellSnapshot::Finite { cells, .. }) => {
+                board.restore_cells(cells);
+            }
             (Self::Unbounded(plane), CellSnapshot::Unbounded(chunks)) => plane.restore(chunks),
-            _ => panic!("a snapshot only fits the kind of board that took it"),
+            (
+                Self::Unbounded(_),
+                CellSnapshot::Finite {
+                    cells,
+                    cols,
+                    rows,
+                    mode,
+                },
+            ) => {
+                let mut board = Board::new(cols, rows);
+                board.set_boundary_mode(mode);
+                board.restore_cells(cells);
+                *self = Self::Finite(board);
+            }
+            (Self::Finite(_), CellSnapshot::Unbounded(chunks)) => {
+                let mut plane = SparseBoard::default();
+                plane.restore(chunks);
+                *self = Self::Unbounded(plane);
+            }
         }
     }
 
@@ -230,7 +276,7 @@ pub fn board_from_plane(
 
 #[cfg(test)]
 mod tests {
-    use super::{CellSnapshot, Universe, board_from_plane, plane_from_board};
+    use super::{Universe, board_from_plane, plane_from_board};
     use crate::{
         board::{Board, BoundaryMode, Rule},
         sparse_board::{SparseBoard, UnboundedRuleError},
@@ -299,9 +345,29 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "kind of board")]
-    fn a_snapshot_cannot_cross_kinds_of_board() {
-        finite().restore_cells(CellSnapshot::Unbounded(SparseBoard::default().snapshot()));
+    fn a_snapshot_brings_back_the_kind_of_board_that_took_it() {
+        let mut board = Board::new(16, 8);
+        board.set_boundary_mode(BoundaryMode::Fixed);
+        board.populate(3, 4);
+        let finite = Universe::Finite(board);
+        let finite_cells = finite.snapshot_cells();
+        assert!(!finite_cells.is_unbounded());
+
+        let mut restored = unbounded();
+        restored.populate(-40, -40);
+        let plane_cells = restored.snapshot_cells();
+        assert!(plane_cells.is_unbounded());
+
+        restored.restore_cells(finite_cells.clone());
+        assert_eq!(restored.size(), Some((16, 8)));
+        assert_eq!(restored.boundary_mode(), Some(BoundaryMode::Fixed));
+        assert!(restored.is_alive(3, 4));
+        assert_eq!(restored.snapshot_cells(), finite_cells);
+
+        restored.restore_cells(plane_cells.clone());
+        assert_eq!(restored.size(), None);
+        assert!(restored.is_alive(-40, -40));
+        assert_eq!(restored.snapshot_cells(), plane_cells);
     }
 
     #[test]

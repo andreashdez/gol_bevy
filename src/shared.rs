@@ -12,6 +12,9 @@ pub const CAMERA_ZOOM_STEP: f32 = 0.10;
 pub const CAMERA_ZOOM_MIN: f32 = 0.25;
 // Fit the largest board even in the native canvas at the minimum window size.
 pub const CAMERA_ZOOM_MAX: f32 = 160.0;
+/// The plane has no size to fit, so its limit is simply far out: a pixel covers
+/// some 87,000 cells here, and positions stay accurate to much less than that.
+pub const PLANE_ZOOM_MAX: f32 = (1 << 20) as f32;
 pub const CAMERA_PAN_SPEED: f32 = 700.0;
 
 #[derive(Clone, Copy)]
@@ -176,7 +179,7 @@ pub const BINDING_TOGGLE_BOUNDARY_MODE: KeyBinding = KeyBinding {
     chars: &["m"],
     keys: &[],
     caps: &["M"],
-    action: "Wrap / fixed edges",
+    action: "Wrap / fixed / unbounded edges",
 };
 pub const BINDING_TOGGLE_PALETTE: KeyBinding = KeyBinding {
     chars: &["h"],
@@ -388,6 +391,10 @@ pub struct Simulation {
     pub avg_step_ms: f64,
     pub step_samples: u64,
     pub rate: RateMeter,
+    /// The plane's cell at the world origin. World space is `f32`, so this moves
+    /// with the camera, to keep what's on screen close to the origin however far
+    /// the plane has been explored.
+    pub plane_origin: (i64, i64),
 }
 
 impl Simulation {
@@ -398,6 +405,57 @@ impl Simulation {
             avg_step_ms: 0.0,
             step_samples: 0,
             rate: RateMeter::default(),
+            plane_origin: (0, 0),
+        }
+    }
+
+    pub fn cell_map(&self) -> CellMap {
+        match self.app.board.size() {
+            Some((cols, rows)) => CellMap::Board { cols, rows },
+            None => CellMap::Plane {
+                origin: self.plane_origin,
+            },
+        }
+    }
+
+    /// The most a view of this board may be zoomed out.
+    pub fn zoom_max(&self) -> f32 {
+        if self.app.board.finite().is_some() {
+            CAMERA_ZOOM_MAX
+        } else {
+            PLANE_ZOOM_MAX
+        }
+    }
+}
+
+/// Where cells sit in world space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CellMap {
+    /// Centred on the origin, with nothing past the edges.
+    Board { cols: usize, rows: usize },
+    /// The cell at `origin` has its corner on the world origin.
+    Plane { origin: (i64, i64) },
+}
+
+impl CellMap {
+    pub fn cell_to_world(self, col: i64, row: i64) -> Vec3 {
+        match self {
+            Self::Board { cols, rows } => cell_to_world(col, row, cols, rows),
+            Self::Plane { origin } => Vec3::new(
+                ((col - origin.0) as f32 + 0.5) * CELL_SIZE,
+                ((row - origin.1) as f32 + 0.5) * CELL_SIZE,
+                0.0,
+            ),
+        }
+    }
+
+    pub fn world_to_cell(self, world: Vec2) -> Option<(i64, i64)> {
+        match self {
+            Self::Board { cols, rows } => world_to_cell(world, cols, rows),
+            Self::Plane { origin } => Some((
+                (world.x / CELL_SIZE).floor() as i64 + origin.0,
+                (world.y / CELL_SIZE).floor() as i64 + origin.1,
+            )),
         }
     }
 }
@@ -664,11 +722,19 @@ const FIT_MARGIN: f32 = 1.02;
 
 /// Orthographic scale that frames the whole board in the available canvas, with a margin.
 pub fn camera_scale_to_fit_board(size: Vec2, cols: usize, rows: usize) -> f32 {
-    let board_width = cols as f32 * CELL_SIZE;
-    let board_height = rows as f32 * CELL_SIZE;
-    let horizontal = board_width / size.x.max(1.0);
-    let vertical = board_height / size.y.max(1.0);
-    (horizontal.max(vertical) * FIT_MARGIN).clamp(CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+    scale_to_fit(size, cols as f32, rows as f32).clamp(CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+}
+
+/// Orthographic scale that frames a `width` × `height` pattern on the plane. A
+/// small pattern stops at 100% rather than filling the canvas with a few cells.
+pub fn camera_scale_to_fit_pattern(size: Vec2, width: f32, height: f32) -> f32 {
+    scale_to_fit(size, width, height).clamp(1.0, PLANE_ZOOM_MAX)
+}
+
+fn scale_to_fit(size: Vec2, width: f32, height: f32) -> f32 {
+    let horizontal = width * CELL_SIZE / size.x.max(1.0);
+    let vertical = height * CELL_SIZE / size.y.max(1.0);
+    horizontal.max(vertical) * FIT_MARGIN
 }
 
 /// The largest board that fits a canvas of `size` at 100%, the fitted zoom.
@@ -720,6 +786,7 @@ mod tests {
         BOARD_SIZE_MAX, BOARD_SIZE_MIN, BoardSettings, CAMERA_ZOOM_MAX, CELL_SIZE,
         camera_scale_to_fit_board, controls_markdown,
     };
+    use super::{CellMap, PLANE_ZOOM_MAX, Vec2, camera_scale_to_fit_pattern};
     use bevy::window::{Window, WindowResolution};
 
     fn window(width: u32, height: u32) -> Window {
@@ -727,6 +794,31 @@ mod tests {
             resolution: WindowResolution::new(width, height),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn the_plane_maps_cells_to_world_space_around_its_origin() {
+        let far = 1 << 50;
+        let map = CellMap::Plane {
+            origin: (far, -far),
+        };
+        let world = map.cell_to_world(far + 2, -far - 3).truncate();
+        assert_eq!(world, Vec2::new(2.5, -2.5) * CELL_SIZE);
+        assert_eq!(map.world_to_cell(world), Some((far + 2, -far - 3)));
+        // Cells below the origin round down, not towards it.
+        assert_eq!(
+            map.world_to_cell(Vec2::splat(-0.5)),
+            Some((far - 1, -far - 1))
+        );
+    }
+
+    #[test]
+    fn a_pattern_fit_stays_within_full_size_and_the_zoom_limit() {
+        let size = Vec2::new(1000.0, 500.0);
+        assert_eq!(camera_scale_to_fit_pattern(size, 3.0, 3.0), 1.0);
+        assert_eq!(camera_scale_to_fit_pattern(size, 1e12, 1.0), PLANE_ZOOM_MAX);
+        let scale = camera_scale_to_fit_pattern(size, 1000.0, 1.0);
+        assert!(scale * size.x >= 1000.0 * CELL_SIZE);
     }
 
     #[test]

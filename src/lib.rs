@@ -5,6 +5,7 @@ pub mod canvas_view;
 pub mod input_plugin;
 pub mod native_ui_plugin;
 pub mod patterns;
+pub mod plane_view;
 pub mod render_plugin;
 pub mod settings_plugin;
 pub mod settle;

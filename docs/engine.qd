@@ -63,9 +63,9 @@ Each generation has a 64-bit fingerprint: the XOR of a fixed key for every cell 
 
 `src/sparse_board.rs` holds `SparseBoard`, a board with no edges, with the same rules and the same kind of live count, fingerprint, and dirty tracking as `Board`.
 
-The app runs on `Universe` from `src/universe.rs`, which is either kind of board and addresses cells with signed coordinates, so the same edits and stepping work on both. What needs edges or a fixed size asks for the finite board and skips the rest. The interface can't reach the unbounded board yet, because drawing it needs a view that isn't tied to a board size.
+The app runs on `Universe` from `src/universe.rs`, which is either kind of board and addresses cells with signed coordinates, so the same edits and stepping work on both. What needs edges or a fixed size asks for the finite board and skips the rest.
 
-`App::set_unbounded` moves the cells onto the plane with the centre of the board at the origin, and choosing edges again moves them back, keeping only the cells that fit the board. Either way undo history is cleared, as it is for a resize, because snapshots only fit the kind of board that took them.
+`App::set_unbounded` moves the cells onto the plane with the centre of the board at the origin, and choosing edges again moves them back, keeping only the cells that fit the board. Both are ordinary edits: a snapshot records what it takes to bring back the board that took it, so undo can cross between the two and nothing is lost.
 
 Cells have signed 64-bit coordinates and live in a map of 64 × 64 chunks, so memory follows the live cells. A chunk stores one bit per cell, one `u64` per row, and is removed as soon as it empties. Stepping adds up the neighbours of a whole row of 64 cells at once, with each count held across four words, one for each binary digit. This is why a full board runs faster here than the byte-per-cell scan does.
 
@@ -74,6 +74,10 @@ There is no separate frontier or dense path. A cell can only change after it or 
 Chunks are shared behind `Arc`, so a snapshot only copies pointers and a chunk is copied if it changes while a snapshot holds it.
 
 Rules with B0 are refused, because every empty cell would be born and the plane would fill in one generation.
+
+`src/plane_view.rs` draws the plane. World space is `f32`, which can't address cells far from the origin, so `Simulation::plane_origin` names the cell at the world origin and moves to meet a camera that has drifted, by a whole number of cells so nothing on screen shifts. The camera, the pointer, and everything else stay in ordinary world coordinates.
+
+A board-sized texture can't exist here, so one the size of the canvas shows what's in view. When zoomed out, each texel covers a square block of cells, lit if any of them is alive, and blocks are aligned to their own size so that panning moves them whole. Painting costs the lesser of what's in view and what's in memory, however large the pattern. Cell ages are kept only for chunks in view at one texel per cell, so a chunk scrolling in starts out settled, and trails don't show when zoomed out.
 
 ## Rendering
 

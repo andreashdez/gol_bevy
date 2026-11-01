@@ -53,6 +53,51 @@ pub enum DirtyChunks {
     Chunks(HashMap<ChunkKey, Chunk>),
 }
 
+/// A grid of square blocks over part of the plane, for drawing it. A block is
+/// `1 << level` cells across, and `left` and `bottom` are multiples of that, so
+/// blocks line up with chunks however far the grid is from the origin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockGrid {
+    pub left: i64,
+    pub bottom: i64,
+    pub level: u32,
+    /// Width in blocks.
+    pub width: usize,
+    /// Height in blocks.
+    pub height: usize,
+}
+
+impl BlockGrid {
+    /// One past the last cell in each direction.
+    fn end(&self) -> (i64, i64) {
+        let span = |blocks: usize| (blocks as i64).saturating_mul(1 << self.level);
+        (
+            self.left.saturating_add(span(self.width)),
+            self.bottom.saturating_add(span(self.height)),
+        )
+    }
+
+    /// The chunks at the low and high corners of the grid.
+    pub fn chunk_span(&self) -> (ChunkKey, ChunkKey) {
+        let (right, top) = self.end();
+        (
+            (self.left >> CHUNK_BITS, self.bottom >> CHUNK_BITS),
+            ((right - 1) >> CHUNK_BITS, (top - 1) >> CHUNK_BITS),
+        )
+    }
+
+    /// The block holding a cell, if the grid covers it.
+    fn block(&self, x: i64, y: i64) -> Option<(usize, usize)> {
+        let (right, top) = self.end();
+        ((self.left..right).contains(&x) && (self.bottom..top).contains(&y)).then(|| {
+            (
+                ((x - self.left) >> self.level) as usize,
+                ((y - self.bottom) >> self.level) as usize,
+            )
+        })
+    }
+}
+
 /// Chunks of an earlier state. They are shared with the board until it changes
 /// them, so taking a snapshot costs a pointer per chunk.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -284,6 +329,11 @@ impl SparseBoard {
         Ok(true)
     }
 
+    /// A chunk's cells, unless it has no live ones.
+    pub fn chunk(&self, key: ChunkKey) -> Option<&Chunk> {
+        self.chunks.get(&key).map(|chunk| &**chunk)
+    }
+
     pub fn is_alive(&self, x: i64, y: i64) -> bool {
         let (key, col, row) = locate(x, y);
         self.chunks
@@ -303,6 +353,59 @@ impl SparseBoard {
 
     pub fn live_cells_count(&self) -> usize {
         self.live_count
+    }
+
+    /// Calls `visit` with the chunks the grid touches that have live cells, in no
+    /// particular order. The cost follows whichever is fewer, the chunks in
+    /// memory or those under the grid, so a view of empty space is free and so is
+    /// one that dwarfs the pattern.
+    pub fn for_each_chunk_in(&self, grid: BlockGrid, mut visit: impl FnMut(ChunkKey, &Chunk)) {
+        let ((first_x, first_y), (last_x, last_y)) = grid.chunk_span();
+        let span = |first: i64, last: i64| (last - first + 1) as u128;
+        if span(first_x, last_x) * span(first_y, last_y) > self.chunks.len() as u128 {
+            for (&key, chunk) in &self.chunks {
+                if (first_x..=last_x).contains(&key.0) && (first_y..=last_y).contains(&key.1) {
+                    visit(key, chunk);
+                }
+            }
+            return;
+        }
+        for y in first_y..=last_y {
+            for x in first_x..=last_x {
+                if let Some(chunk) = self.chunks.get(&(x, y)) {
+                    visit((x, y), chunk);
+                }
+            }
+        }
+    }
+
+    /// Calls `visit` with the column and row of each block holding a live cell,
+    /// perhaps more than once. Blocks are merged a row of the chunk at a time, so
+    /// the work per chunk falls with the size of the blocks.
+    pub fn for_each_live_block(&self, grid: BlockGrid, mut visit: impl FnMut(usize, usize)) {
+        let block = 1usize << grid.level.min(CHUNK_BITS);
+        self.for_each_chunk_in(grid, |key, chunk| {
+            let (left, bottom) = chunk_origin(key);
+            if grid.level >= CHUNK_BITS {
+                // A live chunk is all its block needs to know.
+                if let Some((col, row)) = grid.block(left, bottom) {
+                    visit(col, row);
+                }
+                return;
+            }
+            for (group, rows) in chunk.chunks_exact(block).enumerate() {
+                let mut cells = rows.iter().fold(0, |merged, &cells| merged | cells);
+                let y = bottom + (group * block) as i64;
+                while cells != 0 {
+                    let col = cells.trailing_zeros() as usize & !(block - 1);
+                    if let Some(cell) = grid.block(left + col as i64, y) {
+                        visit(cell.0, cell.1);
+                    }
+                    // Past the rest of this block, which is lit already.
+                    cells &= !(u64::MAX >> (64 - block) << col);
+                }
+            }
+        });
     }
 
     /// Chunks in memory, each of [`CHUNK_SIZE`] squared bits plus some overhead.
@@ -599,7 +702,9 @@ fn next_row(around: &Around, row: usize, mask: u32) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{CHUNK_SIZE, DIRTY_CHUNKS_MAX, DirtyChunks, SparseBoard, UnboundedRuleError};
+    use super::{
+        BlockGrid, CHUNK_SIZE, DIRTY_CHUNKS_MAX, DirtyChunks, SparseBoard, UnboundedRuleError,
+    };
     use crate::board::{Board, BoundaryMode, Rule};
     use std::collections::{HashMap, HashSet};
 
@@ -872,6 +977,100 @@ mod tests {
         // A blinker's flips, the rows around them, and no neighbouring chunks.
         assert_eq!(board.active.len(), 1);
         assert_eq!(board.active[&(0, 0)].count_ones(), 5);
+    }
+
+    fn live_blocks(board: &SparseBoard, grid: BlockGrid) -> HashSet<(usize, usize)> {
+        let mut blocks = HashSet::new();
+        board.for_each_live_block(grid, |col, row| {
+            assert!(col < grid.width && row < grid.height, "({col}, {row})");
+            blocks.insert((col, row));
+        });
+        blocks
+    }
+
+    #[test]
+    fn live_blocks_match_the_cells_at_every_level() {
+        let cells = soup(1500, 300);
+        let board = board_with(cells.iter().copied());
+        for level in 0..9 {
+            let block = 1i64 << level;
+            let grid = BlockGrid {
+                // Off to one side, so that some cells fall outside the grid.
+                left: -128 / block * block,
+                bottom: -256 / block * block,
+                level,
+                width: (300 / block) as usize + 1,
+                height: (400 / block) as usize + 1,
+            };
+            let expected: HashSet<_> = cells
+                .iter()
+                .filter_map(|&(x, y)| {
+                    let col = (x - grid.left).div_euclid(block);
+                    let row = (y - grid.bottom).div_euclid(block);
+                    let inside = (0..grid.width as i64).contains(&col)
+                        && (0..grid.height as i64).contains(&row);
+                    inside.then_some((col as usize, row as usize))
+                })
+                .collect();
+            assert_eq!(live_blocks(&board, grid), expected, "level {level}");
+        }
+    }
+
+    #[test]
+    fn a_grid_finds_chunks_either_way_round() {
+        let board = board_with([(0, 0), (1000, 1000)]);
+        let visited = |grid| {
+            let mut keys = Vec::new();
+            board.for_each_chunk_in(grid, |key, _| keys.push(key));
+            keys
+        };
+        // Fewer chunks in view than in memory, then far more in view.
+        let small = BlockGrid {
+            left: 0,
+            bottom: 0,
+            level: 0,
+            width: 8,
+            height: 8,
+        };
+        let huge = BlockGrid {
+            left: -(1 << 40),
+            bottom: -(1 << 40),
+            level: 20,
+            width: 1 << 21,
+            height: 1 << 21,
+        };
+        assert_eq!(visited(small), [(0, 0)]);
+        assert_eq!(visited(huge).len(), 2);
+    }
+
+    #[test]
+    fn a_grid_wider_than_memory_still_leaves_out_what_it_misses() {
+        // Every chunk shares a column or a row with the grid, but only one has both.
+        let board = board_with([(0, 0), (0, 1000), (1000, 0), (-1000, 0), (0, -1000)]);
+        let grid = BlockGrid {
+            left: -256,
+            bottom: -256,
+            level: 0,
+            width: 512,
+            height: 512,
+        };
+        let mut keys = Vec::new();
+        board.for_each_chunk_in(grid, |key, _| keys.push(key));
+        assert_eq!(keys, [(0, 0)]);
+    }
+
+    #[test]
+    fn a_block_past_a_chunk_covers_all_of_a_far_away_pattern() {
+        let far = 1 << 40;
+        let board = board_with([(far, -far)]);
+        let grid = BlockGrid {
+            left: far - (1 << 9),
+            bottom: -far - (1 << 9),
+            level: 9,
+            width: 2,
+            height: 2,
+        };
+        assert_eq!(live_blocks(&board, grid), HashSet::from([(1, 1)]));
     }
 
     #[test]

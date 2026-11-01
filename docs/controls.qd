@@ -19,7 +19,7 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 | .keybinding {0}         | Reset the generation counter |
 | .keybinding {plus}      | Speed up (past 40 gen/s: ∞)   |
 | .keybinding {minus}     | Slow down                    |
-| .keybinding {M}         | Toggle wrapping or fixed edges |
+| .keybinding {M}         | Switch between wrapping, fixed, and unbounded edges |
 
 ## Editing
 

@@ -1449,7 +1449,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                             for (index, (name, _)) in RULE_PRESETS.iter().enumerate() { button(p, name, Action::RulePreset(index)); }
                         });
                         apply_row(p, Action::ApplyRule, |p| inline_field(p, "Rulestring", &drafts.rule, Field::Rule, drafts.rule_first));
-                        setting(p, "Edges", |p| segmented(p, &[("Wrap", Action::Edges(BoundaryMode::Wrap)), ("Fixed", Action::Edges(BoundaryMode::Fixed))]));
+                        setting(p, "Edges", |p| segmented(p, &[("Wrap", Action::Edges(BoundaryMode::Wrap)), ("Fixed", Action::Edges(BoundaryMode::Fixed)), ("Unbounded", Action::Unbounded)]));
                         switch(p, "Pause when settled", "Stop once the board stops changing or starts repeating", Action::PauseWhenSettled);
                         p.spawn(row()).with_children(|p| { button(p, "Reset generation counter", Action::ResetEpoch); });
 

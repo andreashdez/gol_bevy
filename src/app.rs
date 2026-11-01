@@ -242,15 +242,22 @@ impl App {
         true
     }
 
+    /// Steps through wrapping, fixed, and unbounded edges. A rule that can't run
+    /// unbounded goes straight back to wrapping.
     pub fn toggle_boundary_mode(&mut self) {
-        self.set_boundary_mode(match self.board.boundary_mode() {
-            Some(BoundaryMode::Wrap) => BoundaryMode::Fixed,
-            _ => BoundaryMode::Wrap,
-        });
+        match self.board.boundary_mode() {
+            Some(BoundaryMode::Wrap) => self.set_boundary_mode(BoundaryMode::Fixed),
+            Some(BoundaryMode::Fixed) => {
+                if self.set_unbounded().is_err() {
+                    self.set_boundary_mode(BoundaryMode::Wrap);
+                }
+            }
+            None => self.set_boundary_mode(BoundaryMode::Wrap),
+        }
     }
 
     /// Choosing edges on the unbounded board returns to a finite one, keeping
-    /// only the cells that fit it, as any resize does.
+    /// only the cells that fit it. Undo brings the rest back.
     pub fn set_boundary_mode(&mut self, mode: BoundaryMode) {
         if let Universe::Unbounded(plane) = &self.board {
             let (cols, rows) = self.finite_size;
@@ -276,17 +283,11 @@ impl App {
         Ok(true)
     }
 
+    /// An edit like any other, since a snapshot brings back the board that took it.
     fn replace_board(&mut self, board: Universe) {
-        self.board = board;
-        self.forget_layout();
-    }
-
-    /// Snapshots hold cells for the board that took them, so they no longer fit.
-    fn forget_layout(&mut self) {
-        self.undo_history.clear();
-        self.redo_history.clear();
-        self.forget_run();
         self.end_stroke();
+        self.save_edit();
+        self.board = board;
         self.needs_redraw = true;
     }
 
@@ -473,10 +474,22 @@ impl App {
 
     pub fn resize_board(&mut self, new_cols: usize, new_rows: usize) {
         self.finite_size = (new_cols, new_rows);
-        if let Universe::Finite(board) = &mut self.board
-            && board.resize(new_cols, new_rows)
-        {
-            self.forget_layout();
+        match &mut self.board {
+            Universe::Finite(board) => {
+                if board.resize(new_cols, new_rows) {
+                    // Snapshots hold cells in the old layout, so they no longer fit.
+                    self.undo_history.clear();
+                    self.redo_history.clear();
+                    self.forget_run();
+                    self.end_stroke();
+                    self.needs_redraw = true;
+                }
+            }
+            // The plane has no size to change, only finite boards in its history.
+            Universe::Unbounded(_) => {
+                self.undo_history.retain(|edit| edit.cells.is_unbounded());
+                self.redo_history.retain(|edit| edit.cells.is_unbounded());
+            }
         }
     }
 
@@ -562,9 +575,9 @@ impl App {
         let mut restored = Self::new(decoded.width, decoded.height);
         restored.board.set_rule(decoded.rule);
         restored.board.set_boundary_mode(decoded.boundary);
-        restored
-            .board
-            .restore_cells(CellSnapshot::Finite(decoded.cells));
+        if let Some(board) = restored.board.finite_mut() {
+            board.restore_cells(decoded.cells);
+        }
         restored.epoch = decoded.generation;
         restored.randomize_settings = decoded.randomize_settings;
         restored.set_tick_rate_ms(decoded.tick_rate_ms);
@@ -819,8 +832,9 @@ impl App {
     }
 
     fn restore(&mut self, snapshot: EditSnapshot) {
-        self.board.set_rule(snapshot.rule);
+        // Cells first: a board they bring back starts out on the default rule.
         self.board.restore_cells(snapshot.cells);
+        self.board.set_rule(snapshot.rule);
         self.epoch = snapshot.epoch;
         self.running = false;
         self.forget_run();
@@ -1001,7 +1015,8 @@ mod tests {
         let mut app = unbounded_app();
         assert!(!app.set_rule(b0));
         assert_eq!(app.board.rule(), Rule::LIFE);
-        assert!(!app.can_undo());
+        assert!(app.undo());
+        assert_eq!(app.board.size(), Some((16, 16)), "the refusal left no edit");
 
         // A finite board may hold one, and then can't move to the plane.
         let mut app = App::new(16, 16);
@@ -1025,10 +1040,71 @@ mod tests {
         assert!(app.board.is_alive(0, 0));
         assert_eq!(app.board.live_cells_count(), 1);
         assert_eq!(app.epoch, epoch);
-        assert!(!app.can_undo(), "snapshots don't fit the new board");
-        assert!(!app.can_redo());
         assert!(!app.can_reset_to_start());
         assert!(app.take_redraw());
+    }
+
+    #[test]
+    fn switching_kinds_of_board_can_be_undone_and_redone() {
+        let mut app = App::new(16, 16);
+        app.set_boundary_mode(BoundaryMode::Fixed);
+        app.populate_board(8, 8);
+        let finite = app.board.snapshot_cells();
+
+        app.set_unbounded().unwrap();
+        app.populate_board(500, 500);
+        let plane = app.board.snapshot_cells();
+
+        // Leaving drops the far cell, and undo has to bring it back.
+        app.set_boundary_mode(BoundaryMode::Wrap);
+        assert_eq!(app.board.live_cells_count(), 1);
+        assert!(app.undo());
+        assert_eq!(app.board.snapshot_cells(), plane);
+        assert!(app.board.is_alive(500, 500));
+
+        assert!(app.undo(), "the cell drawn on the plane");
+        assert!(app.undo(), "the move onto the plane");
+        assert_eq!(app.board.snapshot_cells(), finite);
+        assert_eq!(app.board.boundary_mode(), Some(BoundaryMode::Fixed));
+
+        assert!(app.redo());
+        assert_eq!(app.board.size(), None);
+        assert!(app.redo());
+        assert_eq!(app.board.snapshot_cells(), plane);
+    }
+
+    #[test]
+    fn undo_across_kinds_of_board_keeps_the_rule() {
+        let highlife = Rule::parse("B36/S23").unwrap();
+        let mut app = App::new(16, 16);
+        app.set_rule(highlife);
+        app.set_unbounded().unwrap();
+        assert_eq!(app.board.rule(), highlife);
+
+        assert!(app.undo());
+        assert_eq!(app.board.size(), Some((16, 16)));
+        assert_eq!(app.board.rule(), highlife);
+        assert!(app.redo());
+        assert_eq!(app.board.size(), None);
+        assert_eq!(app.board.rule(), highlife);
+    }
+
+    #[test]
+    fn a_finite_rule_the_plane_refuses_comes_back_with_its_board() {
+        let b0 = Rule::parse("B0/S").unwrap();
+        let mut app = App::new(16, 16);
+        // A rule the plane takes, swapped for B0 only after a snapshot of the
+        // plane exists to undo onto and leave again.
+        app.set_unbounded().unwrap();
+        app.set_boundary_mode(BoundaryMode::Wrap);
+        assert!(app.set_rule(b0));
+        assert!(app.undo(), "the rule");
+        assert!(app.undo(), "back onto the plane");
+        assert_eq!(app.board.size(), None);
+        assert!(app.redo(), "off the plane");
+        assert!(app.redo(), "the rule again");
+        assert_eq!(app.board.rule(), b0);
+        assert_eq!(app.board.size(), Some((16, 16)));
     }
 
     #[test]
@@ -1043,17 +1119,28 @@ mod tests {
         assert_eq!(app.board.boundary_mode(), Some(BoundaryMode::Fixed));
         assert_eq!(app.board.live_cells_count(), 1);
         assert!(app.board.is_alive(8, 4));
-        assert!(!app.can_undo());
     }
 
     #[test]
-    fn toggling_edges_on_the_unbounded_board_returns_to_a_wrapping_one() {
-        let mut app = unbounded_app();
-        assert_eq!(app.boundary_mode_label(), "Unbounded");
-        app.toggle_boundary_mode();
+    fn the_edges_shortcut_steps_through_all_three_modes() {
+        let mut app = App::new(16, 16);
         assert_eq!(app.board.boundary_mode(), Some(BoundaryMode::Wrap));
         app.toggle_boundary_mode();
         assert_eq!(app.board.boundary_mode(), Some(BoundaryMode::Fixed));
+        app.toggle_boundary_mode();
+        assert_eq!(app.board.boundary_mode(), None);
+        assert_eq!(app.boundary_mode_label(), "Unbounded");
+        app.toggle_boundary_mode();
+        assert_eq!(app.board.boundary_mode(), Some(BoundaryMode::Wrap));
+    }
+
+    #[test]
+    fn the_edges_shortcut_skips_unbounded_under_a_b0_rule() {
+        let mut app = App::new(16, 16);
+        app.set_rule(Rule::parse("B0/S").unwrap());
+        app.toggle_boundary_mode();
+        app.toggle_boundary_mode();
+        assert_eq!(app.board.boundary_mode(), Some(BoundaryMode::Wrap));
     }
 
     #[test]
@@ -1067,6 +1154,12 @@ mod tests {
         assert_eq!(app.board.size(), None);
         assert!(app.undo(), "nothing about the plane changed");
         assert_eq!(app.board.snapshot_cells(), drawn);
+        assert!(app.undo());
+        assert_eq!(app.board.live_cells_count(), 0);
+
+        // History ends there: before it is a board of a size no longer in use.
+        assert!(!app.can_undo());
+        assert_eq!(app.board.size(), None);
 
         app.set_boundary_mode(BoundaryMode::Wrap);
         assert_eq!(app.board.size(), Some((32, 64)));
@@ -1082,7 +1175,8 @@ mod tests {
         let mut app = unbounded_app();
         app.randomize_board();
         assert_eq!(app.board.live_cells_count(), 0);
-        assert!(!app.can_undo(), "nothing changed to undo");
+        assert!(app.undo());
+        assert_eq!(app.board.size(), Some((16, 16)), "randomizing left no edit");
     }
 
     #[test]
@@ -1781,6 +1875,8 @@ mod tests {
         assert_eq!(app.boundary_mode_label(), "Wrap");
         app.toggle_boundary_mode();
         assert_eq!(app.boundary_mode_label(), "Fixed");
+        app.toggle_boundary_mode();
+        assert_eq!(app.boundary_mode_label(), "Unbounded");
         app.toggle_boundary_mode();
         assert_eq!(app.boundary_mode_label(), "Wrap");
     }

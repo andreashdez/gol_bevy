@@ -179,7 +179,7 @@ just ci-local
 | `B` | Reset to start |
 | `+` | Speed up |
 | `−` | Slow down |
-| `M` | Wrap / fixed edges |
+| `M` | Wrap / fixed / unbounded edges |
 | `0` | Reset generation counter |
 
 ### Editing

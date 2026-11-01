@@ -47,6 +47,8 @@ The canvas leaves only a thin gap around the board, and a fitted board leaves on
 
 The board is fitted into the canvas on startup, after a board size change, and when you press .keybinding {V} or click **Fit board**. When the window size changes, the view keeps its pan position and its zoom relative to the fitted view.
 
+On an unbounded board, .keybinding {V} and **Fit board** frame the live cells instead, wherever they are.
+
 The zoom percentage is relative to **Fit board** (100%). Middle-button panning must start on the canvas and stops when the pointer enters a control or leaves the window.
 
 ### Minimap
@@ -85,7 +87,7 @@ From left to right:
 - The generation counter.
 - The number of living cells, how the latest generation changed it, and, from 900 pixels wide, a line of the population over the last 256 generations of the run. The change reads `+12`, `−12`, or `±0` for a stable population. The change disappears after an edit, undo, or counter reset, since it no longer describes the board. Once the board [settles](simulation.qd#when-the-board-settles), `stable` or `period 2` takes its place; hover over it to see the generation that began.
 - The rule. Click it to open [Settings](settings.qd#simulation) with the rulestring ready to edit.
-- The [edge mode](simulation.qd#edges), **Wrap edges** or **Fixed edges**, from 850 pixels wide. Click it to switch, like .keybinding {M}.
+- The [edge mode](simulation.qd#edges), **Wrap edges**, **Fixed edges**, or **Unbounded**, from 850 pixels wide. Click it to switch, like .keybinding {M}.
 - The cell under the pointer, as `(x, y)` counted from the top-left cell `(0, 0)`, while the pointer is over the board.
 
 From 1010 pixels wide, the status bar also shows the board size. Numbers use tabular digits and keep the widest size they have reached, so the readouts stay close together without shifting as digits change. Clearing or resizing the board, or resetting the generation counter, lets them shrink back to fit. The zoom controls sit at the right end. The status bar is a single 48-pixel row at every window size.

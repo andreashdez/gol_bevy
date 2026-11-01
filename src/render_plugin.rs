@@ -5,7 +5,7 @@ use crate::board::{BoundaryMode, DirtyCells};
 use crate::canvas_view::cursor_world;
 use crate::shared::{
     BoardColors, BoardSettings, CELL_SIZE, CellAge, GridOverlay, MainCamera, RedrawRequested,
-    Simulation, StartupSet, Theme, UpdateSet, board_size_for_window, cell_to_world, world_to_cell,
+    Simulation, StartupSet, Theme, UpdateSet, board_size_for_window,
 };
 use crate::ui_input::UiInputCapture;
 use bevy::{
@@ -40,7 +40,7 @@ struct BoardTexture {
 }
 
 #[derive(Component)]
-struct BoardSprite;
+pub(crate) struct BoardSprite;
 
 /// Generations since each cell last changed state. The renderer keeps these so
 /// the engine's step loop pays nothing for them. A cell stops ageing once its
@@ -59,12 +59,12 @@ const OLD_AGE: u8 = 60;
 /// Generations a trail takes to fade.
 const TRAIL_LENGTH: u8 = 6;
 /// Trails fade sooner than cells grow old, so past this age no colour changes.
-const SETTLED_AGE: u8 = OLD_AGE;
+pub(crate) const SETTLED_AGE: u8 = OLD_AGE;
 const _: () = assert!(TRAIL_LENGTH <= SETTLED_AGE);
 
 /// Cells that were edited, loaded, or restored rather than stepped: the plain
 /// live colour, and no trail.
-fn settled_age(alive: bool) -> u8 {
+pub(crate) fn settled_age(alive: bool) -> u8 {
     if alive { MATURE_AGE } else { u8::MAX }
 }
 
@@ -93,13 +93,13 @@ pub(crate) fn dead_shade(colors: &BoardColors, age: u8) -> Color {
 }
 
 /// Texels for every state and age, so painting a cell is a table lookup.
-struct CellPalette {
+pub(crate) struct CellPalette {
     live: [[u8; 4]; 256],
     dead: [[u8; 4]; 256],
 }
 
 impl CellPalette {
-    fn new(colors: &BoardColors, by_age: bool) -> Self {
+    pub(crate) fn new(colors: &BoardColors, by_age: bool) -> Self {
         let mut palette = Self {
             live: [[0; 4]; 256],
             dead: [[0; 4]; 256],
@@ -116,9 +116,13 @@ impl CellPalette {
         palette
     }
 
-    fn paint(&self, data: &mut [u8], offset: usize, alive: bool, age: u8) {
-        let texel = if alive { &self.live } else { &self.dead };
-        data[offset..offset + 4].copy_from_slice(&texel[usize::from(age)]);
+    pub(crate) fn paint(&self, data: &mut [u8], offset: usize, alive: bool, age: u8) {
+        data[offset..offset + 4].copy_from_slice(&self.texel(alive, age));
+    }
+
+    pub(crate) fn texel(&self, alive: bool, age: u8) -> [u8; 4] {
+        let table = if alive { &self.live } else { &self.dead };
+        table[usize::from(age)]
     }
 }
 
@@ -134,7 +138,7 @@ pub(crate) fn color_to_texel(color: Color) -> [u8; 4] {
 
 /// Board row 0 sits at the bottom in world space while texel row 0 sits at the
 /// top, so the vertical axis is flipped when addressing the texture.
-fn texel_offset(idx: usize, cols: usize, rows: usize) -> usize {
+pub(crate) fn texel_offset(idx: usize, cols: usize, rows: usize) -> usize {
     let col = idx % cols;
     let row = idx / cols;
     ((rows - 1 - row) * cols + col) * 4
@@ -394,12 +398,6 @@ fn render_grid(
     if !grid_overlay.enabled {
         return;
     }
-    let Some((cols, rows)) = sim.app.board.size() else {
-        return;
-    };
-    if cols == 0 || rows == 0 {
-        return;
-    }
     let Ok((camera, camera_transform)) = camera_q.single() else {
         return;
     };
@@ -423,6 +421,33 @@ fn render_grid(
         return;
     }
 
+    let color = theme.board().grid_line;
+    let Some((cols, rows)) = sim.app.board.size() else {
+        // The plane's cells have their corners on multiples of the cell size.
+        let first = (visible_min / CELL_SIZE).floor() * CELL_SIZE;
+        for line in 0..=((visible_width / CELL_SIZE).ceil() as u32) {
+            let x = first.x + line as f32 * CELL_SIZE;
+            gizmos.line_2d(
+                Vec2::new(x, visible_min.y),
+                Vec2::new(x, visible_max.y),
+                color,
+            );
+        }
+        let visible_height = visible_max.y - visible_min.y;
+        for line in 0..=((visible_height / CELL_SIZE).ceil() as u32) {
+            let y = first.y + line as f32 * CELL_SIZE;
+            gizmos.line_2d(
+                Vec2::new(visible_min.x, y),
+                Vec2::new(visible_max.x, y),
+                color,
+            );
+        }
+        return;
+    };
+    if cols == 0 || rows == 0 {
+        return;
+    }
+
     let half_width = cols as f32 * CELL_SIZE / 2.0;
     let half_height = rows as f32 * CELL_SIZE / 2.0;
 
@@ -434,7 +459,6 @@ fn render_grid(
         return;
     }
 
-    let color = theme.board().grid_line;
     let first_col = line_index(visible_min.x + half_width, cols);
     let last_col = line_index((visible_max.x + half_width).ceil(), cols);
     for col in first_col..=last_col {
@@ -457,9 +481,9 @@ fn line_index(offset_from_edge: f32, cells: usize) -> usize {
 
 /// What decides a cell's colour besides its state.
 #[derive(SystemParam)]
-struct CellStyle<'w> {
-    theme: Res<'w, Theme>,
-    cell_age: Res<'w, CellAge>,
+pub(crate) struct CellStyle<'w> {
+    pub(crate) theme: Res<'w, Theme>,
+    pub(crate) cell_age: Res<'w, CellAge>,
     ages: ResMut<'w, CellAges>,
 }
 
@@ -636,11 +660,8 @@ fn sync_pattern_preview(
         hide_preview_cells(&preview_pool, &mut preview_q);
         return;
     };
-    let Some((cols, rows)) = sim.app.board.size() else {
-        hide_preview_cells(&preview_pool, &mut preview_q);
-        return;
-    };
     ensure_preview_pool(&mut commands, &mut preview_pool, pattern.len(), ghost);
+    let map = sim.cell_map();
 
     let (origin_col, origin_row) = sim
         .app
@@ -648,11 +669,14 @@ fn sync_pattern_preview(
         .stamp_origin((cursor_col, cursor_row), (width, height));
 
     // Outline the footprint, clipped to the board like the cells themselves.
-    let end_col = (origin_col + width as i64).min(cols as i64);
-    let end_row = (origin_row + height as i64).min(rows as i64);
+    let (mut end_col, mut end_row) = (origin_col + width as i64, origin_row + height as i64);
+    if let Some((cols, rows)) = sim.app.board.size() {
+        end_col = end_col.min(cols as i64);
+        end_row = end_row.min(rows as i64);
+    }
     if end_col > origin_col && end_row > origin_row {
-        let first = cell_to_world(origin_col, origin_row, cols, rows).truncate();
-        let last = cell_to_world(end_col - 1, end_row - 1, cols, rows).truncate();
+        let first = map.cell_to_world(origin_col, origin_row).truncate();
+        let last = map.cell_to_world(end_col - 1, end_row - 1).truncate();
         gizmos.rect_2d(
             Isometry2d::from_translation((first + last) / 2.0),
             (last - first).abs() + Vec2::splat(CELL_SIZE),
@@ -675,8 +699,7 @@ fn sync_pattern_preview(
             continue;
         }
 
-        *transform =
-            Transform::from_translation(cell_to_world(col, row, cols, rows) + Vec3::Z * 2.0);
+        *transform = Transform::from_translation(map.cell_to_world(col, row) + Vec3::Z * 2.0);
         *visibility = Visibility::Visible;
     }
 }
@@ -715,9 +738,7 @@ fn update_hovered_cell(
     let Some(world) = cursor_world(camera, transform, cursor) else {
         return;
     };
-    if let Some((cols, rows)) = sim.app.board.size() {
-        hovered.0 = world_to_cell(world, cols, rows);
-    }
+    hovered.0 = sim.cell_map().world_to_cell(world);
 }
 
 fn render_hover_cell(
@@ -734,9 +755,6 @@ fn render_hover_cell(
     if sim.app.tool() == EditTool::Stamp && sim.app.has_selected_pattern() {
         return;
     }
-    let Some((cols, rows)) = sim.app.board.size() else {
-        return;
-    };
     let erasing = sim.app.tool() == EditTool::Erase || mouse_buttons.pressed(MouseButton::Right);
     let color = if erasing {
         theme.board().hover_erase
@@ -744,7 +762,7 @@ fn render_hover_cell(
         theme.board().hover
     };
     gizmos.rect_2d(
-        Isometry2d::from_translation(cell_to_world(col, row, cols, rows).truncate()),
+        Isometry2d::from_translation(sim.cell_map().cell_to_world(col, row).truncate()),
         Vec2::splat(CELL_SIZE),
         color,
     );
@@ -753,6 +771,7 @@ fn render_hover_cell(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::cell_to_world;
 
     #[test]
     fn texel_rows_are_flipped_relative_to_board_rows() {

@@ -22,7 +22,7 @@ Switch it off to keep the current size from then on; with it off, resizing the w
 ## Simulation
 
 - **Rule:** pick **Life**, **HighLife**, **Day & Night**, or **Seeds**, or type a rulestring and click **Apply**. See [Rules](simulation.qd#rules) for the notation.
-- **Edges:** choose **Wrap** or **Fixed**. See [Edges](simulation.qd#edges).
+- **Edges:** choose **Wrap**, **Fixed**, or **Unbounded**. See [Edges](simulation.qd#edges).
 - **Pause when settled** pauses playback once the board stops changing or starts repeating. It is off by default. See [When the board settles](simulation.qd#when-the-board-settles).
 - **Reset generation counter** sets the generation back to 0 without touching the cells.
 

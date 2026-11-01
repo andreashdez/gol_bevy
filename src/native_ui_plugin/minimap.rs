@@ -175,6 +175,10 @@ pub(super) fn sync(
         return;
     };
     let Some(cells) = state.sim.app.board.finite() else {
+        area.0 = None;
+        for mut node in &mut maps {
+            set_if_neq!(node.display, Display::None);
+        }
         return;
     };
     let (cols, rows) = cells.size();
