@@ -1334,7 +1334,7 @@ pub(super) fn sync_import_preview(
 const HELP_KEY_COLUMN: f32 = 132.0;
 
 /// Shortcut groups in two columns, which stack when the window is narrow:
-/// Simulation and Editing, then Stamps, Camera, and Interface.
+/// Simulation and Editing, then Stamps, Selection, Camera, and Interface.
 fn help_columns(parent: &mut ChildSpawnerCommands) {
     let mut sections = help_sections().into_iter();
     parent
@@ -1346,7 +1346,7 @@ fn help_columns(parent: &mut ChildSpawnerCommands) {
             ..default()
         })
         .with_children(|p| {
-            for count in [2, 3] {
+            for count in [2, 4] {
                 p.spawn(Node {
                     flex_direction: FlexDirection::Column,
                     row_gap: px(20),

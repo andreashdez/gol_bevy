@@ -14,6 +14,7 @@ pub enum EditTool {
     Draw,
     Erase,
     Stamp,
+    Select,
 }
 
 /// What an RLE import changed beyond adding a stamp.
@@ -44,6 +45,24 @@ impl fmt::Display for BoardExportError {
         f.write_str(match self {
             Self::Empty => "The board is empty, so there is nothing to export.",
             Self::TooLarge => "The board has too many live cells to export (over 67,108,864).",
+        })
+    }
+}
+
+/// Why the selection can't be copied as RLE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionExportError {
+    NothingSelected,
+    Empty,
+    TooLarge,
+}
+
+impl fmt::Display for SelectionExportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::NothingSelected => "Nothing selected · drag with the Select tool (4)",
+            Self::Empty => "No live cells in the selection",
+            Self::TooLarge => "Too many live cells in the selection to copy",
         })
     }
 }
@@ -118,6 +137,16 @@ impl PatternKind {
 
 type PatternLayout = (Vec<(usize, usize)>, usize, usize);
 
+/// A rectangle picked with the Select tool: the cell a drag started on, the one
+/// it reached, and every cell between them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Selection {
+    anchor: (i64, i64),
+    corner: (i64, i64),
+    /// Coordinates on the plane mean something else on a finite board.
+    unbounded: bool,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct StampTransform {
     rotation_quarters: u8,
@@ -156,6 +185,7 @@ pub struct App {
     redo_history: VecDeque<EditSnapshot>,
     stroke_active: bool,
     stroke_saved: bool,
+    selection: Option<Selection>,
     /// The latest generation, with the live cells before and after it.
     last_step: Option<(usize, usize, usize)>,
     /// The board before the first generation since the latest edit.
@@ -204,6 +234,7 @@ impl App {
             redo_history: VecDeque::new(),
             stroke_active: false,
             stroke_saved: false,
+            selection: None,
             last_step: None,
             run_start: None,
             settle: SettleWatch::default(),
@@ -327,6 +358,9 @@ impl App {
     fn replace_board(&mut self, board: Universe) {
         self.end_stroke();
         self.save_edit();
+        // Cells move between the board and the plane, so the selection would not
+        // cover the same ones.
+        self.clear_selection();
         self.board = board;
         self.needs_redraw = true;
     }
@@ -607,6 +641,7 @@ impl App {
         self.library_revision = self.library_revision.wrapping_add(1);
         self.selected_pattern = Some(self.patterns.len() - 1);
         self.tool = EditTool::Stamp;
+        self.selection = None;
         self.palette_hidden = false;
         self.needs_redraw = true;
         Ok(PatternImport { applied_rule })
@@ -710,6 +745,7 @@ impl App {
 
     pub fn clear_selected_pattern(&mut self) {
         self.tool = EditTool::Draw;
+        self.selection = None;
         self.palette_hidden = false;
         if self.selected_pattern.take().is_some() {
             self.needs_redraw = true;
@@ -744,6 +780,7 @@ impl App {
 
         self.selected_pattern = Some(index);
         self.tool = EditTool::Stamp;
+        self.selection = None;
         self.needs_redraw = true;
         true
     }
@@ -864,6 +901,9 @@ impl App {
     /// hidden: it is how a pointer brings the palette back.
     pub fn set_tool(&mut self, tool: EditTool) {
         self.end_stroke();
+        if tool != EditTool::Select {
+            self.clear_selection();
+        }
         self.tool = tool;
         self.palette_hidden = false;
         if tool == EditTool::Stamp && self.selected_pattern.is_none() && !self.patterns.is_empty() {
@@ -886,6 +926,160 @@ impl App {
 
     pub fn pattern_at(&self, index: usize) -> Option<&Pattern> {
         self.patterns.get(index)
+    }
+
+    /// Starts a selection on one cell, where a drag with the Select tool begins.
+    pub fn begin_selection(&mut self, col: i64, row: i64) {
+        self.selection = Some(Selection {
+            anchor: (col, row),
+            corner: (col, row),
+            unbounded: self.board.finite().is_none(),
+        });
+    }
+
+    /// Moves the far corner of the selection, keeping the cell it started on.
+    pub fn extend_selection(&mut self, col: i64, row: i64) {
+        if let Some(selection) = &mut self.selection {
+            selection.corner = (col, row);
+        }
+    }
+
+    /// Returns whether there was a selection to drop.
+    pub fn clear_selection(&mut self) -> bool {
+        self.selection.take().is_some()
+    }
+
+    /// The selected cells, clipped to a finite board. Only the Select tool has a
+    /// selection, and none survives a move between the board and the plane.
+    pub fn selection(&self) -> Option<CellRect> {
+        let selection = self.selection.filter(|selection| {
+            self.tool == EditTool::Select && selection.unbounded == self.board.finite().is_none()
+        })?;
+        let (mut left, mut bottom) = (
+            selection.anchor.0.min(selection.corner.0),
+            selection.anchor.1.min(selection.corner.1),
+        );
+        let (mut right, mut top) = (
+            selection.anchor.0.max(selection.corner.0),
+            selection.anchor.1.max(selection.corner.1),
+        );
+        // The board may have shrunk since, by a resize or an undo.
+        if let Some((cols, rows)) = self.board.size() {
+            (left, bottom) = (left.max(0), bottom.max(0));
+            (right, top) = (right.min(cols as i64 - 1), top.min(rows as i64 - 1));
+        }
+        (left <= right && bottom <= top).then(|| CellRect {
+            left,
+            bottom,
+            width: (right - left + 1) as usize,
+            height: (top - bottom + 1) as usize,
+        })
+    }
+
+    /// Switches to the Select tool with the box around every live cell selected.
+    /// Returns false, selecting nothing, on an empty board.
+    pub fn select_live_cells(&mut self) -> bool {
+        let bounds = match &self.board {
+            Universe::Finite(board) => {
+                let (cols, rows) = board.size();
+                let live = (0..rows)
+                    .flat_map(|y| (0..cols).map(move |x| (x, y)))
+                    .filter(|&(x, y)| board.is_alive(x, y));
+                live.fold(None, |bounds: Option<((i64, i64), (i64, i64))>, (x, y)| {
+                    let (x, y) = (x as i64, y as i64);
+                    Some(bounds.map_or(((x, y), (x, y)), |(min, max)| {
+                        ((min.0.min(x), min.1.min(y)), (max.0.max(x), max.1.max(y)))
+                    }))
+                })
+            }
+            Universe::Unbounded(plane) => plane.live_bounds(),
+        };
+        let Some((min, max)) = bounds else {
+            return false;
+        };
+        self.set_tool(EditTool::Select);
+        self.begin_selection(min.0, min.1);
+        self.extend_selection(max.0, max.1);
+        true
+    }
+
+    /// The live cells inside `rect`, bottom row first.
+    fn live_cells_in(&self, rect: CellRect) -> Vec<(i64, i64)> {
+        let (right, top) = (
+            rect.left + rect.width as i64,
+            rect.bottom + rect.height as i64,
+        );
+        match &self.board {
+            Universe::Finite(board) => (rect.bottom..top)
+                .flat_map(|y| (rect.left..right).map(move |x| (x, y)))
+                .filter(|&(x, y)| board.is_alive(x as usize, y as usize))
+                .collect(),
+            // The selection can be far larger than what lives in it.
+            Universe::Unbounded(plane) => {
+                let mut cells: Vec<_> = plane
+                    .live_cells()
+                    .filter(|&(x, y)| {
+                        (rect.left..right).contains(&x) && (rect.bottom..top).contains(&y)
+                    })
+                    .collect();
+                cells.sort_unstable_by_key(|&(x, y)| (y, x));
+                cells
+            }
+        }
+    }
+
+    /// Kills every live cell in the selection, as one edit, and returns how many
+    /// there were. The selection stays.
+    pub fn erase_selection(&mut self) -> usize {
+        let Some(rect) = self.selection() else {
+            return 0;
+        };
+        let doomed = self.live_cells_in(rect);
+        if doomed.is_empty() {
+            return 0;
+        }
+        self.end_stroke();
+        self.save_edit();
+        for &(x, y) in &doomed {
+            self.board.depopulate(x, y);
+        }
+        self.needs_redraw = true;
+        doomed.len()
+    }
+
+    /// The selection as RLE with the board rule in the header. It keeps the
+    /// selection's size, empty margins included, so it lines up where pasted.
+    pub fn selection_to_rle(&self) -> Result<BoardExport, SelectionExportError> {
+        let rect = self
+            .selection()
+            .ok_or(SelectionExportError::NothingSelected)?;
+        let live = self.live_cells_in(rect);
+        if live.is_empty() {
+            return Err(SelectionExportError::Empty);
+        }
+        if live.len() > PLANE_EXPORT_CELLS_MAX {
+            return Err(SelectionExportError::TooLarge);
+        }
+        let cells: Vec<_> = live
+            .iter()
+            .map(|&(x, y)| ((x - rect.left) as usize, (y - rect.bottom) as usize))
+            .collect();
+        let comment = format!(
+            "{} × {} cells selected at generation {}",
+            rect.width, rect.height, self.epoch
+        );
+        Ok(BoardExport {
+            rle: crate::patterns::to_rle(
+                &cells,
+                rect.width,
+                rect.height,
+                Some(self.board.rule()),
+                &comment,
+            ),
+            cells: cells.len(),
+            width: rect.width,
+            height: rect.height,
+        })
     }
 
     pub fn begin_stroke(&mut self) {
@@ -2155,5 +2349,126 @@ mod tests {
         app.select_pattern(PatternKind::Glider);
         app.toggle_stamp_flip();
         assert_eq!(app.selected_pattern_status_label(), "Glider (FlipH)");
+    }
+
+    fn selecting(app: &mut App, from: (i64, i64), to: (i64, i64)) {
+        app.set_tool(EditTool::Select);
+        app.begin_selection(from.0, from.1);
+        app.extend_selection(to.0, to.1);
+    }
+
+    #[test]
+    fn a_selection_spans_its_corners_whichever_way_it_was_dragged() {
+        let mut app = App::new(16, 16);
+        selecting(&mut app, (9, 2), (4, 7));
+        let expected = CellRect {
+            left: 4,
+            bottom: 2,
+            width: 6,
+            height: 6,
+        };
+        assert_eq!(app.selection(), Some(expected));
+
+        // Only the Select tool shows one, and leaving it drops it.
+        app.set_tool(EditTool::Draw);
+        assert_eq!(app.selection(), None);
+        app.set_tool(EditTool::Select);
+        assert_eq!(app.selection(), None);
+    }
+
+    #[test]
+    fn a_selection_stays_within_a_board_that_shrank() {
+        let mut app = App::new(16, 16);
+        selecting(&mut app, (4, 4), (14, 14));
+        app.resize_board(10, 12);
+        assert_eq!(
+            app.selection(),
+            Some(CellRect {
+                left: 4,
+                bottom: 4,
+                width: 6,
+                height: 8,
+            })
+        );
+        app.resize_board(8, 8);
+        selecting(&mut app, (9, 9), (12, 12));
+        assert_eq!(app.selection(), None);
+    }
+
+    #[test]
+    fn erasing_a_selection_kills_only_its_cells_as_one_edit() {
+        for mut app in [App::new(16, 16), unbounded_app()] {
+            for cell in [(2, 2), (3, 3), (4, 4), (8, 8)] {
+                app.populate_board(cell.0, cell.1);
+            }
+            let before = app.board.snapshot_cells();
+            selecting(&mut app, (3, 3), (8, 4));
+            assert_eq!(app.erase_selection(), 2);
+            assert!(app.board.is_alive(2, 2) && app.board.is_alive(8, 8));
+            assert!(!app.board.is_alive(3, 3) && !app.board.is_alive(4, 4));
+            // Nothing left to erase is no edit.
+            assert_eq!(app.erase_selection(), 0);
+            assert!(app.undo());
+            assert_eq!(app.board.snapshot_cells(), before);
+        }
+    }
+
+    #[test]
+    fn a_selection_copies_as_rle_that_keeps_its_margins() {
+        for mut app in [App::new(16, 16), unbounded_app()] {
+            assert_eq!(
+                app.selection_to_rle(),
+                Err(SelectionExportError::NothingSelected)
+            );
+            selecting(&mut app, (5, 5), (9, 7));
+            assert_eq!(app.selection_to_rle(), Err(SelectionExportError::Empty));
+            // An L in the selection's upper right.
+            for cell in [(7, 6), (7, 7), (8, 7)] {
+                app.populate_board(cell.0, cell.1);
+            }
+            let export = app.selection_to_rle().unwrap();
+            assert_eq!((export.cells, export.width, export.height), (3, 5, 3));
+            let pattern = Pattern::from_rle("copy", &export.rle).unwrap();
+            assert_eq!((pattern.width, pattern.height), (5, 3));
+            let mut cells = pattern.cells.clone();
+            cells.sort_unstable();
+            assert_eq!(cells, vec![(2, 1), (2, 2), (3, 2)]);
+            assert_eq!(pattern.rule, Some(app.board.rule()));
+        }
+    }
+
+    #[test]
+    fn selecting_the_live_cells_boxes_them_with_the_select_tool() {
+        for mut app in [App::new(16, 16), unbounded_app()] {
+            assert!(!app.select_live_cells());
+            assert_eq!(app.tool(), EditTool::Draw);
+            app.populate_board(3, 9);
+            app.populate_board(6, 2);
+            assert!(app.select_live_cells());
+            assert_eq!(app.tool(), EditTool::Select);
+            assert_eq!(
+                app.selection(),
+                Some(CellRect {
+                    left: 3,
+                    bottom: 2,
+                    width: 4,
+                    height: 8,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn moving_between_the_board_and_the_plane_drops_the_selection() {
+        let mut app = App::new(16, 16);
+        selecting(&mut app, (1, 1), (4, 4));
+        assert_eq!(app.set_unbounded(), Ok(true));
+        assert_eq!(app.selection(), None);
+
+        // Undo brings the board back, but not a plane selection onto it.
+        selecting(&mut app, (1, 1), (4, 4));
+        assert!(app.undo());
+        assert!(app.board.finite().is_some());
+        assert_eq!(app.selection(), None);
     }
 }
