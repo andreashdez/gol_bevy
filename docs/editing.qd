@@ -41,10 +41,17 @@ With **Select**, drag across the board to select a rectangle of cells. It is out
 | .keybinding {Mod+A}               | Select the box around every live cell, and pick Select   |
 | .keybinding {Mod+C}               | Copy the selection to the clipboard as RLE               |
 | .keybinding {Mod+X}               | Copy the selection as RLE, then clear it                 |
+| .keybinding {Mod+V}               | Paste RLE from the clipboard as the stamp                |
 | .keybinding {Delete} or .keybinding {Backspace} | Kill every cell in the selection           |
 | .keybinding {Esc}                 | Deselect                                                 |
 
 Copied RLE keeps the selection's size, empty margins included, and carries the board's rule. Clearing and cutting are edits, so you can undo them. Switching to another tool, or between a finite and an unbounded board, drops the selection.
+
+### Pasting
+
+.keybinding {Mod+V} turns the RLE on the clipboard into the stamp and picks the **Stamp** tool, so a copied selection, or a pattern copied from another program, follows the pointer as a ghost until you click to place it. Each click places another copy, and .keybinding {Z} and .keybinding {F} rotate and flip it as with any stamp. A paste starts in the orientation it was copied in.
+
+A pasted stamp is not added to the pattern library and is not saved in workspaces; choosing a library pattern or pressing .keybinding {C} puts it away. The board keeps its rule, whatever rule the pasted RLE names. To keep a pattern, [import it](patterns.qd#importing-a-pattern) instead.
 
 ## Board actions
 

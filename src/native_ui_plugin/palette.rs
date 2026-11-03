@@ -283,7 +283,7 @@ pub(super) fn filter(
 }
 
 /// What the stamp preview was last drawn from.
-type PreviewKey = (Option<usize>, String, bool, Theme);
+type PreviewKey = (Option<usize>, u64, String, bool, Theme);
 
 pub(super) fn sync_preview(
     sim: Res<Simulation>,
@@ -296,6 +296,7 @@ pub(super) fn sync_preview(
 ) {
     let key = (
         sim.app.selected_pattern_index(),
+        sim.app.paste_revision(),
         sim.app.selected_pattern_status_label(),
         sim.app.has_selected_pattern(),
         *theme,

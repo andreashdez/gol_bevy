@@ -101,6 +101,8 @@ fn handle_keyboard(
             feedback.copy_selection(&mut sim.app, clipboard, false);
         } else if typed.just_typed("x") {
             feedback.copy_selection(&mut sim.app, clipboard, true);
+        } else if typed.just_typed("v") {
+            feedback.paste(&mut sim.app, clipboard);
         }
         return;
     }

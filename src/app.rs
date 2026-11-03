@@ -67,6 +67,26 @@ impl fmt::Display for SelectionExportError {
     }
 }
 
+/// Why clipboard text can't become the stamp.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PasteError {
+    Parse(PatternParseError),
+    Empty,
+}
+
+impl fmt::Display for PasteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            // Ordinary text has no header with the pattern's size.
+            Self::Parse(PatternParseError::MissingHeader | PatternParseError::MissingDimension) => {
+                f.write_str("The clipboard holds no RLE pattern")
+            }
+            Self::Parse(error) => write!(f, "Could not paste the clipboard's RLE: {error}"),
+            Self::Empty => f.write_str("The pattern on the clipboard has no live cells"),
+        }
+    }
+}
+
 /// Why playback stopped by itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoPause {
@@ -172,6 +192,11 @@ pub struct App {
     show_help: bool,
     /// selected pattern stamp for cursor placement
     selected_pattern: Option<usize>,
+    /// A stamp pasted from the clipboard, kept out of the library. While set,
+    /// it is the stamp instead of `selected_pattern`.
+    pasted: Option<Pattern>,
+    /// Counts pastes, so a view of the stamp can tell one paste from the next.
+    paste_revision: u64,
     /// transform applied to stamp before placement
     stamp_transform: StampTransform,
     /// available stamp patterns
@@ -224,6 +249,8 @@ impl App {
             needs_redraw: true,
             show_help: false,
             selected_pattern: None,
+            pasted: None,
+            paste_revision: 0,
             stamp_transform: StampTransform::default(),
             patterns: Pattern::builtins(),
             library_revision: 0,
@@ -640,6 +667,7 @@ impl App {
         self.patterns.push(pattern);
         self.library_revision = self.library_revision.wrapping_add(1);
         self.selected_pattern = Some(self.patterns.len() - 1);
+        self.pasted = None;
         self.tool = EditTool::Stamp;
         self.selection = None;
         self.palette_hidden = false;
@@ -747,14 +775,42 @@ impl App {
         self.tool = EditTool::Draw;
         self.selection = None;
         self.palette_hidden = false;
-        if self.selected_pattern.take().is_some() {
+        if self.selected_pattern.take().is_some() | self.pasted.take().is_some() {
             self.needs_redraw = true;
         }
     }
 
+    /// The library pattern that is the stamp. `None` while a paste is.
     pub fn selected_pattern_index(&self) -> Option<usize> {
         self.selected_pattern
-            .filter(|&idx| idx < self.patterns.len())
+            .filter(|&idx| self.pasted.is_none() && idx < self.patterns.len())
+    }
+
+    /// The pattern a click places: a paste, or else the library's choice.
+    fn stamp_pattern(&self) -> Option<&Pattern> {
+        self.pasted
+            .as_ref()
+            .or_else(|| self.selected_pattern.and_then(|idx| self.patterns.get(idx)))
+    }
+
+    /// Makes RLE, such as a copied selection, the stamp, without adding it to
+    /// the library. It starts unrotated, as it was copied, and the rule in its
+    /// header is left alone: a paste brings cells, not a rule.
+    pub fn paste_rle(&mut self, source: &str) -> Result<&Pattern, PasteError> {
+        let pattern = Pattern::from_named_rle("Pasted", source).map_err(PasteError::Parse)?;
+        if pattern.cells.is_empty() {
+            return Err(PasteError::Empty);
+        }
+        self.pasted = Some(pattern);
+        self.paste_revision = self.paste_revision.wrapping_add(1);
+        self.stamp_transform = StampTransform::default();
+        self.set_tool(EditTool::Stamp);
+        Ok(self.pasted.as_ref().expect("just pasted"))
+    }
+
+    /// Changes whenever a paste replaces the stamp.
+    pub fn paste_revision(&self) -> u64 {
+        self.paste_revision
     }
 
     pub fn library_revision(&self) -> u64 {
@@ -773,12 +829,13 @@ impl App {
 
     pub fn select_pattern_index(&mut self, index: usize) -> bool {
         if index >= self.patterns.len()
-            || (self.selected_pattern == Some(index) && self.tool == EditTool::Stamp)
+            || (self.selected_pattern_index() == Some(index) && self.tool == EditTool::Stamp)
         {
             return false;
         }
 
         self.selected_pattern = Some(index);
+        self.pasted = None;
         self.tool = EditTool::Stamp;
         self.selection = None;
         self.needs_redraw = true;
@@ -786,16 +843,11 @@ impl App {
     }
 
     pub fn has_selected_pattern(&self) -> bool {
-        self.tool == EditTool::Stamp
-            && self
-                .selected_pattern
-                .is_some_and(|idx| idx < self.patterns.len())
+        self.tool == EditTool::Stamp && self.stamp_pattern().is_some()
     }
 
     pub fn selected_pattern_name(&self) -> Option<&str> {
-        self.selected_pattern
-            .and_then(|idx| self.patterns.get(idx))
-            .map(|pattern| pattern.name.as_str())
+        self.stamp_pattern().map(|pattern| pattern.name.as_str())
     }
 
     pub fn selected_pattern_status_label(&self) -> String {
@@ -841,22 +893,17 @@ impl App {
         if self.tool != EditTool::Stamp {
             return None;
         }
-        self.selected_pattern.and_then(|idx| {
-            self.patterns.get(idx).map(|pattern| {
-                self.transform_pattern(&pattern.cells, pattern.width, pattern.height)
-            })
-        })
+        self.stamp_pattern()
+            .map(|pattern| self.transform_pattern(&pattern.cells, pattern.width, pattern.height))
     }
 
     pub fn place_selected_pattern_at(&mut self, col: i64, row: i64) {
-        let Some((cells, width, height)) = self.selected_pattern.and_then(|idx| {
-            self.patterns
-                .get(idx)
-                .map(|pattern| (pattern.cells.clone(), pattern.width, pattern.height))
-        }) else {
+        let Some((pattern, width, height)) = self
+            .stamp_pattern()
+            .map(|pattern| self.transform_pattern(&pattern.cells, pattern.width, pattern.height))
+        else {
             return;
         };
-        let (pattern, width, height) = self.transform_pattern(&cells, width, height);
         self.place_pattern_at(&pattern, width, height, col, row);
     }
 
@@ -906,7 +953,7 @@ impl App {
         }
         self.tool = tool;
         self.palette_hidden = false;
-        if tool == EditTool::Stamp && self.selected_pattern.is_none() && !self.patterns.is_empty() {
+        if tool == EditTool::Stamp && self.stamp_pattern().is_none() && !self.patterns.is_empty() {
             self.selected_pattern = Some(0);
         }
         self.needs_redraw = true;
@@ -2470,5 +2517,83 @@ mod tests {
         assert!(app.undo());
         assert!(app.board.finite().is_some());
         assert_eq!(app.selection(), None);
+    }
+
+    #[test]
+    fn a_copied_selection_pastes_as_a_stamp_that_places_the_same_cells() {
+        for mut app in [App::new(32, 32), unbounded_app()] {
+            // An L with an empty column on its left, kept by the copy.
+            for cell in [(4, 4), (4, 5), (5, 5)] {
+                app.populate_board(cell.0, cell.1);
+            }
+            selecting(&mut app, (3, 4), (5, 6));
+            let rle = app.selection_to_rle().unwrap().rle;
+            let library = app.pattern_count();
+            app.rotate_stamp_clockwise();
+
+            let pasted = app.paste_rle(&rle).unwrap();
+            assert_eq!((pasted.width, pasted.height), (3, 3));
+            assert_eq!(app.tool(), EditTool::Stamp);
+            assert_eq!(app.selection(), None);
+            assert!(app.has_selected_pattern());
+            assert_eq!(app.selected_pattern_name(), Some("Pasted"));
+            assert_eq!(app.stamp_orientation(), (0, false), "as it was copied");
+            assert_eq!(app.selected_pattern_index(), None);
+            assert_eq!(app.pattern_count(), library, "the library is unchanged");
+
+            // Centred on (21, 21), the 3 × 3 stamp starts at (20, 20).
+            app.place_selected_pattern_at(21, 21);
+            for cell in [(21, 20), (21, 21), (22, 21)] {
+                assert!(app.board.is_alive(cell.0, cell.1), "{cell:?}");
+            }
+            assert_eq!(app.board.live_cells_count(), 6);
+        }
+    }
+
+    #[test]
+    fn a_paste_stays_the_stamp_until_another_is_chosen_or_put_away() {
+        let mut app = App::new(16, 16);
+        app.paste_rle("x = 2, y = 1\n2o!").unwrap();
+        let revision = app.paste_revision();
+
+        // Drawing and coming back keeps the paste.
+        app.set_tool(EditTool::Draw);
+        assert!(!app.has_selected_pattern());
+        app.set_tool(EditTool::Stamp);
+        assert_eq!(app.selected_pattern_name(), Some("Pasted"));
+
+        // A library pattern replaces it, and so does a later paste.
+        app.select_pattern(PatternKind::Glider);
+        assert_eq!(app.selected_pattern_name(), Some("Glider"));
+        app.paste_rle("#N Domino\nx = 1, y = 2\no$o!").unwrap();
+        assert_eq!(app.selected_pattern_name(), Some("Domino"));
+        assert_ne!(app.paste_revision(), revision);
+        // Choosing the library pattern again works while a paste is the stamp.
+        assert!(app.select_pattern_index(PatternKind::Glider.builtin_index().unwrap()));
+
+        app.paste_rle("x = 1, y = 1\no!").unwrap();
+        app.clear_selected_pattern();
+        assert!(!app.has_selected_pattern());
+        assert_eq!(app.selected_pattern_name(), None);
+    }
+
+    #[test]
+    fn a_paste_that_is_not_a_pattern_leaves_the_stamp_and_rule_alone() {
+        let mut app = App::new(16, 16);
+        app.select_pattern(PatternKind::Glider);
+        for text in ["", "hello"] {
+            let error = app.paste_rle(text).unwrap_err();
+            assert_eq!(error.to_string(), "The clipboard holds no RLE pattern");
+        }
+        assert_eq!(
+            app.paste_rle("x = 3, y = 3\n!").err(),
+            Some(PasteError::Empty)
+        );
+        assert_eq!(app.selected_pattern_name(), Some("Glider"));
+
+        let rule = app.board.rule();
+        app.paste_rle("x = 1, y = 1, rule = B36/S23\no!").unwrap();
+        assert_eq!(app.board.rule(), rule);
+        assert!(!app.can_undo(), "pasting is no edit");
     }
 }

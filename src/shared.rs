@@ -345,6 +345,7 @@ pub fn help_sections() -> [HelpSection; 6] {
                 entry(&["Mod+A"], "Select the live cells"),
                 entry(&["Mod+C"], "Copy the selection as RLE"),
                 entry(&["Mod+X"], "Cut the selection as RLE"),
+                entry(&["Mod+V"], "Paste RLE as the stamp"),
                 BINDING_ERASE_SELECTION.into(),
                 BINDING_DESELECT.into(),
             ],
@@ -609,6 +610,32 @@ impl EditFeedback {
         match app.erase_selection() {
             0 => self.show("No live cells in the selection"),
             cells => self.show(format!("Cleared {cells} cells · U to undo")),
+        }
+    }
+
+    /// Makes the RLE on the clipboard, such as a copied selection, the stamp.
+    pub fn paste(
+        &mut self,
+        app: &mut GolApp,
+        clipboard: Option<ResMut<bevy::clipboard::Clipboard>>,
+    ) {
+        let text = match clipboard.map(|mut clipboard| clipboard.fetch_text().poll_result()) {
+            Some(Some(Ok(text))) => text,
+            Some(Some(Err(error))) => {
+                self.show(format!("Could not read the clipboard: {error}"));
+                return;
+            }
+            Some(None) | None => {
+                self.show("Could not read the clipboard: no clipboard is available");
+                return;
+            }
+        };
+        match app.paste_rle(&text) {
+            Ok(pattern) => self.show(format!(
+                "Pasted {} × {} · click to place · Z rotates, F flips",
+                pattern.width, pattern.height
+            )),
+            Err(error) => self.show(error.to_string()),
         }
     }
 
