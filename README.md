@@ -217,6 +217,7 @@ just ci-local
 | `Cmd/Ctrl+A` | Select the live cells |
 | `Cmd/Ctrl+C` | Copy the selection as RLE |
 | `Cmd/Ctrl+X` | Cut the selection as RLE |
+| `Cmd/Ctrl+V` | Paste RLE as the stamp |
 | `Delete` or `Backspace` | Clear the selected cells |
 | `Esc` | Deselect |
 

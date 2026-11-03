@@ -50,6 +50,7 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 | .keybinding {Mod+A}                              | Select the live cells           |
 | .keybinding {Mod+C}                              | Copy the selection as RLE       |
 | .keybinding {Mod+X}                              | Cut the selection as RLE        |
+| .keybinding {Mod+V}                              | Paste RLE as the stamp          |
 | .keybinding {Delete} or .keybinding {Backspace}  | Clear the selected cells        |
 | .keybinding {Esc}                                | Deselect                        |
 
