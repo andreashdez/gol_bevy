@@ -1,7 +1,7 @@
 .docname {Drawing and stamps}
 .include {docs}
 
-You edit the board with three tools, chosen in the toolbar or with .keybinding {1}, .keybinding {2}, and .keybinding {3}: **Draw**, **Erase**, and **Stamp**. The digit keys work on layouts that need Shift for digits, such as AZERTY, too.
+You edit the board with four tools, chosen in the toolbar or with .keybinding {1}, .keybinding {2}, .keybinding {3}, and .keybinding {4}: **Draw**, **Erase**, **Stamp**, and **Select**. The digit keys work on layouts that need Shift for digits, such as AZERTY, too.
 
 ## Draw and erase
 
@@ -32,6 +32,27 @@ You can add your own patterns, either for the current session through [RLE impor
 
 The stamp preview in the palette and the ghost on the board both show the orientation that will be placed. The keys also work while the palette is hidden.
 
+## Selections
+
+With **Select**, drag across the board to select a rectangle of cells. It is outlined in the same colour as a stamp's footprint. On a finite board, dragging past an edge stops the selection at it. Click without dragging to let go of the selection, or press .keybinding {Esc}.
+
+| Key                               | Effect                                                   |
+|-----------------------------------|----------------------------------------------------------|
+| .keybinding {Mod+A}               | Select the box around every live cell, and pick Select   |
+| .keybinding {Mod+C}               | Copy the selection to the clipboard as RLE               |
+| .keybinding {Mod+X}               | Copy the selection as RLE, then clear it                 |
+| .keybinding {Mod+V}               | Paste RLE from the clipboard as the stamp                |
+| .keybinding {Delete} or .keybinding {Backspace} | Kill every cell in the selection           |
+| .keybinding {Esc}                 | Deselect                                                 |
+
+Copied RLE keeps the selection's size, empty margins included, and carries the board's rule. Clearing and cutting are edits, so you can undo them. Switching to another tool, or between a finite and an unbounded board, drops the selection.
+
+### Pasting
+
+.keybinding {Mod+V} turns the RLE on the clipboard into the stamp and picks the **Stamp** tool, so a copied selection, or a pattern copied from another program, follows the pointer as a ghost until you click to place it. Each click places another copy, and .keybinding {Z} and .keybinding {F} rotate and flip it as with any stamp. A paste starts in the orientation it was copied in.
+
+A pasted stamp is not added to the pattern library and is not saved in workspaces; choosing a library pattern or pressing .keybinding {C} puts it away. The board keeps its rule, whatever rule the pasted RLE names. To keep a pattern, [import it](patterns.qd#importing-a-pattern) instead.
+
 ## Board actions
 
 | Action        | Key               | Effect                                                     |
@@ -61,6 +82,7 @@ These are edits, and can be undone:
 
 - drawing and erasing (one edit per drag)
 - placing a stamp
+- clearing or cutting a selection
 - randomizing and clearing the board
 - [resetting to start](simulation.qd#reset-to-start)
 - changing the rule, including an import that changes the rule

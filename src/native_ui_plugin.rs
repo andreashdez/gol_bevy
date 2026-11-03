@@ -1411,7 +1411,7 @@ mod tests {
             .iter(&world)
             .find_map(|(e, group)| matches!(group, toolbar::Group::Tools).then_some(e))
             .unwrap();
-        assert_eq!(groups.iter().filter(|&&e| e == tools).count(), 3);
+        assert_eq!(groups.iter().filter(|&&e| e == tools).count(), 4);
     }
 
     #[test]

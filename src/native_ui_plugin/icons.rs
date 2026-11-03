@@ -21,6 +21,7 @@ pub(super) enum Icon {
     Draw,
     Erase,
     Stamp,
+    Select,
     Reset,
     Randomize,
     Clear,
@@ -29,7 +30,7 @@ pub(super) enum Icon {
 }
 
 impl Icon {
-    const ALL: [Icon; 19] = [
+    const ALL: [Icon; 20] = [
         Icon::Play,
         Icon::Pause,
         Icon::Step,
@@ -44,6 +45,7 @@ impl Icon {
         Icon::Draw,
         Icon::Erase,
         Icon::Stamp,
+        Icon::Select,
         Icon::Reset,
         Icon::Randomize,
         Icon::Clear,
@@ -90,6 +92,7 @@ impl Icon {
             Icon::Draw => pencil(p) - HALF_STROKE,
             Icon::Erase => eraser(p) - HALF_STROKE,
             Icon::Stamp => stamp(p) - HALF_STROKE,
+            Icon::Select => marquee(p) - HALF_STROKE,
             Icon::Randomize => die(p, HALF_STROKE),
             Icon::Clear => trash(p) - HALF_STROKE,
             Icon::Import => {
@@ -384,6 +387,21 @@ fn fit(p: Vec2) -> f32 {
     segment(q, vec2(4.0, 9.0), vec2(4.0, 4.0)).min(segment(q, vec2(4.0, 4.0), vec2(9.0, 4.0)))
 }
 
+/// A dashed square, as selections are drawn in many editors.
+fn marquee(p: Vec2) -> f32 {
+    // As with the fit brackets, one quadrant draws all four sides. Each side has
+    // a corner, a dash across its middle, and gaps between.
+    let q = vec2(12.0 - (p.x - 12.0).abs(), 12.0 - (p.y - 12.0).abs());
+    let corner =
+        segment(q, vec2(4.0, 6.5), vec2(4.0, 4.0)).min(segment(q, vec2(4.0, 4.0), vec2(6.5, 4.0)));
+    let dashes = segment(q, vec2(10.5, 4.0), vec2(12.0, 4.0)).min(segment(
+        q,
+        vec2(4.0, 10.5),
+        vec2(4.0, 12.0),
+    ));
+    corner.min(dashes)
+}
+
 /// Eight teeth around a wheel with a hole in the middle.
 fn gear(p: Vec2) -> f32 {
     let q = p - vec2(12.0, 12.0);
@@ -422,6 +440,7 @@ mod tests {
             (Icon::Draw, vec2(4.6, 19.4)),
             (Icon::Erase, vec2(15.0, 21.0)),
             (Icon::Stamp, vec2(12.0, 21.0)),
+            (Icon::Select, vec2(4.0, 4.0)),
         ];
         for (icon, point) in inside {
             assert!(icon.distance(point) < -0.5, "{icon:?} at {point}");
@@ -443,6 +462,9 @@ mod tests {
         assert!(Icon::Export.distance(vec2(9.5, 12.5)) > 0.5);
         assert!(Icon::Export.distance(vec2(9.5, 6.0)) < -0.5);
         assert!(Icon::Import.distance(vec2(9.5, 6.0)) > 0.5);
+        // The selection's outline is dashed, not solid.
+        assert!(Icon::Select.distance(vec2(12.0, 4.0)) < -0.5);
+        assert!(Icon::Select.distance(vec2(8.5, 4.0)) > 0.0);
         // Redo mirrors undo.
         assert_eq!(
             Icon::Undo.distance(vec2(6.0, 12.0)),

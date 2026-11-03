@@ -28,7 +28,8 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 | .keybinding {1}                              | Draw tool                                   |
 | .keybinding {2}                              | Erase tool                                  |
 | .keybinding {3}                              | Stamp tool                                  |
-| Left drag                                    | Draw or erase with the selected tool        |
+| .keybinding {4}                              | Select tool                                 |
+| Left drag                                    | Draw, erase, or select with the tool        |
 | Left click, with a stamp selected            | Place the pattern                           |
 | Right drag                                   | Erase                                       |
 | .keybinding {U} or .keybinding {Mod+Z}       | Undo the last edit and pause                |
@@ -41,6 +42,17 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 | .keybinding {Z}    | Rotate the stamp clockwise            |
 | .keybinding {F}    | Flip the stamp horizontally           |
 | .keybinding {C}    | Clear the active stamp                |
+
+## Selection
+
+| Key                                              | Action                          |
+|--------------------------------------------------|---------------------------------|
+| .keybinding {Mod+A}                              | Select the live cells           |
+| .keybinding {Mod+C}                              | Copy the selection as RLE       |
+| .keybinding {Mod+X}                              | Cut the selection as RLE        |
+| .keybinding {Mod+V}                              | Paste RLE as the stamp          |
+| .keybinding {Delete} or .keybinding {Backspace}  | Clear the selected cells        |
+| .keybinding {Esc}                                | Deselect                        |
 
 ## View
 

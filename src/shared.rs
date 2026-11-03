@@ -149,12 +149,32 @@ pub const BINDING_TOOL_STAMP: KeyBinding = KeyBinding {
     caps: &["3"],
     action: "Stamp tool",
 };
+pub const BINDING_TOOL_SELECT: KeyBinding = KeyBinding {
+    chars: &["4"],
+    keys: &[KeyCode::Digit4],
+    caps: &["4"],
+    action: "Select tool",
+};
 /// Each tool with the shortcut that picks it.
-pub const TOOL_SHORTCUTS: [(KeyBinding, EditTool); 3] = [
+pub const TOOL_SHORTCUTS: [(KeyBinding, EditTool); 4] = [
     (BINDING_TOOL_DRAW, EditTool::Draw),
     (BINDING_TOOL_ERASE, EditTool::Erase),
     (BINDING_TOOL_STAMP, EditTool::Stamp),
+    (BINDING_TOOL_SELECT, EditTool::Select),
 ];
+
+pub const BINDING_ERASE_SELECTION: KeyBinding = KeyBinding {
+    chars: &[],
+    keys: &[KeyCode::Delete, KeyCode::Backspace],
+    caps: &["Delete", "Backspace"],
+    action: "Clear the selected cells",
+};
+pub const BINDING_DESELECT: KeyBinding = KeyBinding {
+    chars: &[],
+    keys: &[KeyCode::Escape],
+    caps: &["Esc"],
+    action: "Deselect",
+};
 
 pub const BINDING_ROTATE_STAMP: KeyBinding = KeyBinding {
     chars: &["z"],
@@ -280,7 +300,7 @@ pub struct HelpSection {
 }
 
 /// Every shortcut and pointer gesture, grouped as the Help dialog shows them.
-pub fn help_sections() -> [HelpSection; 5] {
+pub fn help_sections() -> [HelpSection; 6] {
     let entry = |caps, action| HelpEntry { caps, action };
     [
         HelpSection {
@@ -301,7 +321,8 @@ pub fn help_sections() -> [HelpSection; 5] {
                 BINDING_TOOL_DRAW.into(),
                 BINDING_TOOL_ERASE.into(),
                 BINDING_TOOL_STAMP.into(),
-                entry(&["Left drag"], "Draw or erase with the tool"),
+                BINDING_TOOL_SELECT.into(),
+                entry(&["Left drag"], "Draw, erase, or select with the tool"),
                 entry(&["Right drag"], "Erase"),
                 BINDING_RANDOMIZE.into(),
                 BINDING_CLEAR.into(),
@@ -316,6 +337,17 @@ pub fn help_sections() -> [HelpSection; 5] {
                 BINDING_ROTATE_STAMP.into(),
                 BINDING_FLIP_STAMP.into(),
                 BINDING_CLEAR_STAMP.into(),
+            ],
+        },
+        HelpSection {
+            title: "Selection",
+            entries: vec![
+                entry(&["Mod+A"], "Select the live cells"),
+                entry(&["Mod+C"], "Copy the selection as RLE"),
+                entry(&["Mod+X"], "Cut the selection as RLE"),
+                entry(&["Mod+V"], "Paste RLE as the stamp"),
+                BINDING_ERASE_SELECTION.into(),
+                BINDING_DESELECT.into(),
             ],
         },
         HelpSection {
@@ -461,6 +493,22 @@ impl CellMap {
             )),
         }
     }
+
+    /// The cell under `world`, or the nearest one on a board's edge, for a drag
+    /// that runs past it.
+    pub fn nearest_cell(self, world: Vec2) -> (i64, i64) {
+        match self {
+            Self::Board { cols, rows } => {
+                let corner = cell_to_world(0, 0, cols, rows).truncate() - CELL_SIZE / 2.0;
+                let cell = ((world - corner) / CELL_SIZE).floor();
+                (
+                    (cell.x.max(0.0) as i64).min(cols as i64 - 1),
+                    (cell.y.max(0.0) as i64).min(rows as i64 - 1),
+                )
+            }
+            Self::Plane { .. } => self.world_to_cell(world).expect("the plane has every cell"),
+        }
+    }
 }
 
 /// Generations actually achieved per second, averaged over a short window so a
@@ -545,6 +593,85 @@ impl EditFeedback {
     pub fn randomize(&mut self, app: &mut GolApp) {
         app.randomize_board();
         self.show(format!("{} randomized · U to undo", randomized_what(app)));
+    }
+
+    pub fn select_live_cells(&mut self, app: &mut GolApp) {
+        if !app.select_live_cells() {
+            self.show("Board is empty · nothing to select");
+        } else if let Some(area) = app.selection() {
+            self.show(format!("Selected {} × {} cells", area.width, area.height));
+        }
+    }
+
+    pub fn erase_selection(&mut self, app: &mut GolApp) {
+        if app.selection().is_none() {
+            return;
+        }
+        match app.erase_selection() {
+            0 => self.show("No live cells in the selection"),
+            cells => self.show(format!("Cleared {cells} cells · U to undo")),
+        }
+    }
+
+    /// Makes the RLE on the clipboard, such as a copied selection, the stamp.
+    pub fn paste(
+        &mut self,
+        app: &mut GolApp,
+        clipboard: Option<ResMut<bevy::clipboard::Clipboard>>,
+    ) {
+        let text = match clipboard.map(|mut clipboard| clipboard.fetch_text().poll_result()) {
+            Some(Some(Ok(text))) => text,
+            Some(Some(Err(error))) => {
+                self.show(format!("Could not read the clipboard: {error}"));
+                return;
+            }
+            Some(None) | None => {
+                self.show("Could not read the clipboard: no clipboard is available");
+                return;
+            }
+        };
+        match app.paste_rle(&text) {
+            Ok(pattern) => self.show(format!(
+                "Pasted {} × {} · click to place · Z rotates, F flips",
+                pattern.width, pattern.height
+            )),
+            Err(error) => self.show(error.to_string()),
+        }
+    }
+
+    /// Copies the selection to the clipboard as RLE, and with `cut` clears it.
+    /// Nothing is cleared unless the copy went through.
+    pub fn copy_selection(
+        &mut self,
+        app: &mut GolApp,
+        clipboard: Option<ResMut<bevy::clipboard::Clipboard>>,
+        cut: bool,
+    ) {
+        let export = match app.selection_to_rle() {
+            Ok(export) => export,
+            Err(error) => {
+                self.show(error.to_string());
+                return;
+            }
+        };
+        let copied = match clipboard {
+            Some(mut clipboard) => clipboard.set_text(export.rle).map_err(|e| e.to_string()),
+            None => Err("no clipboard is available".to_owned()),
+        };
+        if let Err(error) = copied {
+            self.show(format!("Could not copy to the clipboard: {error}"));
+            return;
+        }
+        let what = format!(
+            "{} live cells ({} × {})",
+            export.cells, export.width, export.height
+        );
+        if cut {
+            app.erase_selection();
+            self.show(format!("Cut {what} as RLE · U to undo"));
+        } else {
+            self.show(format!("Copied {what} as RLE"));
+        }
     }
 }
 
