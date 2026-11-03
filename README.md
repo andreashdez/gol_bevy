@@ -35,7 +35,7 @@ workspace controls. Below 1010 pixels wide, the workspace controls move into a m
 Resizing preserves keyboard focus and the camera view relative to the fitted board.
 The workspace group has icon toggles for the grid and cell age, which show whether they are on,
 plus arrows into and out of a tray for Import and Export, a gear for Settings, and a ? for Help.
-Every toolbar button is an icon, including a pencil, an eraser, and a stamp for the tools, a die
+Every toolbar button is an icon, including a pencil, an eraser, a stamp, and a dashed square for the tools, a die
 for Randomize, and a bin for Clear; tooltips give their names and shortcuts.
 
 The pattern palette floats over the left of the canvas while the Stamp tool is active. Draw,
@@ -193,7 +193,8 @@ just ci-local
 | `1` | Draw tool |
 | `2` | Erase tool |
 | `3` | Stamp tool |
-| `Left drag` | Draw or erase with the tool |
+| `4` | Select tool |
+| `Left drag` | Draw, erase, or select with the tool |
 | `Right drag` | Erase |
 | `R` | Randomize the board or view |
 | `X` | Clear the board |
@@ -208,6 +209,16 @@ just ci-local
 | `Z` | Rotate 90° clockwise |
 | `F` | Flip horizontally |
 | `C` | Put the stamp away and draw |
+
+### Selection
+
+| Keys | Action |
+| --- | --- |
+| `Cmd/Ctrl+A` | Select the live cells |
+| `Cmd/Ctrl+C` | Copy the selection as RLE |
+| `Cmd/Ctrl+X` | Cut the selection as RLE |
+| `Delete` or `Backspace` | Clear the selected cells |
+| `Esc` | Deselect |
 
 ### Camera
 

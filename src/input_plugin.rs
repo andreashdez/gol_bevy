@@ -2,18 +2,18 @@ use crate::{
     app::EditTool,
     canvas_view::{CanvasView, cursor_world},
     shared::{
-        BINDING_CLEAR, BINDING_CLEAR_STAMP, BINDING_FLIP_STAMP, BINDING_PAN_DOWN, BINDING_PAN_LEFT,
-        BINDING_PAN_RIGHT, BINDING_PAN_UP, BINDING_QUIT, BINDING_RANDOMIZE, BINDING_RESET_CAMERA,
-        BINDING_RESET_EPOCH, BINDING_RESET_TO_START, BINDING_ROTATE_STAMP, BINDING_RUN_PAUSE,
-        BINDING_SLOW_DOWN, BINDING_SPEED_UP, BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE,
-        BINDING_TOGGLE_DIAGNOSTICS, BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP,
-        BINDING_TOGGLE_PALETTE, CAMERA_PAN_SPEED, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP,
-        DiagnosticsOverlay, EditFeedback, GridOverlay, MainCamera, Simulation, TOOL_SHORTCUTS,
-        TypedKeys, UpdateSet, collect_typed_keys,
+        BINDING_CLEAR, BINDING_CLEAR_STAMP, BINDING_DESELECT, BINDING_ERASE_SELECTION,
+        BINDING_FLIP_STAMP, BINDING_PAN_DOWN, BINDING_PAN_LEFT, BINDING_PAN_RIGHT, BINDING_PAN_UP,
+        BINDING_QUIT, BINDING_RANDOMIZE, BINDING_RESET_CAMERA, BINDING_RESET_EPOCH,
+        BINDING_RESET_TO_START, BINDING_ROTATE_STAMP, BINDING_RUN_PAUSE, BINDING_SLOW_DOWN,
+        BINDING_SPEED_UP, BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_DIAGNOSTICS,
+        BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, BINDING_TOGGLE_PALETTE, CAMERA_PAN_SPEED,
+        CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay, EditFeedback, GridOverlay,
+        MainCamera, Simulation, TOOL_SHORTCUTS, TypedKeys, UpdateSet, collect_typed_keys,
     },
     ui_input::{UiInputCapture, canvas_keyboard_available},
 };
-use bevy::{input::mouse::MouseWheel, prelude::*, window::PrimaryWindow};
+use bevy::{clipboard::Clipboard, input::mouse::MouseWheel, prelude::*, window::PrimaryWindow};
 pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
@@ -76,6 +76,8 @@ fn handle_keyboard(
     mut diagnostics: ResMut<DiagnosticsOverlay>,
     mut grid_overlay: ResMut<GridOverlay>,
     mut feedback: ResMut<EditFeedback>,
+    // Absent in tests, which must not touch the system clipboard.
+    clipboard: Option<ResMut<Clipboard>>,
 ) {
     // Fast chords can press and release the modifier within one frame.
     let command = keys.any_pressed(COMMAND_KEYS)
@@ -93,8 +95,20 @@ fn handle_keyboard(
             } else {
                 feedback.undo(&mut sim.app);
             }
+        } else if typed.just_typed("a") {
+            feedback.select_live_cells(&mut sim.app);
+        } else if typed.just_typed("c") {
+            feedback.copy_selection(&mut sim.app, clipboard, false);
+        } else if typed.just_typed("x") {
+            feedback.copy_selection(&mut sim.app, clipboard, true);
         }
         return;
+    }
+    if BINDING_ERASE_SELECTION.just_pressed(&keys, &typed) {
+        feedback.erase_selection(&mut sim.app);
+    }
+    if BINDING_DESELECT.just_pressed(&keys, &typed) {
+        sim.app.clear_selection();
     }
     if BINDING_RUN_PAUSE.just_pressed(&keys, &typed) {
         sim.app.toggle_running();
@@ -161,25 +175,35 @@ fn finish_mouse_stroke(mouse_buttons: Res<ButtonInput<MouseButton>>, mut sim: Re
     }
 }
 
+/// Mouse drags that began on the canvas.
+#[derive(Default)]
+struct CanvasDrag {
+    left: bool,
+    right: bool,
+    /// The cell a Select drag started on, until the button is released.
+    select_anchor: Option<(i64, i64)>,
+}
+
 fn handle_mouse(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     window_q: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     mut sim: ResMut<Simulation>,
-    mut canvas_drag: Local<(bool, bool)>,
+    mut canvas_drag: Local<CanvasDrag>,
     pointer_capture: Res<UiInputCapture>,
     mut feedback: ResMut<EditFeedback>,
 ) {
     if mouse_buttons.pressed(MouseButton::Middle) {
-        *canvas_drag = (false, false);
+        *canvas_drag = CanvasDrag::default();
         sim.app.end_stroke();
         return;
     }
     if !mouse_buttons.pressed(MouseButton::Left) {
-        canvas_drag.0 = false;
+        canvas_drag.left = false;
+        canvas_drag.select_anchor = None;
     }
     if !mouse_buttons.pressed(MouseButton::Right) {
-        canvas_drag.1 = false;
+        canvas_drag.right = false;
     }
     if pointer_capture.pointer {
         return;
@@ -197,22 +221,41 @@ fn handle_mouse(
         return;
     };
 
+    // A selection follows the pointer past a board's edge, stopping at it.
+    if let Some(anchor) = canvas_drag.select_anchor
+        && mouse_buttons.pressed(MouseButton::Left)
+    {
+        let corner = sim.cell_map().nearest_cell(world_pos);
+        // A click without a drag selects nothing.
+        if corner != anchor || sim.app.selection().is_some() {
+            if sim.app.selection().is_none() {
+                sim.app.begin_selection(anchor.0, anchor.1);
+            }
+            sim.app.extend_selection(corner.0, corner.1);
+        }
+    }
+
     let Some((col, row)) = sim.cell_map().world_to_cell(world_pos) else {
         return;
     };
 
     if mouse_buttons.just_pressed(MouseButton::Left) {
-        canvas_drag.0 = true;
+        canvas_drag.left = true;
         feedback.remaining = 0.0;
     }
     if mouse_buttons.just_pressed(MouseButton::Right) {
-        canvas_drag.1 = true;
+        canvas_drag.right = true;
         feedback.remaining = 0.0;
     }
 
-    if mouse_buttons.just_pressed(MouseButton::Left) && sim.app.has_selected_pattern() {
+    if sim.app.tool() == EditTool::Select {
+        if mouse_buttons.just_pressed(MouseButton::Left) {
+            sim.app.clear_selection();
+            canvas_drag.select_anchor = Some((col, row));
+        }
+    } else if mouse_buttons.just_pressed(MouseButton::Left) && sim.app.has_selected_pattern() {
         sim.app.place_selected_pattern_at(col, row);
-    } else if canvas_drag.0 && !sim.app.has_selected_pattern() {
+    } else if canvas_drag.left && !sim.app.has_selected_pattern() {
         sim.app.begin_stroke();
         match sim.app.tool() {
             EditTool::Erase => sim.app.depopulate_board(col, row),
@@ -220,7 +263,7 @@ fn handle_mouse(
         }
     }
 
-    if canvas_drag.1 {
+    if canvas_drag.right {
         sim.app.begin_stroke();
         sim.app.depopulate_board(col, row);
     }
@@ -602,5 +645,148 @@ mod tests {
         press(&mut app, KeyCode::Numpad1, "1");
         app.world_mut().run_system_once(handle_keyboard).unwrap();
         assert_eq!(tool(&app), crate::app::EditTool::Draw);
+    }
+
+    /// An 8 × 8 board filling an 800 × 600 window one cell to 12 pixels, with
+    /// the Select tool picked.
+    fn selection_world() -> (World, Entity) {
+        use bevy::camera::{ComputedCameraValues, RenderTargetInfo};
+        let mut world = World::new();
+        world.init_resource::<ButtonInput<MouseButton>>();
+        world.init_resource::<UiInputCapture>();
+        world.init_resource::<EditFeedback>();
+        let mut app = crate::app::App::new(8, 8);
+        app.set_tool(EditTool::Select);
+        world.insert_resource(Simulation::new(app));
+        let mut window = Window::default();
+        window.resolution.set(800.0, 600.0);
+        let window = world.spawn((window, PrimaryWindow)).id();
+        world.spawn((
+            MainCamera,
+            GlobalTransform::default(),
+            Camera {
+                computed: ComputedCameraValues {
+                    target_info: Some(RenderTargetInfo {
+                        physical_size: UVec2::new(800, 600),
+                        scale_factor: 1.0,
+                    }),
+                    // Orthographic, one world unit to a pixel, centred.
+                    clip_from_view: Mat4::from_scale(Vec3::new(1.0 / 400.0, 1.0 / 300.0, 1.0)),
+                    ..default()
+                },
+                ..default()
+            },
+        ));
+        (world, window)
+    }
+
+    /// Moves the pointer to the middle of a cell, which may lie off the board.
+    fn point_at(world: &mut World, window: Entity, (col, row): (f32, f32)) {
+        // The board's lower left corner is at (-48, -48) in the world, which
+        // the window shows 400 px right of its left edge and 300 px down.
+        let position = Vec2::new(352.0 + (col + 0.5) * 12.0, 348.0 - (row + 0.5) * 12.0);
+        world
+            .get_mut::<Window>(window)
+            .unwrap()
+            .set_cursor_position(Some(position));
+    }
+
+    #[test]
+    fn dragging_with_the_select_tool_selects_up_to_the_board_edge() {
+        let (mut world, window) = selection_world();
+        let mouse = world.register_system(handle_mouse);
+        let selection = |world: &World| world.resource::<Simulation>().app.selection();
+
+        point_at(&mut world, window, (2.0, 3.0));
+        world
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        world.run_system(mouse).unwrap();
+        world.resource_mut::<ButtonInput<MouseButton>>().clear();
+        assert_eq!(selection(&world), None);
+
+        // Past the board's upper right, the selection stops at its corner.
+        point_at(&mut world, window, (20.0, 20.0));
+        world.run_system(mouse).unwrap();
+        let expected = crate::sparse_board::CellRect {
+            left: 2,
+            bottom: 3,
+            width: 6,
+            height: 5,
+        };
+        assert_eq!(selection(&world), Some(expected));
+        world
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .release(MouseButton::Left);
+        world.run_system(mouse).unwrap();
+        world.resource_mut::<ButtonInput<MouseButton>>().clear();
+        assert_eq!(selection(&world), Some(expected));
+        assert_eq!(
+            world.resource::<Simulation>().app.board.live_cells_count(),
+            0,
+            "selecting draws nothing"
+        );
+
+        // A click without a drag lets go of it.
+        point_at(&mut world, window, (1.0, 1.0));
+        world
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        world.run_system(mouse).unwrap();
+        world
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .release(MouseButton::Left);
+        world.run_system(mouse).unwrap();
+        assert_eq!(selection(&world), None);
+    }
+
+    #[test]
+    fn selection_keys_clear_cells_and_deselect() {
+        let run = |app: crate::app::App, key: Option<KeyCode>, typed_key: Option<&str>| {
+            let mut world = World::new();
+            world.insert_resource(Simulation::new(app));
+            let mut keys = ButtonInput::<KeyCode>::default();
+            let mut typed = TypedKeys::default();
+            if let Some(key) = key {
+                keys.press(key);
+            }
+            if let Some(character) = typed_key {
+                keys.press(KeyCode::ControlLeft);
+                typed.press(character);
+            }
+            world.insert_resource(keys);
+            world.insert_resource(typed);
+            world.insert_resource(DiagnosticsOverlay { enabled: false });
+            world.insert_resource(GridOverlay { enabled: false });
+            world.init_resource::<EditFeedback>();
+            world.run_system_once(handle_keyboard).unwrap();
+            let message = world.resource::<EditFeedback>().message.to_string();
+            (world.remove_resource::<Simulation>().unwrap().app, message)
+        };
+        let mut app = crate::app::App::new(8, 8);
+        app.populate_board(1, 1);
+        app.populate_board(5, 5);
+
+        let (selected, message) = run(app, None, Some("a"));
+        assert_eq!(selected.tool(), EditTool::Select);
+        assert_eq!(message, "Selected 5 × 5 cells");
+
+        let (mut app, message) = run(selected, Some(KeyCode::Escape), None);
+        assert_eq!(app.selection(), None);
+        assert_eq!(message, "");
+
+        app.begin_selection(0, 0);
+        app.extend_selection(2, 2);
+        let (app, message) = run(app, Some(KeyCode::Backspace), None);
+        assert_eq!(app.board.live_cells_count(), 1);
+        assert!(app.board.is_alive(5, 5));
+        assert_eq!(message, "Cleared 1 cells · U to undo");
+
+        // Without a clipboard, cutting reports it and keeps the cells.
+        let mut app = app;
+        app.extend_selection(7, 7);
+        let (app, message) = run(app, None, Some("x"));
+        assert_eq!(app.board.live_cells_count(), 1);
+        assert!(message.contains("clipboard"), "{message}");
     }
 }

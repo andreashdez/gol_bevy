@@ -10,8 +10,8 @@ pub(super) const COLLAPSE_BELOW_WIDTH: f32 = 1010.0;
 /// Column budgets for the groups before the workspace controls, with a little
 /// slack. With those controls, one row needs 1010 px; collapsed, it fits the
 /// 800 px minimum window.
-const PLAYBACK_WIDTH: f32 = 378.0;
-const TOOLS_WIDTH: f32 = 140.0;
+const PLAYBACK_WIDTH: f32 = 338.0;
+const TOOLS_WIDTH: f32 = 180.0;
 const EDITING_WIDTH: f32 = 180.0;
 const MENU_WIDTH: f32 = 220.0;
 
@@ -127,6 +127,7 @@ pub(super) fn spawn(commands: &mut Commands) {
                         icon_button(p, "Draw", Icon::Draw, Action::Tool(EditTool::Draw));
                         icon_button(p, "Erase", Icon::Erase, Action::Tool(EditTool::Erase));
                         icon_button(p, "Stamp", Icon::Stamp, Action::Tool(EditTool::Stamp));
+                        icon_button(p, "Select", Icon::Select, Action::Tool(EditTool::Select));
                     }
                     Group::Editing => {
                         icon_button(p, "Randomize", Icon::Randomize, Action::Randomize);

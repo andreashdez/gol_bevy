@@ -240,6 +240,7 @@ impl Plugin for RenderPlugin {
                         .before(render_hover_cell),
                     sync_pattern_preview.in_set(UpdateSet::Render),
                     render_hover_cell.in_set(UpdateSet::Render),
+                    render_selection.in_set(UpdateSet::Render),
                 ),
             );
     }
@@ -739,6 +740,27 @@ fn update_hovered_cell(
         return;
     };
     hovered.0 = sim.cell_map().world_to_cell(world);
+}
+
+/// Outlines the selection, in the stamp outline's colour: both mark cells a tool
+/// is about to act on, rather than cells of the board.
+fn render_selection(sim: Res<Simulation>, theme: Res<Theme>, mut gizmos: Gizmos) {
+    let Some(area) = sim.app.selection() else {
+        return;
+    };
+    let map = sim.cell_map();
+    let first = map.cell_to_world(area.left, area.bottom).truncate();
+    let last = map
+        .cell_to_world(
+            area.left + area.width as i64 - 1,
+            area.bottom + area.height as i64 - 1,
+        )
+        .truncate();
+    gizmos.rect_2d(
+        Isometry2d::from_translation((first + last) / 2.0),
+        (last - first).abs() + Vec2::splat(CELL_SIZE),
+        theme.board().ghost_outline,
+    );
 }
 
 fn render_hover_cell(

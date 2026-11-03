@@ -81,6 +81,13 @@ pub(super) fn hint(action: Action) -> &'static str {
         Action::Tool(EditTool::Stamp) => {
             "Stamp · 3 · pick a pattern and place it on the board · H hides the palette"
         }
+        Action::Tool(EditTool::Select) => {
+            if cfg!(target_os = "macos") {
+                "Select · 4 · drag a rectangle · Delete clears it, Cmd+C copies it as RLE"
+            } else {
+                "Select · 4 · drag a rectangle · Delete clears it, Ctrl+C copies it as RLE"
+            }
+        }
         Action::Import => "Add an RLE pattern to your library, or open a workspace file",
         Action::Export => "Copy the board as RLE, or save a workspace file",
         Action::Settings => "Board size, rule, randomization, theme, grid, cell age, and edges",
