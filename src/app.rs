@@ -2265,6 +2265,21 @@ mod tests {
     }
 
     #[test]
+    fn the_largest_board_keeps_its_whole_undo_history() {
+        // The largest size Settings allows.
+        let mut app = App::new(2048, 2048);
+        let edits = EDIT_HISTORY_MAX as i64 + 2;
+        for col in 0..edits {
+            app.populate_board(col, 0);
+        }
+        assert_eq!(app.undo_history.len(), EDIT_HISTORY_MAX);
+
+        assert!(app.undo());
+        assert!(!app.board.is_alive(edits - 1, 0));
+        assert!(app.board.is_alive(edits - 2, 0));
+    }
+
+    #[test]
     fn switching_tools_preserves_stamp_selection_but_hides_ghost() {
         let mut app = App::new(8, 8);
         app.select_pattern(PatternKind::Blinker);

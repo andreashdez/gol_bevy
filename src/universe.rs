@@ -2,7 +2,7 @@
 //! [`SparseBoard`]. Cells have signed coordinates here, so the app has one way to
 //! address a cell, and a finite board takes only those it has.
 use crate::{
-    board::{Board, BoundaryMode, Rule},
+    board::{Board, BoundaryMode, PackedCells, Rule},
     patterns::{PatternParseError, RleWriter, read_rle_runs},
     sparse_board::{
         PLANE_CHUNKS_MAX, PLANE_EXPORT_CELLS_MAX, SparseBoard, SparseSnapshot, UnboundedRuleError,
@@ -20,7 +20,7 @@ pub enum Universe {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CellSnapshot {
     Finite {
-        cells: Vec<u8>,
+        cells: PackedCells,
         cols: usize,
         rows: usize,
         mode: BoundaryMode,
@@ -32,7 +32,7 @@ impl CellSnapshot {
     /// Memory this holds, for keeping undo history within its budget.
     pub fn bytes(&self) -> usize {
         match self {
-            Self::Finite { cells, .. } => cells.len(),
+            Self::Finite { cells, .. } => cells.bytes(),
             Self::Unbounded(snapshot) => snapshot.bytes(),
         }
     }
@@ -198,7 +198,7 @@ impl Universe {
     pub fn restore_cells(&mut self, snapshot: CellSnapshot) {
         match (&mut *self, snapshot) {
             (Self::Finite(board), CellSnapshot::Finite { cells, .. }) => {
-                board.restore_cells(cells);
+                board.restore_snapshot(&cells);
             }
             (Self::Unbounded(plane), CellSnapshot::Unbounded(chunks)) => plane.restore(chunks),
             (
@@ -212,7 +212,7 @@ impl Universe {
             ) => {
                 let mut board = Board::new(cols, rows);
                 board.set_boundary_mode(mode);
-                board.restore_cells(cells);
+                board.restore_snapshot(&cells);
                 *self = Self::Finite(board);
             }
             (Self::Finite(_), CellSnapshot::Unbounded(chunks)) => {
@@ -526,7 +526,8 @@ mod tests {
         board.populate(0, 0);
         board.populate(-1, 0);
         assert_eq!(board.snapshot_cells().bytes(), 1024);
-        assert_eq!(finite().snapshot_cells().bytes(), 16 * 8);
+        // A bit per cell.
+        assert_eq!(finite().snapshot_cells().bytes(), 16 * 8 / 8);
     }
 
     #[test]
