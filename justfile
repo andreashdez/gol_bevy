@@ -21,6 +21,10 @@ ci-local:
 	just clippy
 	just test
 
+# Checks that a release tag matches the version in Cargo.toml, as CI does on a tag.
+release-check tag:
+	scripts/check-release-version.sh "{{tag}}"
+
 # Universal (Apple silicon + Intel) macOS binary in dist/. CI runs this for
 # tagged releases; run it locally to test a release build. Needs a Mac.
 release-macos version=`git describe --tags --always`:
