@@ -3,13 +3,13 @@
 
 ## Toolchain
 
-The Rust version is pinned in `rust-toolchain.toml` (currently **1.99.0**, with `rustfmt` and `clippy`). Inside the project, rustup picks it automatically. If it is not installed yet, run once:
+The Rust version is pinned in `rust-toolchain.toml` (currently **1.100.0**, with `rustfmt` and `clippy`). Inside the project, rustup picks it automatically. If it is not installed yet, run once:
 
 ```shell
 rustup toolchain install
 ```
 
-CI uses the matching `rust:1.99.0-trixie` image, so a new Rust release cannot change what CI accepts. To move to a newer Rust, change the version in `rust-toolchain.toml` and `.github/workflows/ci.yml` together.
+CI uses the matching `rust:1.100.0-trixie` image, so a new Rust release cannot change what CI accepts. To move to a newer Rust, change the version in `rust-toolchain.toml` and `.github/workflows/ci.yml` together.
 
 The crate uses the Rust 2024 edition.
 
