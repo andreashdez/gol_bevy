@@ -40,10 +40,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --all-targets --all-features --locked
 
-  # Release builds run only for tags, once lint and tests have passed.
+  # A tag must match the version in Cargo.toml before anything is built for it.
+  version:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/check-release-version.sh "$GITHUB_REF_NAME"
+
+  # Release builds run only for tags, once lint, tests, and the version check have passed.
   release-linux:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [fmt, clippy, test]
+    needs: [fmt, clippy, test, version]
     runs-on: ubuntu-latest
     container: rust:1.99.0-trixie
     env:
@@ -63,7 +71,7 @@ jobs:
   # Cross-compiled with MinGW, so it needs no Windows runner.
   release-windows:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [fmt, clippy, test]
+    needs: [fmt, clippy, test, version]
     runs-on: ubuntu-latest
     container: rust:1.99.0-trixie
     env:
@@ -84,7 +92,7 @@ jobs:
   # macOS release builds.
   release-macos:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [fmt, clippy, test]
+    needs: [fmt, clippy, test, version]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -110,10 +118,14 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # The notes list the pull requests merged since the previous release, after
+      # the line given with --notes.
       - run: >
           gh release create "$GITHUB_REF_NAME" dist/*
           --repo "$GITHUB_REPOSITORY"
+          --verify-tag
           --title "gol-bevy $GITHUB_REF_NAME"
-          --notes "Built from $GITHUB_SHA. Download the archive for your platform, unpack it, and run gol-bevy."
+          --generate-notes
+          --notes "Download the archive for your platform, unpack it, and run gol-bevy."
         env:
           GH_TOKEN: ${{ github.token }}
