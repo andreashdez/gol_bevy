@@ -645,6 +645,18 @@ impl Board {
         })
     }
 
+    /// The run of [`row_cells`](Self::row_cells) that starts at cell `first`.
+    pub fn cells_from(&self, first: usize) -> RowCells {
+        let shape = self.shape;
+        let (row, cx) = (first / shape.cols, first % shape.cols / SIDE);
+        debug_assert!(row < shape.rows && (first % shape.cols).is_multiple_of(SIDE));
+        RowCells {
+            first,
+            cells: shape.valid_cols(cx),
+            alive: self.chunks[shape.slot(cx, row / SIDE)][row % SIDE],
+        }
+    }
+
     /// The column and row of every live cell, row by row from row 0.
     pub fn live_cells(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
         let cols = self.shape.cols;
@@ -1497,6 +1509,7 @@ mod tests {
         let mut expected = 0;
         for run in board.row_cells() {
             assert_eq!(run.first, expected);
+            assert_eq!(board.cells_from(run.first), run);
             assert_eq!(run.cells, super::low_bits(run.len()));
             assert!(!run.is_empty());
             for (idx, alive) in run.iter() {

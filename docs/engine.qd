@@ -73,6 +73,8 @@ The minimap counts the live cells in each of its blocks by counting bits a word 
 
 The board is drawn as a single texture with one texel per cell, so the cell count costs no entities. The board keeps a mask of the cells that changed since the last frame, a word per row of a chunk. After each frame's steps, the renderer takes the rows with a changed cell, each with its mask and its cells, and rewrites only those texels. Resizing, randomizing, and clearing request a full redraw instead.
 
+With cell age showing, cells keep fading for a while after they last changed, so the renderer also keeps a mask of the cells still ageing, a word per row of a chunk, and repaints only those. A cell drops out of the mask once it reaches full age, so on a settled board the age pass costs next to nothing. On a 2048 × 2048 board of 30% noise, this cut the age pass from about 1.7 ms to 0.55 ms a frame.
+
 The grid overlay draws only lines that cross the viewport, and none at all below a few pixels per cell, so its cost follows the screen size, not the board size.
 
 ## Frame budget
@@ -90,7 +92,7 @@ At a fixed speed, a frame runs at most 8 generations to catch up, then drops any
 
 It also checks banded steps against serial ones, that a glider keeps the work to a handful of rows, and resizing, snapshots, and the overview across chunk edges.
 
-`render_plugin.rs` steps a board wider and taller than a chunk and checks every texel against the cell it stands for.
+`render_plugin.rs` steps a board wider and taller than a chunk and checks every texel, and every cell's age, against the cell it stands for. It also checks that only cells still ageing are revisited.
 
 `sparse_board.rs` checks stepping against a brute-force simulation and against `Board`, with extra attention to chunk edges and corners, since a row left unscheduled would silently give wrong cells rather than fail. It also checks banded steps against serial ones, the known final population of the R-pentomino, and that a glider stays in a handful of chunks.
 

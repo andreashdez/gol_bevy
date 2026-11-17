@@ -50,7 +50,34 @@ pub(crate) struct CellAges {
     ages: Vec<u8>,
     /// The generation counter at the last sync, to tell how many generations ran since.
     epoch: usize,
+    /// The first cell of each run of the board's rows with a cell still ageing,
+    /// so a generation visits those cells and not the whole board. Most of a
+    /// board that has run for a while is settled.
+    ageing: Vec<u32>,
+    /// The cells of each run that may still be ageing, by the run's place among
+    /// the board's runs. A run is in `ageing` while it has any.
+    ageing_cells: Vec<u64>,
 }
+
+impl CellAges {
+    /// Has `cells` of the run starting at `first` age from now on. `across` is
+    /// how many runs a row of the board is handed over in.
+    fn keep_ageing(&mut self, first: usize, cells: u64, cols: usize, across: usize) {
+        let ageing = &mut self.ageing_cells[run_index(first, cols, across)];
+        if *ageing == 0 && cells != 0 {
+            self.ageing.push(first as u32);
+        }
+        *ageing |= cells;
+    }
+}
+
+/// The place of the run starting at `first` among the board's runs, row by row.
+fn run_index(first: usize, cols: usize, across: usize) -> usize {
+    first / cols * across + first % cols / RUN_CELLS
+}
+
+/// The most cells the board hands over at once.
+const RUN_CELLS: usize = u64::BITS as usize;
 
 /// Generations a newborn cell takes to settle into the live colour.
 const MATURE_AGE: u8 = 6;
@@ -527,7 +554,8 @@ fn sync_cells(
     let by_age = style.cell_age.enabled;
     let palette = CellPalette::new(style.theme.board(), by_age);
     let len = cols * rows;
-    let ages = &mut style.ages.ages;
+    let across = cols.div_ceil(RUN_CELLS);
+    let aged = &mut *style.ages;
 
     if !by_age {
         let mut paint = |run: RowCells| {
@@ -544,37 +572,70 @@ fn sync_cells(
     }
 
     // Switching the style on starts from a calm board: nobody knows the ages yet.
-    let reset = style.cell_age.is_changed() || ages.len() != len || dirty == DirtyCells::Full;
+    let reset = style.cell_age.is_changed() || aged.ages.len() != len || dirty == DirtyCells::Full;
     if reset {
-        ages.clear();
-        ages.resize(len, settled_age(false));
+        aged.ages.clear();
+        aged.ages.resize(len, settled_age(false));
+        aged.ageing.clear();
+        aged.ageing_cells.clear();
+        aged.ageing_cells.resize(rows * across, 0);
         for run in board.row_cells() {
-            for (age, bit) in ages[run.first..][..run.len()].iter_mut().zip(0..) {
+            for (age, bit) in aged.ages[run.first..][..run.len()].iter_mut().zip(0..) {
                 *age = settled_age(run.alive >> bit & 1 != 0);
             }
+            // Live cells look settled, but have yet to grow old.
+            aged.keep_ageing(run.first, run.alive, cols, across);
         }
     } else {
         if steps > 0 {
-            for run in board.row_cells() {
-                for (age, bit) in ages[run.first..][..run.len()].iter_mut().zip(0..) {
+            let CellAges {
+                ages,
+                ageing,
+                ageing_cells,
+                ..
+            } = aged;
+            ageing.retain(|&first| {
+                let run = board.cells_from(first as usize);
+                let cells = &mut ageing_cells[run_index(run.first, cols, across)];
+                // Texels of a row sit side by side, as its cells do.
+                let texels = texel_offset(run.first, cols, rows);
+                for (idx, alive) in (RowCells {
+                    cells: *cells,
+                    ..run
+                })
+                .iter()
+                {
+                    let (age, bit) = (&mut ages[idx], idx - run.first);
                     if *age < SETTLED_AGE {
                         *age = age.saturating_add(steps);
-                        let alive = run.alive >> bit & 1 != 0;
-                        palette.paint(data, texel_offset(run.first + bit, cols, rows), alive, *age);
+                        palette.paint(data, texels + bit * 4, alive, *age);
+                    }
+                    if *age >= SETTLED_AGE {
+                        *cells &= !(1 << bit);
                     }
                 }
-            }
+                *cells != 0
+            });
         }
         if let DirtyCells::Cells(changed) = dirty {
             for run in changed {
                 for (idx, alive) in run.iter().filter(|&(idx, _)| idx < len) {
                     // A generation gives births and deaths age 0; hand edits look settled.
-                    ages[idx] = if steps > 0 { 0 } else { settled_age(alive) };
-                    palette.paint(data, texel_offset(idx, cols, rows), alive, ages[idx]);
+                    let age = if steps > 0 { 0 } else { settled_age(alive) };
+                    aged.ages[idx] = age;
+                    palette.paint(data, texel_offset(idx, cols, rows), alive, age);
                 }
+                // A cell that just died by hand has no trail, and settles at once.
+                let ageing = if steps > 0 {
+                    run.cells
+                } else {
+                    run.cells & run.alive
+                };
+                aged.keep_ageing(run.first, ageing, cols, across);
             }
         }
     }
+    let ages = &aged.ages;
     if reset || recolor {
         for run in board.row_cells() {
             for (&age, bit) in ages[run.first..][..run.len()].iter().zip(0..) {
@@ -1057,21 +1118,53 @@ mod tests {
 
             world.run_system(sync).unwrap();
             let mut before = cells(&world);
-            // What the ages should be, kept a cell at a time.
+            // What the ages should be, kept a cell at a time with nothing skipped.
             let mut ages: Vec<u8> = before.iter().map(|&alive| settled_age(alive)).collect();
 
-            for generation in 0..12 {
-                world.resource_mut::<Simulation>().app.increment_epoch();
+            // Generations run before each frame: one, several, and none, which is a
+            // frame with only a hand edit in it. The run of nines takes cells born at
+            // different times past settling a few at a time, so that a run of cells
+            // has some settled and some not, and the seventy settles all the rest.
+            let frames = [
+                1, 1, 3, 1, 0, 7, 1, 1, 20, 1, 0, 1, 9, 9, 9, 9, 9, 9, 9, 70, 1, 1, 2, 0, 1,
+            ];
+            for (frame, generations) in frames.into_iter().enumerate() {
+                let mut changed = vec![false; cols * rows];
+                let mut after = before.clone();
+                for _ in 0..generations {
+                    world.resource_mut::<Simulation>().app.increment_epoch();
+                    let next = cells(&world);
+                    for idx in 0..cols * rows {
+                        // A cell that flips and flips back has still changed.
+                        changed[idx] |= next[idx] != after[idx];
+                    }
+                    after = next;
+                }
+                if generations == 0 {
+                    // A cell past the first chunk, drawn or erased by hand.
+                    let (col, row) = (64 + frame, 65);
+                    let app = &mut world.resource_mut::<Simulation>().app;
+                    if before[row * cols + col] {
+                        app.depopulate_board(col as i64, row as i64);
+                    } else {
+                        app.populate_board(col as i64, row as i64);
+                    }
+                    after = cells(&world);
+                    changed[row * cols + col] = true;
+                }
                 world.resource_mut::<RedrawRequested>().0 = true;
                 world.run_system(sync).unwrap();
 
-                let after = cells(&world);
                 for idx in 0..cols * rows {
                     if ages[idx] < SETTLED_AGE {
-                        ages[idx] += 1;
+                        ages[idx] = ages[idx].saturating_add(generations);
                     }
-                    if before[idx] != after[idx] {
-                        ages[idx] = 0;
+                    if changed[idx] {
+                        ages[idx] = if generations > 0 {
+                            0
+                        } else {
+                            settled_age(after[idx])
+                        };
                     }
                 }
                 let images = world.resource::<Assets<Image>>();
@@ -1081,11 +1174,67 @@ mod tests {
                     assert_eq!(
                         data[offset..offset + 4],
                         palette.texel(after[idx], if by_age { ages[idx] } else { 0 }),
-                        "cell {idx} at generation {generation}, by age: {by_age}"
+                        "cell {idx} in frame {frame}, by age: {by_age}"
                     );
+                }
+                if by_age {
+                    assert_eq!(world.resource::<CellAges>().ages, ages, "frame {frame}");
                 }
                 before = after;
             }
         }
+    }
+
+    #[test]
+    fn only_cells_still_ageing_are_visited() {
+        let mut world = World::new();
+        let mut app = GolApp::new(200, 150);
+        // A block, which never changes, and a blinker, which never stops.
+        for (col, row) in [(100, 100), (101, 100), (100, 101), (101, 101)] {
+            app.board.populate(col, row);
+        }
+        for col in 9..12 {
+            app.board.populate(col, 10);
+        }
+        world.insert_resource(Simulation::new(app));
+        world.insert_resource(RedrawRequested(true));
+        world.insert_resource(Theme::Dark);
+        world.insert_resource(CellAge { enabled: true });
+        world.init_resource::<CellAges>();
+        let mut images = Assets::<Image>::default();
+        let handle = create_board_image(&mut images, 200, 150, Theme::Dark.board().dead);
+        world.insert_resource(images);
+        world.insert_resource(BoardTexture {
+            handle,
+            cols: 200,
+            rows: 150,
+        });
+        let sync = world.register_system(sync_cells);
+        let frame = |world: &mut World| {
+            world.resource_mut::<Simulation>().app.increment_epoch();
+            world.resource_mut::<RedrawRequested>().0 = true;
+            world.run_system(sync).unwrap();
+            let mut ageing = world.resource::<CellAges>().ageing.clone();
+            ageing.sort_unstable();
+            ageing
+        };
+
+        world.run_system(sync).unwrap();
+        // Drawn cells have yet to grow old: the block's two rows, and the blinker's
+        // three now it has turned.
+        let block = [100 * 200 + 64, 101 * 200 + 64];
+        assert_eq!(
+            frame(&mut world),
+            [9 * 200, 10 * 200, 11 * 200, block[0], block[1]]
+        );
+
+        for _ in 0..usize::from(SETTLED_AGE) {
+            frame(&mut world);
+        }
+        // The block has settled; the blinker's three rows change every generation.
+        assert_eq!(frame(&mut world), [9 * 200, 10 * 200, 11 * 200]);
+        // Of its cells, only the four that turn on and off: its centre has grown old.
+        let cells = &world.resource::<CellAges>().ageing_cells;
+        assert_eq!(cells.iter().map(|cells| cells.count_ones()).sum::<u32>(), 4);
     }
 }
