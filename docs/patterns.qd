@@ -18,7 +18,7 @@ If the RLE header declares a rule that differs from the board's, the board switc
 
 If the RLE cannot be read, the dialog shows why, for example `Could not import: RLE body missing '!' terminator`.
 
-> Note: Imported patterns last for the current session. Drafts in the import dialog are kept while the app is open, too. To keep a pattern permanently, add it as a [built-in pattern](#built-in-patterns).
+> Note: Imported patterns last for the current session. Drafts in the import dialog are kept while the app is open, too. To keep imported patterns between runs, save a [workspace](editing.qd#save-and-reopen-workspaces), or add one permanently as a [built-in pattern](#built-in-patterns).
 
 ## Exporting the board
 

@@ -14,7 +14,7 @@ bench:
 	cargo bench --bench board_step --locked
 
 readme-check:
-	cargo test readme_contains_controls_text --locked
+	cargo test readme_lists_every_shortcut --locked
 
 ci-local:
 	just fmt-check

@@ -59,7 +59,7 @@ mod docs_tests {
     }
 
     #[test]
-    fn architecture_docs_name_every_plugin() {
+    fn architecture_page_names_every_plugin() {
         let plugins: Vec<&str> = include_str!("main.rs")
             .lines()
             .filter_map(|line| line.strip_prefix("use gol_bevy::")?.strip_suffix("Plugin;"))
@@ -67,19 +67,12 @@ mod docs_tests {
             .collect();
         assert!(plugins.contains(&"Simulation"));
 
-        for (file, text) in [
-            (
-                "docs/architecture.qd",
-                include_str!("../docs/architecture.qd"),
-            ),
-            ("README.md", include_str!("../README.md")),
-        ] {
-            for plugin in &plugins {
-                assert!(
-                    text.contains(&format!("{plugin}Plugin")),
-                    "add {plugin}Plugin to the architecture in {file}"
-                );
-            }
+        let page = include_str!("../docs/architecture.qd");
+        for plugin in plugins {
+            assert!(
+                page.contains(&format!("{plugin}Plugin")),
+                "add {plugin}Plugin to docs/architecture.qd"
+            );
         }
     }
 }

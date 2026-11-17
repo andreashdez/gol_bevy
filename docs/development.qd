@@ -57,7 +57,7 @@ The `justfile` wraps the commands CI runs:
 
 Run `just ci-local` before pushing.
 
-> Note: The controls list in `README.md` must match the in-app help text exactly; the `readme_contains_controls_text` test enforces it. If you change a key binding in `src/shared.rs`, update the README too.
+> Note: The controls list in `README.md` must match the in-app help text exactly; the `readme_lists_every_shortcut_as_help_shows_it` test enforces it. If you change a key binding in `src/shared.rs`, update the README too.
 
 ## Continuous integration
 

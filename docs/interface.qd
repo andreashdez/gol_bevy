@@ -8,7 +8,7 @@ The window has three parts: the toolbar at the top, the board canvas in the midd
 The toolbar is a single 64-pixel row at every window size. It has four groups, with subtle dividers around the drawing tools:
 
 - **Playback:** Play / Pause, Reset to start, Step, and the speed field, with its **∞** toggle for maximum speed (see [Playback and rules](simulation.qd#speed))
-- **Drawing tools:** **Draw** (a pencil), **Erase** (an eraser), and **Stamp** (a stamp); the active tool has a green outline
+- **Drawing tools:** **Draw** (a pencil), **Erase** (an eraser), **Stamp** (a stamp), and **Select** (a dashed square); the active tool has a green outline
 - **Board edits:** **Randomize** (a die), **Clear** (a bin), Undo, and Redo; history buttons are disabled when unavailable
 - **Workspace:** the **Grid** and **Cell age** toggles, **Import** and **Export** (arrows into and out of a tray), **Settings** (a gear), and **Help** (a question mark), at the right end
 
@@ -29,7 +29,7 @@ The palette holds the pattern library. It opens over the left of the canvas when
 
 Only the thumbnails scroll, with the mouse wheel or the scrollbar; search and the stamp preview stay in place. Filtering the library keeps the current stamp selected, even if the filter hides it, and scrolls back to the first match.
 
-Choosing **Draw** or **Erase**, or pressing .keybinding {C}, closes the palette. To reach cells under it while you keep stamping, press .keybinding {H}; press it again or choose **Stamp** to bring the palette back. See [Drawing and stamps](editing.qd) for how the tools work.
+Choosing **Draw**, **Erase**, or **Select**, or pressing .keybinding {C}, closes the palette. To reach cells under it while you keep stamping, press .keybinding {H}; press it again or choose **Stamp** to bring the palette back. See [Drawing and stamps](editing.qd) for how the tools work.
 
 The palette floats over the canvas, so opening or closing it never changes the canvas or the board. Clicks and scrolling over it stay in the palette.
 

@@ -101,7 +101,10 @@ Resizing the board clears the undo and redo history, because old snapshots no lo
 
 To save, open **Export** and click **Save workspace…**. It opens the
 system file dialog in your Documents folder, or wherever you last saved or opened a
-workspace. The dialog asks before replacing an existing file.
+workspace. The dialog asks before replacing an existing file. The file is written
+through a temporary one beside it, so a failed save leaves the old file as it was.
+On Linux the file dialog comes from xdg-desktop-portal, so a portal backend must be
+installed; see [Installation](install.qd#linux-x86_64).
 
 To open one, open **Import** and click **Open workspace…**. It lets you choose a `.golw` file and checks it. If it is valid, you're
 asked whether to replace the current board and imported pattern library. **Cancel**

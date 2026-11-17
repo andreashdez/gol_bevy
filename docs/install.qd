@@ -13,6 +13,7 @@ Download the `x86_64-linux.tar.gz` archive. It needs:
 
 - glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40, or later)
 - a Wayland or X11 desktop
+- for the file dialogs that open and save workspaces and \.rle files, an xdg-desktop-portal backend, such as `xdg-desktop-portal-gtk` or `xdg-desktop-portal-kde`
 
 ```shell
 tar -xzf gol-bevy-<version>-x86_64-linux.tar.gz
