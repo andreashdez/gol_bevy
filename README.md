@@ -145,6 +145,7 @@ just ci-local   # format check, clippy, and tests, as CI runs them
 | Understand how stepping stays fast | [Simulation engine](https://andreashdez.github.io/gol_bevy/engine/) |
 | Profile or benchmark a change | [Profiling and benchmarks](https://andreashdez.github.io/gol_bevy/benchmarks/) |
 | Publish a release | [Releasing](https://andreashdez.github.io/gol_bevy/releasing/) |
+| See what changed in each release | [Changelog](CHANGELOG.md) |
 
 The pages are built from `docs/`, so they can be read there too.
 
