@@ -2,9 +2,7 @@
 use super::*;
 use crate::workspace::{DecodedWorkspace, Workspace};
 use crate::{
-    board::{
-        BoundaryMode, RandomizeSettings, Rule, frontier_dense_threshold_percent_for_diagnostics,
-    },
+    board::{BoundaryMode, RandomizeSettings, Rule},
     shared::{
         BOARD_SIZE_MAX, BOARD_SIZE_MIN, BOARD_SIZE_PRESETS, BoardSettings, DiagnosticsOverlay,
         HelpSection, Theme, command_key, help_sections,
@@ -750,7 +748,7 @@ pub(super) fn update_dialogs(
                     }
                 };
                 format!(
-                    "Board                 {size}\nGeneration            {}\nLiving cells          {}\nRule                  {}\n\nAverage step          {:.3} ms\nTick interval         {}\nMeasured rate         {:.1} gen/s\nSamples               {}\nDense fallback        {}%\n\nPlayback continues while this view is open.",
+                    "Board                 {size}\nGeneration            {}\nLiving cells          {}\nRule                  {}\n\nAverage step          {:.3} ms\nTick interval         {}\nMeasured rate         {:.1} gen/s\nSamples               {}\n\nPlayback continues while this view is open.",
                     state.sim.app.epoch,
                     state.sim.app.board.live_cells_count(),
                     state.sim.app.rule_label(),
@@ -762,7 +760,6 @@ pub(super) fn update_dialogs(
                     },
                     state.sim.rate.per_second(),
                     state.sim.step_samples,
-                    frontier_dense_threshold_percent_for_diagnostics()
                 )
             }
             DialogReadout::BoardNote => if state.sim.app.board.finite().is_some() {

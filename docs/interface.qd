@@ -117,4 +117,3 @@ The diagnostics dialog shows live statistics while playback continues:
 - tick interval, or *max speed* (∞)
 - measured rate, in generations per second
 - the number of timed steps
-- the dense fallback threshold (see [Simulation engine](engine.qd#frontier-and-dense-stepping))

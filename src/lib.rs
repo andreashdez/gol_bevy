@@ -4,7 +4,6 @@ pub mod board;
 pub mod canvas_view;
 pub mod input_plugin;
 pub mod native_ui_plugin;
-pub mod packed_board;
 pub mod patterns;
 pub mod plane_view;
 pub mod render_plugin;

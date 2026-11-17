@@ -21,7 +21,7 @@ impl Plugin for SimulationPlugin {
 }
 
 /// Generations a single frame may run to catch up. Without a cap, a stalled
-/// frame (window drag, debugger pause, slow dense step) leaves a backlog whose
+/// frame (window drag, debugger pause, slow step) leaves a backlog whose
 /// catch-up frame is slower still, and the app never recovers.
 const MAX_STEPS_PER_FRAME: u64 = 8;
 

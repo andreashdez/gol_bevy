@@ -21,24 +21,13 @@ Benchmarks use [Criterion](https://bheisler.github.io/criterion.rs/book/) and li
 cargo bench --bench board_step     # or: just bench
 ```
 
-Times `Board::step` together with dirty-cell extraction, which is what each frame does:
+Times a step together with taking the cells that changed, which is what each frame does:
 
-- **sparse:** a glider on 256, 512, and 1024 boards, which stays on the frontier path
-- **noise:** deterministic random fills at 30% and 45% density on the same sizes
-- **dense:** a freshly seeded 512, 1024, and 2048 board on every iteration, so it always measures the dense scan
+- **sparse:** a glider on 256, 512, and 1024 boards, where only a few rows are evaluated
+- **noise:** deterministic random fills at 30% and 45% density on the same sizes, stepped on and on, so they settle into debris
+- **dense:** a freshly seeded 512, 1024, and 2048 board on every iteration, so every row is evaluated every time
 - **sparse board:** the glider and the fresh 30% noise on `SparseBoard`, with its dirty chunks extracted, to compare the two boards directly
-- **packed board:** every case above on `PackedBoard`, the bit-packed prototype of the finite board, with the same list of changed cells extracted. The fresh noise also runs without that list, which is what a renderer reading the board's masks of changed cells would pay
-- **debris:** one generation of a board settled for 2000 generations, on `Board` and on `PackedBoard`, where the byte board's frontier step is at its best
-
-### dense_crossover
-
-```shell
-cargo bench --bench dense_crossover
-```
-
-Times the frontier step against the dense scan on soup covering a growing share of the board. Use it to choose the [dense fallback threshold](engine.qd#frontier-and-dense-stepping), and re-run it after changing either path.
-
-To try a different threshold without rebuilding, set `GOL_FRONTIER_DENSE_THRESHOLD_PERCENT` when running the app.
+- **debris:** one generation of a board settled for 2000 generations, from the same state each time
 
 ## CPU profiling
 
