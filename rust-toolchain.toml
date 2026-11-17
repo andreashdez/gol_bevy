@@ -2,5 +2,5 @@
 # Rust release cannot fail CI with fresh lints. Keep in step with the image in
 # .github/workflows/ci.yml; bump both together.
 [toolchain]
-channel = "1.99.0"
+channel = "1.100.0"
 components = ["rustfmt", "clippy"]

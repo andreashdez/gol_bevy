@@ -15,7 +15,7 @@ jobs:
     # Matches rust-toolchain.toml, so rustup finds the pinned toolchain already
     # installed. The Debian release is pinned too: it sets the oldest glibc the
     # Linux release build runs on.
-    container: rust:1.99.0-trixie
+    container: rust:1.100.0-trixie
     steps:
       - uses: actions/checkout@v7
       - run: rustup component add rustfmt
@@ -23,7 +23,7 @@ jobs:
 
   clippy:
     runs-on: ubuntu-latest
-    container: rust:1.99.0-trixie
+    container: rust:1.100.0-trixie
     steps:
       - uses: actions/checkout@v7
       - run: apt-get update && apt-get install -y --no-install-recommends $LINUX_DEPS
@@ -33,7 +33,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    container: rust:1.99.0-trixie
+    container: rust:1.100.0-trixie
     steps:
       - uses: actions/checkout@v7
       - run: apt-get update && apt-get install -y --no-install-recommends $LINUX_DEPS
@@ -53,7 +53,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     needs: [fmt, clippy, test, version]
     runs-on: ubuntu-latest
-    container: rust:1.99.0-trixie
+    container: rust:1.100.0-trixie
     env:
       # Symbols are a third of the binary; local release builds keep them for profiling.
       CARGO_PROFILE_RELEASE_STRIP: symbols
@@ -73,7 +73,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     needs: [fmt, clippy, test, version]
     runs-on: ubuntu-latest
-    container: rust:1.99.0-trixie
+    container: rust:1.100.0-trixie
     env:
       CARGO_PROFILE_RELEASE_STRIP: symbols
     steps:
