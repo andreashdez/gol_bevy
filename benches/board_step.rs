@@ -1,6 +1,7 @@
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use gol_bevy::{
     board::{Board, DirtyCells},
+    packed_board::PackedBoard,
     sparse_board::SparseBoard,
 };
 use std::hint::black_box;
@@ -153,10 +154,120 @@ fn bench_sparse_board(c: &mut Criterion) {
     group.finish();
 }
 
+fn packed_step_and_extract(board: &mut PackedBoard) -> usize {
+    let _ = board.step();
+    match board.take_dirty_cells() {
+        DirtyCells::None => 0,
+        DirtyCells::Full => usize::MAX,
+        DirtyCells::Cells(indices) => indices.len(),
+    }
+}
+
+fn packed_noise(size: usize, live_percent: u64) -> PackedBoard {
+    let mut board = PackedBoard::new(size, size);
+    for (col, row) in noise_cells(size, size, live_percent) {
+        let _ = board.populate(col, row);
+    }
+    let _ = board.take_dirty_cells();
+    board
+}
+
+/// Every case of the groups above on the bit-packed finite board, with the same
+/// cells and the same list of changed cells extracted, so the two finite boards
+/// can be compared case by case.
+fn bench_packed_board(c: &mut Criterion) {
+    let mut group = c.benchmark_group("packed_board_step");
+
+    for size in [256, 512, 1024] {
+        let mut glider = PackedBoard::new(size, size);
+        for (dx, dy) in [(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)] {
+            let _ = glider.populate(size / 2 + dx, size / 2 + dy);
+        }
+        // A new board evaluates every row once before it knows they are still.
+        let _ = packed_step_and_extract(&mut glider);
+        group.bench_function(format!("sparse_glider_{size}"), |b| {
+            b.iter(|| black_box(packed_step_and_extract(black_box(&mut glider))))
+        });
+
+        for percent in [30, 45] {
+            let mut noise = packed_noise(size, percent);
+            group.bench_function(format!("noise{percent}_{size}"), |b| {
+                b.iter(|| black_box(packed_step_and_extract(black_box(&mut noise))))
+            });
+        }
+    }
+
+    group.sample_size(20);
+    for size in [512, 1024, 2048] {
+        let seeded = packed_noise(size, 30);
+        group.bench_function(format!("fresh_noise30_{size}"), |b| {
+            b.iter_batched_ref(
+                || seeded.clone(),
+                |board| black_box(packed_step_and_extract(board)),
+                BatchSize::LargeInput,
+            )
+        });
+        // Without listing the changed cells, which a renderer reading the board's
+        // masks of them would not need.
+        group.bench_function(format!("fresh_noise30_{size}_step_only"), |b| {
+            b.iter_batched_ref(
+                || seeded.clone(),
+                |board| black_box(board.step()),
+                BatchSize::LargeInput,
+            )
+        });
+    }
+
+    group.finish();
+}
+
+/// Generations for random noise to settle into still lifes, oscillators, and the
+/// odd glider, which is what a board left running spends most of its time as.
+const DEBRIS_GENERATIONS: usize = 2000;
+
+/// One generation of settled debris on both finite boards, from the same state
+/// each time, where the byte board's frontier step is at its best.
+fn bench_debris(c: &mut Criterion) {
+    let mut group = c.benchmark_group("debris_step");
+    group.sample_size(20);
+
+    for size in [256, 512, 1024, 2048] {
+        let mut board = Board::new(size, size);
+        seed_noise(&mut board, 30);
+        let mut packed = packed_noise(size, 30);
+        for _ in 0..DEBRIS_GENERATIONS {
+            let _ = board.step();
+            let _ = packed.step();
+        }
+        let _ = board.take_dirty_cells();
+        let _ = packed.take_dirty_cells();
+        assert_eq!(board.live_cells_count(), packed.live_cells_count());
+
+        group.bench_function(format!("board_{size}"), |b| {
+            b.iter_batched_ref(
+                || board.clone(),
+                |board| black_box(step_and_extract(board)),
+                BatchSize::LargeInput,
+            )
+        });
+        group.bench_function(format!("packed_{size}"), |b| {
+            b.iter_batched_ref(
+                || packed.clone(),
+                |board| black_box(packed_step_and_extract(board)),
+                BatchSize::LargeInput,
+            )
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_board_step_and_dirty,
     bench_dense_scan,
-    bench_sparse_board
+    bench_sparse_board,
+    bench_packed_board,
+    bench_debris
 );
 criterion_main!(benches);

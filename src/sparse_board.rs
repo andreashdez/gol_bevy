@@ -182,10 +182,10 @@ impl SparseSnapshot {
 /// Which rows of a chunk changed: any of their cells, and those in its first and
 /// last columns, which is what the chunks either side of it can see.
 #[derive(Debug, Clone, Copy, Default)]
-struct ChangedRows {
-    any: u64,
-    west: u64,
-    east: u64,
+pub(crate) struct ChangedRows {
+    pub(crate) any: u64,
+    pub(crate) west: u64,
+    pub(crate) east: u64,
 }
 
 impl ChangedRows {
@@ -658,7 +658,7 @@ fn chunk_origin((x, y): ChunkKey) -> (i64, i64) {
 }
 
 /// Positions of the set bits, lowest first.
-fn bits(mut mask: u64) -> impl Iterator<Item = usize> {
+pub(crate) fn bits(mut mask: u64) -> impl Iterator<Item = usize> {
     std::iter::from_fn(move || {
         (mask != 0).then(|| {
             let bit = mask.trailing_zeros() as usize;
@@ -747,10 +747,10 @@ fn step_band(
 
 /// A row's cells and the neighbours either side of each, as three aligned planes.
 #[derive(Clone, Copy)]
-struct RowPlanes {
-    west: u64,
-    centre: u64,
-    east: u64,
+pub(crate) struct RowPlanes {
+    pub(crate) west: u64,
+    pub(crate) centre: u64,
+    pub(crate) east: u64,
 }
 
 impl RowPlanes {
@@ -764,7 +764,7 @@ impl RowPlanes {
         }
     }
 
-    fn any(self) -> u64 {
+    pub(crate) fn any(self) -> u64 {
         self.west | self.centre | self.east
     }
 }
@@ -794,10 +794,16 @@ fn next_row(around: &Around, row: usize, mask: u32) -> u64 {
     } else {
         RowPlanes::new(around, 3, row + 1)
     };
+    // Nothing is born from nothing here: rules with B0 are refused.
     if below.any() | level.any() | above.any() == 0 {
         return 0;
     }
+    next_cells(below, level, above, mask)
+}
 
+/// The next state of the 64 cells in `level.centre`, from the rows below, level
+/// with, and above them. `mask` is [`Rule::transition_mask`].
+pub(crate) fn next_cells(below: RowPlanes, level: RowPlanes, above: RowPlanes, mask: u32) -> u64 {
     let mut counters = [0; 4];
     for plane in [
         below.west,
