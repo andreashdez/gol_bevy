@@ -259,16 +259,17 @@ Runtime flow from `src/main.rs`:
 main
   -> DefaultPlugins + resources
   -> RenderPlugin (world setup, board texture/grid/wall/preview rendering)
+  -> PlaneViewPlugin (the unbounded board, on a canvas-sized texture)
+  -> CanvasViewPlugin (canvas viewport and board framing)
   -> SettingsPlugin (board size, rule, boundary, speed, and grid persistence)
   -> UiInputPlugin (UI regions, modal capture, and keyboard focus)
-  -> CanvasViewPlugin (canvas viewport and board framing)
   -> NativeUiPlugin (native toolbar + palette + import/settings/help/diagnostics dialogs)
   -> InputPlugin (keyboard, mouse, camera controls)
   -> SimulationPlugin (tick advancement, redraw collection, quit)
 
 Shared resources:
-  Simulation { app, accumulator, avg_step_ms, step_samples }
-  BoardSettings { cols, rows }
+  Simulation { app, accumulator, avg_step_ms, step_samples, rate, plane_origin, fit_view }
+  BoardSettings { cols, rows, fill_canvas }
   RedrawRequested
   DiagnosticsOverlay
   GridOverlay
@@ -276,10 +277,13 @@ Shared resources:
   UiInputRegions / UiInputCapture
 
 Core domain:
-  app::App      (state machine and user actions)
-  board::Board  (cell storage, stepping rules, dirty-cell tracking)
-  settle        (noticing a board that repeats, from generation fingerprints)
-  patterns      (built-ins from assets/patterns/ + RLE parsing)
+  app::App                  (state machine and user actions)
+  universe::Universe        (either kind of board, and undo snapshots of them)
+  board::Board              (finite board: cell storage, stepping rules, dirty-cell tracking)
+  sparse_board::SparseBoard (unbounded board: chunks of live cells at a bit each)
+  settle                    (noticing a board that repeats, from generation fingerprints)
+  patterns                  (built-ins from assets/patterns/ + RLE parsing)
+  workspace                 (versioned workspace files, written through atomic_file)
 ```
 
 ## Pattern system and RLE
