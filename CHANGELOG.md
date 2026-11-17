@@ -6,6 +6,11 @@ Add a line under Unreleased in the same pull request as the change; see
 
 ## [Unreleased]
 
+### Changed
+
+- The dialogs code is split into smaller files for file dialogs, controls, the import
+  preview, help, and tests. Nothing changes for players.
+
 ## [0.2.0] - 2026-11-17
 
 ### Added
