@@ -27,6 +27,8 @@ Times `Board::step` together with dirty-cell extraction, which is what each fram
 - **noise:** deterministic random fills at 30% and 45% density on the same sizes
 - **dense:** a freshly seeded 512, 1024, and 2048 board on every iteration, so it always measures the dense scan
 - **sparse board:** the glider and the fresh 30% noise on `SparseBoard`, with its dirty chunks extracted, to compare the two boards directly
+- **packed board:** every case above on `PackedBoard`, the bit-packed prototype of the finite board, with the same list of changed cells extracted. The fresh noise also runs without that list, which is what a renderer reading the board's masks of changed cells would pay
+- **debris:** one generation of a board settled for 2000 generations, on `Board` and on `PackedBoard`, where the byte board's frontier step is at its best
 
 ### dense_crossover
 

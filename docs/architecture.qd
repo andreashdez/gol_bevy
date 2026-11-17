@@ -12,6 +12,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
       - app.rs
       - board.rs
       - sparse_board.rs
+      - packed_board.rs
       - universe.rs
       - settle.rs
       - patterns.rs
@@ -48,6 +49,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
 | `app`                   | Application state and user actions: tools, stamps, speed, undo and redo, import and export |
 | `board`                 | The finite board: cell storage, rules, edge modes, stepping, and dirty-cell tracking |
 | `sparse_board`          | The unbounded board: chunks of live cells at a bit each, stepped a row at a time |
+| `packed_board`          | A finite board at a bit per cell on the unbounded board's row kernel: a prototype the app does not use yet |
 | `universe`              | Either kind of board behind signed cell coordinates, and the snapshots undo keeps of them |
 | `settle`                | Noticing a board that repeats, from generation fingerprints                   |
 | `patterns`              | Built-in patterns and RLE reading and writing                                 |
