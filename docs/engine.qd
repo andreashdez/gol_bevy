@@ -9,6 +9,8 @@ The board is a flat, contiguous buffer of bytes, one per cell, in row-major orde
 
 The number of live cells is tracked as cells change rather than counted, so the status bar never walks the board.
 
+Undo keeps earlier boards as `PackedCells`, one bit per cell, packed eight cells at a time. A 2048 × 2048 board takes 512 KiB per edit rather than 4 MiB, so the history budget holds all 32 edits at every board size.
+
 ## Rules as bitmasks
 
 A `Rule` stores birth and survival counts as two 9-bit masks, one bit per possible neighbour count (0 to 8). For stepping, both are packed into one 18-bit *transition mask*: birth counts in bits 0–8 and survival counts in bits 9–17. A cell's next state is then

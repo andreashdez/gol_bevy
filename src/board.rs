@@ -263,14 +263,86 @@ pub struct Board {
     dense_threshold_percent: usize,
 }
 
-impl Board {
-    pub(crate) fn snapshot_cells(&self) -> Vec<u8> {
-        self.current.clone()
+/// A board's cells at one bit each, an eighth of what the board holds them in,
+/// so undo history reaches eight times as far within its memory budget.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackedCells {
+    /// Cell `i` is bit `i % 8` of byte `i / 8`.
+    bits: Vec<u8>,
+    /// Cells held: the last byte may have bits to spare.
+    len: usize,
+}
+
+// Packing takes a cell's byte for its bit.
+const _: () = assert!(CELL_ALIVE == 1);
+
+impl PackedCells {
+    /// Eight cells at a time: read as one word, each cell is the lowest bit of its
+    /// byte, and the multiplication moves bit `8 * i` to bit `56 + i` for every
+    /// `i`. No two cells land on the same bit below that, so nothing carries.
+    const GATHER: u64 = 0x0102_0408_1020_4080;
+    const LOW_BITS: u64 = 0x0101_0101_0101_0101;
+    /// Bit `i` of byte `i`, where a byte copied into every byte keeps its own.
+    const DIAGONAL: u64 = 0x8040_2010_0804_0201;
+
+    fn pack(cells: &[u8]) -> Self {
+        let (groups, rest) = cells.as_chunks::<8>();
+        let mut bits = Vec::with_capacity(cells.len().div_ceil(8));
+        bits.extend(
+            groups
+                .iter()
+                .map(|&group| (u64::from_le_bytes(group).wrapping_mul(Self::GATHER) >> 56) as u8),
+        );
+        if !rest.is_empty() {
+            let last = rest.iter().enumerate();
+            bits.push(last.fold(0, |byte, (bit, &cell)| byte | (cell << bit)));
+        }
+        Self {
+            bits,
+            len: cells.len(),
+        }
     }
 
+    fn unpack_into(&self, cells: &mut [u8]) {
+        assert_eq!(cells.len(), self.len);
+        let (groups, rest) = cells.as_chunks_mut::<8>();
+        for (group, &byte) in groups.iter_mut().zip(&self.bits) {
+            let spread = u64::from(byte).wrapping_mul(Self::LOW_BITS) & Self::DIAGONAL;
+            // A byte holding any bit reaches its top bit; none carries into the next.
+            let word = ((spread + 0x7f7f_7f7f_7f7f_7f7f) >> 7) & Self::LOW_BITS;
+            *group = word.to_le_bytes();
+        }
+        if let Some(&last) = self.bits.last().filter(|_| !rest.is_empty()) {
+            for (bit, cell) in rest.iter_mut().enumerate() {
+                *cell = (last >> bit) & 1;
+            }
+        }
+    }
+
+    /// Memory this holds.
+    pub fn bytes(&self) -> usize {
+        self.bits.len()
+    }
+}
+
+impl Board {
+    pub(crate) fn snapshot_cells(&self) -> PackedCells {
+        PackedCells::pack(&self.current)
+    }
+
+    pub(crate) fn restore_snapshot(&mut self, cells: &PackedCells) {
+        cells.unpack_into(&mut self.current);
+        self.cells_replaced();
+    }
+
+    /// Takes one byte per cell, 1 for alive, in row order.
     pub(crate) fn restore_cells(&mut self, cells: Vec<u8>) {
         assert_eq!(cells.len(), self.current.len());
         self.current = cells;
+        self.cells_replaced();
+    }
+
+    fn cells_replaced(&mut self) {
         self.live_count = count_live(&self.current);
         self.mark_dirty_full();
         self.mark_frontier_full();
@@ -1116,7 +1188,7 @@ fn push_differences(before: &[u8], after: &[u8], start: usize, changed: &mut Vec
 
 #[cfg(test)]
 mod tests {
-    use super::{Board, BoundaryMode, DirtyCells};
+    use super::{Board, BoundaryMode, CELL_ALIVE, DirtyCells, PackedCells};
 
     fn live_cells(board: &Board) -> Vec<(usize, usize)> {
         let mut cells = Vec::new();
@@ -1369,6 +1441,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn packed_cells_hold_every_cell_at_a_bit_each() {
+        // Lengths either side of a whole byte, and of the eight cells packed at once.
+        let mut rng = fastrand::Rng::with_seed(7);
+        let mut boards: Vec<Vec<u8>> = [0, 1, 7, 8, 9, 63, 64, 65, 1000]
+            .into_iter()
+            .map(|len| (0..len).map(|_| u8::from(rng.bool())).collect())
+            .collect();
+        // Full groups, where a carry between cells would show.
+        boards.push(vec![CELL_ALIVE; 67]);
+
+        for cells in boards {
+            let packed = PackedCells::pack(&cells);
+            assert_eq!(packed.bytes(), cells.len().div_ceil(8));
+            for (index, &cell) in cells.iter().enumerate() {
+                let bit = (packed.bits[index / 8] >> (index % 8)) & 1;
+                assert_eq!(bit, cell, "cell {index} of {}", cells.len());
+            }
+            let mut unpacked = vec![2; cells.len()];
+            packed.unpack_into(&mut unpacked);
+            assert_eq!(unpacked, cells);
+        }
+    }
+
     fn assert_live_count_in_sync(board: &Board, context: &str) {
         assert_eq!(
             board.live_cells_count(),
@@ -1409,7 +1505,7 @@ mod tests {
         assert_eq!(board.live_cells_count(), 0);
         assert_live_count_in_sync(&board, "clear");
 
-        board.restore_cells(snapshot);
+        board.restore_snapshot(&snapshot);
         assert_live_count_in_sync(&board, "restore");
 
         board.populate_random();
@@ -1610,7 +1706,8 @@ mod tests {
         let mut board = Board::new(8, 8);
         board.populate_random_with(settings);
         let original = board.snapshot_cells();
-        let sequence: String = original
+        let sequence: String = board
+            .current
             .iter()
             .map(|&cell| if cell == 1 { '1' } else { '0' })
             .collect();
