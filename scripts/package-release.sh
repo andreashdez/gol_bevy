@@ -1,5 +1,5 @@
 #!/bin/sh
-# Packages a release binary with the README and licence into dist/.
+# Packages a release binary with the README, changelog, and licence into dist/.
 #
 #   scripts/package-release.sh <archive name> <binary> [tar.gz|zip]
 #
@@ -14,7 +14,7 @@ format=${3:-tar.gz}
 staging=dist/$name
 rm -rf "$staging"
 mkdir -p "$staging"
-cp "$binary" README.md LICENSE "$staging/"
+cp "$binary" README.md CHANGELOG.md LICENSE "$staging/"
 
 case $format in
 tar.gz) tar -C dist -czf "dist/$name.tar.gz" "$name" ;;

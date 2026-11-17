@@ -114,18 +114,18 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
-      # The notes list the pull requests merged since the previous release, after
-      # the line given with --notes.
+      # The notes are the version's section of CHANGELOG.md.
+      - run: scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/notes.md"
       - run: >
           gh release create "$GITHUB_REF_NAME" dist/*
           --repo "$GITHUB_REPOSITORY"
           --verify-tag
           --title "gol-bevy $GITHUB_REF_NAME"
-          --generate-notes
-          --notes "Download the archive for your platform, unpack it, and run gol-bevy."
+          --notes-file "$RUNNER_TEMP/notes.md"
         env:
           GH_TOKEN: ${{ github.token }}

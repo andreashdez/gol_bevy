@@ -4,8 +4,8 @@
 #
 #   scripts/check-release-version.sh <tag>
 #
-# The tag must be the version in Cargo.toml with a leading v, and Cargo.lock must
-# agree with Cargo.toml. Used by the version job in .github/workflows/ci.yml and
+# The tag must be the version in Cargo.toml with a leading v, Cargo.lock must
+# agree with Cargo.toml, and CHANGELOG.md must have notes for the version. Used by the version job in .github/workflows/ci.yml and
 # by `just release-check`.
 set -eu
 
@@ -35,4 +35,5 @@ if [ "$tag" != "v$manifest" ]; then
 	echo "error: tag $tag does not match Cargo.toml's version $manifest; expected v$manifest" >&2
 	exit 1
 fi
-echo "Tag $tag matches version $manifest"
+scripts/release-notes.sh "$manifest" >/dev/null
+echo "Tag $tag matches version $manifest, and CHANGELOG.md has notes for it"
