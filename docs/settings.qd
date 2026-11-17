@@ -30,7 +30,7 @@ Switch it off to keep the current size from then on; with it off, resizing the w
 
 ## Randomization
 
-Drag the **Density** slider, or focus it and use the arrow keys, to choose 0–100%. It applies as it moves. Optionally enter a **Seed** from 0 to 18446744073709551615 and click **Apply**; a blank seed means a fresh board each time. The default is 25% with no seed. The same seed, density, and board dimensions reproduce the same starting layout; share all three to repeat an experiment. Use the same rule and edge mode to reproduce its evolution.
+Drag the **Density** slider, or focus it and use the arrow keys, to choose 0–100%. It applies as it moves. Optionally enter a **Seed** from 0 to 18446744073709551615 and click **Apply**; a blank seed means a fresh board each time. The default is 25% with no seed. The same seed, density, and board dimensions reproduce the same starting layout; share all three to repeat an experiment. A seeded layout doesn't depend on anything randomized before it. Use the same rule and edge mode to reproduce its evolution.
 
 The toolbar's Randomize button and .keybinding {R} use these preferences. **Randomize now** applies the entered seed and replaces the board immediately as one undoable edit. An invalid seed leaves both the preferences and the board unchanged. On an unbounded board they [fill the view](editing.qd) instead.
 
