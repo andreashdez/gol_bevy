@@ -747,10 +747,7 @@ impl App {
             }
         };
         let (cols, rows) = board.size();
-        let live: Vec<(usize, usize)> = (0..rows)
-            .flat_map(|y| (0..cols).map(move |x| (x, y)))
-            .filter(|&(x, y)| board.is_alive(x, y))
-            .collect();
+        let live: Vec<(usize, usize)> = board.live_cells().collect();
         let bounds = (|| {
             Some((
                 live.iter().map(|cell| cell.0).min()?,

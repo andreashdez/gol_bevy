@@ -246,10 +246,10 @@ pub fn plane_from_board(board: &Board) -> Result<SparseBoard, UnboundedRuleError
     let mut plane = SparseBoard::default();
     plane.set_rule(board.rule())?;
     let (cols, rows) = board.size();
-    for (index, _) in board.alive_cells().enumerate().filter(|(_, alive)| *alive) {
+    for (col, row) in board.live_cells() {
         plane.populate(
-            (index % cols) as i64 - (cols / 2) as i64,
-            (index / cols) as i64 - (rows / 2) as i64,
+            col as i64 - (cols / 2) as i64,
+            row as i64 - (rows / 2) as i64,
         );
     }
     Ok(plane)
@@ -526,8 +526,8 @@ mod tests {
         board.populate(0, 0);
         board.populate(-1, 0);
         assert_eq!(board.snapshot_cells().bytes(), 1024);
-        // A bit per cell.
-        assert_eq!(finite().snapshot_cells().bytes(), 16 * 8 / 8);
+        // One chunk holds the whole of a 16 × 8 board, at the same 512 bytes.
+        assert_eq!(finite().snapshot_cells().bytes(), 512);
     }
 
     #[test]

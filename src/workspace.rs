@@ -111,10 +111,7 @@ impl Workspace {
         let rule = app.board.rule();
         let (version, boundary, board_rle, plane_origin) = match &app.board {
             Universe::Finite(board) => {
-                let cells: Vec<_> = (0..height)
-                    .flat_map(|y| (0..width).map(move |x| (x, y)))
-                    .filter(|&(x, y)| board.is_alive(x, y))
-                    .collect();
+                let cells: Vec<_> = board.live_cells().collect();
                 let boundary = match board.boundary_mode() {
                     BoundaryMode::Wrap => "wrap",
                     BoundaryMode::Fixed => "fixed",
@@ -235,14 +232,10 @@ impl Workspace {
                 "Board RLE dimensions or rule disagree with workspace metadata.",
             ));
         }
-        let mut cells = vec![0; self.width * self.height];
-        for (x, y) in pattern.cells {
-            cells[y * self.width + x] = 1;
-        }
         let mut board = Board::new(self.width, self.height);
         board.set_rule(rule);
         board.set_boundary_mode(mode);
-        board.restore_cells(cells);
+        board.replace_cells(pattern.cells);
         Ok(Universe::Finite(board))
     }
 

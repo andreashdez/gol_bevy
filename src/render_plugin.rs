@@ -1,7 +1,7 @@
 use std::f32::consts::PI;
 
 use crate::app::{App as GolApp, EditTool};
-use crate::board::{BoundaryMode, DirtyCells};
+use crate::board::{BoundaryMode, DirtyCells, RowCells};
 use crate::canvas_view::cursor_world;
 use crate::shared::{
     BoardColors, BoardSettings, CELL_SIZE, CellAge, GridOverlay, MainCamera, RedrawRequested,
@@ -530,15 +530,15 @@ fn sync_cells(
     let ages = &mut style.ages.ages;
 
     if !by_age {
-        let indices: Box<dyn Iterator<Item = usize>> = match dirty {
-            _ if recolor => Box::new(0..len),
-            DirtyCells::None => return,
-            DirtyCells::Full => Box::new(0..len),
-            DirtyCells::Cells(cells) => Box::new(cells.into_iter()),
+        let mut paint = |run: RowCells| {
+            for (idx, alive) in run.iter().filter(|&(idx, _)| idx < len) {
+                palette.paint(data, texel_offset(idx, cols, rows), alive, 0);
+            }
         };
-        for idx in indices.filter(|&idx| idx < len) {
-            let alive = board.is_alive(idx % cols, idx / cols);
-            palette.paint(data, texel_offset(idx, cols, rows), alive, 0);
+        match dirty {
+            DirtyCells::Cells(changed) if !recolor => changed.into_iter().for_each(paint),
+            DirtyCells::None if !recolor => {}
+            _ => board.row_cells().for_each(&mut paint),
         }
         return;
     }
@@ -547,28 +547,40 @@ fn sync_cells(
     let reset = style.cell_age.is_changed() || ages.len() != len || dirty == DirtyCells::Full;
     if reset {
         ages.clear();
-        ages.extend(board.alive_cells().map(settled_age));
+        ages.resize(len, settled_age(false));
+        for run in board.row_cells() {
+            for (age, bit) in ages[run.first..][..run.len()].iter_mut().zip(0..) {
+                *age = settled_age(run.alive >> bit & 1 != 0);
+            }
+        }
     } else {
         if steps > 0 {
-            for (idx, (alive, age)) in board.alive_cells().zip(ages.iter_mut()).enumerate() {
-                if *age < SETTLED_AGE {
-                    *age = age.saturating_add(steps);
-                    palette.paint(data, texel_offset(idx, cols, rows), alive, *age);
+            for run in board.row_cells() {
+                for (age, bit) in ages[run.first..][..run.len()].iter_mut().zip(0..) {
+                    if *age < SETTLED_AGE {
+                        *age = age.saturating_add(steps);
+                        let alive = run.alive >> bit & 1 != 0;
+                        palette.paint(data, texel_offset(run.first + bit, cols, rows), alive, *age);
+                    }
                 }
             }
         }
-        if let DirtyCells::Cells(cells) = dirty {
-            for idx in cells.into_iter().filter(|&idx| idx < len) {
-                let alive = board.is_alive(idx % cols, idx / cols);
-                // A generation gives births and deaths age 0; hand edits look settled.
-                ages[idx] = if steps > 0 { 0 } else { settled_age(alive) };
-                palette.paint(data, texel_offset(idx, cols, rows), alive, ages[idx]);
+        if let DirtyCells::Cells(changed) = dirty {
+            for run in changed {
+                for (idx, alive) in run.iter().filter(|&(idx, _)| idx < len) {
+                    // A generation gives births and deaths age 0; hand edits look settled.
+                    ages[idx] = if steps > 0 { 0 } else { settled_age(alive) };
+                    palette.paint(data, texel_offset(idx, cols, rows), alive, ages[idx]);
+                }
             }
         }
     }
     if reset || recolor {
-        for (idx, (alive, &age)) in board.alive_cells().zip(ages.iter()).enumerate() {
-            palette.paint(data, texel_offset(idx, cols, rows), alive, age);
+        for run in board.row_cells() {
+            for (&age, bit) in ages[run.first..][..run.len()].iter().zip(0..) {
+                let alive = run.alive >> bit & 1 != 0;
+                palette.paint(data, texel_offset(run.first + bit, cols, rows), alive, age);
+            }
         }
     }
 }
@@ -1009,5 +1021,71 @@ mod tests {
         world.resource_mut::<RedrawRequested>().0 = false;
         world.run_system(sync).unwrap();
         assert_eq!(texel(&world, 2, 2), color_to_texel(colors.live));
+    }
+    #[test]
+    fn a_board_wider_and_taller_than_a_chunk_paints_every_cell_at_its_own_texel() {
+        // Cells are stored a chunk at a time, so this is where a cell could land
+        // on a neighbour's texel: past column 64, past row 64, and at both edges.
+        let (cols, rows) = (130, 70);
+        for by_age in [false, true] {
+            let mut world = World::new();
+            let mut app = GolApp::new(cols, rows);
+            let noise = crate::board::RandomizeSettings::new(30, Some(5)).unwrap();
+            app.set_randomize_settings(noise);
+            app.randomize_board();
+            world.insert_resource(Simulation::new(app));
+            world.insert_resource(RedrawRequested(true));
+            world.insert_resource(Theme::Dark);
+            world.insert_resource(CellAge { enabled: by_age });
+            world.init_resource::<CellAges>();
+            let mut images = Assets::<Image>::default();
+            let handle = create_board_image(&mut images, cols, rows, Theme::Dark.board().dead);
+            world.insert_resource(images);
+            world.insert_resource(BoardTexture {
+                handle: handle.clone(),
+                cols,
+                rows,
+            });
+            let sync = world.register_system(sync_cells);
+            let palette = CellPalette::new(Theme::Dark.board(), by_age);
+            let cells = |world: &World| -> Vec<bool> {
+                let board = &world.resource::<Simulation>().app.board;
+                (0..cols * rows)
+                    .map(|idx| board.is_alive((idx % cols) as i64, (idx / cols) as i64))
+                    .collect()
+            };
+
+            world.run_system(sync).unwrap();
+            let mut before = cells(&world);
+            // What the ages should be, kept a cell at a time.
+            let mut ages: Vec<u8> = before.iter().map(|&alive| settled_age(alive)).collect();
+
+            for generation in 0..12 {
+                world.resource_mut::<Simulation>().app.increment_epoch();
+                world.resource_mut::<RedrawRequested>().0 = true;
+                world.run_system(sync).unwrap();
+
+                let after = cells(&world);
+                for idx in 0..cols * rows {
+                    if ages[idx] < SETTLED_AGE {
+                        ages[idx] += 1;
+                    }
+                    if before[idx] != after[idx] {
+                        ages[idx] = 0;
+                    }
+                }
+                let images = world.resource::<Assets<Image>>();
+                let data = images.get(&handle).unwrap().data.as_ref().unwrap();
+                for idx in 0..cols * rows {
+                    let offset = texel_offset(idx, cols, rows);
+                    assert_eq!(
+                        data[offset..offset + 4],
+                        palette.texel(after[idx], if by_age { ages[idx] } else { 0 }),
+                        "cell {idx} at generation {generation}, by age: {by_age}"
+                    );
+                }
+                before = after;
+            }
+        }
     }
 }

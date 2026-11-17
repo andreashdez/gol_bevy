@@ -1,63 +1,47 @@
 .docname {Simulation engine}
 .include {docs}
 
-The simulation lives in `src/board.rs`. It is plain Rust, apart from borrowing Bevy's compute task pool for parallel scans, and is built to keep large boards fast whether they are nearly empty or full of activity.
+The simulation lives in `src/board.rs`, the finite board, and `src/sparse_board.rs`, the [unbounded](#unbounded-board) one. Both are plain Rust, apart from borrowing Bevy's compute task pool to step in parallel, and both store and step cells the same way, 64 at a time. They are built to keep large boards fast whether they are nearly empty or full of activity.
 
 ## Cell storage
 
-The board is a flat, contiguous buffer of bytes, one per cell, in row-major order. A second buffer holds the next generation. The board's size is independent of the window.
+A cell takes one bit. The board is a grid of 64 × 64 chunks, each chunk 64 words of 64 bits, one word per row, so a 2048 × 2048 board is 512 KiB. A board whose size isn't a multiple of 64 ends partway through its last chunk across and its last chunk up, and the cells past its edges stay dead. The board's size is independent of the window.
 
 The number of live cells is tracked as cells change rather than counted, so the status bar never walks the board.
 
-Undo keeps earlier boards as `PackedCells`, one bit per cell, packed eight cells at a time. A 2048 × 2048 board takes 512 KiB per edit rather than 4 MiB, so the history budget holds all 32 edits at every board size.
+Undo keeps earlier boards as `PackedCells`, a copy of the chunks, so the history budget holds all 32 edits at every board size.
 
 ## Rules as bitmasks
 
-A `Rule` stores birth and survival counts as two 9-bit masks, one bit per possible neighbour count (0 to 8). For stepping, both are packed into one 18-bit *transition mask*: birth counts in bits 0–8 and survival counts in bits 9–17. A cell's next state is then
+A `Rule` stores birth and survival counts as two 9-bit masks, one bit per possible neighbour count (0 to 8), written together as an 18-bit *transition mask*: birth counts in bits 0–8 and survival counts in bits 9–17.
 
-```text
-next = (mask >> (neighbours + 9 * alive)) & 1
-```
+## Stepping a row at a time
 
-with no branch on whether the cell is alive.
+`next_cells` in `src/sparse_board.rs` works out the next state of a whole row of a chunk, 64 cells, in one go, and both boards step with it. It takes the row and the rows below and above as *planes*: the row itself, and the same row moved one cell west and one cell east, so that bit *i* of each plane is one of cell *i*'s neighbours. Adding the eight neighbour planes with bitwise logic gives each cell's neighbour count as four bits spread over four words. The rule is then applied to all 64 cells at once: for each count the rule mentions, the cells with that count are born if dead or survive if alive.
 
-## Frontier and dense stepping
+No step of this depends on how many cells are alive, so a row full of activity costs the same as a quiet one.
 
-Each generation takes one of two paths.
+## Scheduling rows
 
-**Frontier stepping** looks only at cells that changed in the last generation and their neighbours, the *candidates*, since no other cell can change. Flipped cells are written in place, without a second full buffer, so a sparse generation costs time in proportion to the activity, not the board area.
+A cell can only change after it or one of its neighbours has, so a generation looks only at the rows beside one that changed in the last generation, in the same chunk and in any neighbouring chunk that can see the change. Each chunk has a 64-bit mask of its rows to evaluate, and the board keeps a list of the chunks whose mask isn't empty. A lone glider costs a few rows, and a settled pattern costs nothing.
 
-**Dense stepping** scans every cell. It does more work per generation but no bookkeeping per cell, and its inner loop vectorizes well.
+Anything that could change every cell's future schedules every row: a new rule, new edges, a resize, a snapshot, or randomizing. So does a new board, since a rule with `B0` gives birth in empty space.
 
-The board picks the frontier path while candidates cover less than a threshold share of the board, **5%** by default, and the dense scan above it. Candidate collection stops as soon as it crosses the threshold, and a frontier already over it skips straight to the scan. A dense step whose changes would exceed the threshold does not record them as a frontier, since the next step would scan anyway.
+## Edges
 
-The default comes from `benches/dense_crossover.rs`. The dense scan overtakes the frontier at about 2% coverage for young random soup, but only at 5–6% for settled debris on boards small enough to stay in cache. 5% keeps settled boards no slower than the frontier alone, at the cost of up to about twice the dense time for soup between 2% and 5%.
+What sets the finite board apart is its edges. A row's west and east neighbours normally come from the chunks either side of it. At the board's edge they come from the far side of the board when it [wraps](simulation.qd#edges), and from nowhere when it does not, and likewise for the rows below the first row and above the last. On a board that ends partway through a chunk, the neighbour across the edge is moved to sit beside the last column, and cells past the edge are cleared from each new row.
 
-Override the threshold with an environment variable, from 0 to 100 percent:
+## Parallel steps
 
-```shell
-GOL_FRONTIER_DENSE_THRESHOLD_PERCENT=3 cargo run --release
-```
-
-The [diagnostics view](interface.qd#diagnostics) shows the threshold in use.
-
-## Neighbour counting
-
-Cells away from every edge take a fast path that counts neighbours with plain index offsets. Only cells on the edge pay for wrapping or clamping, depending on the [edge mode](simulation.qd#edges).
-
-## Parallel dense scans
-
-The dense scan is split into bands of whole rows, one per thread of Bevy's compute task pool. Each band reads only the current generation and writes only its own rows, and marks its own changed cells dirty, so no locking is needed.
-
-A board is split only into bands of at least 65,536 cells. Dispatching bands costs about 15–20 µs per scan, which a settled board only wins back from roughly 384 × 384 cells upward.
+The scheduled chunks are split into bands, one per thread of Bevy's compute task pool, once there are at least 16 chunks for each. A band only reads the board and stages the rows it changes; the changes are applied once every band has finished, so no band sees another's half of the generation and no locking is needed.
 
 ## Recycled buffers
 
-Step buffers, candidate lists, and per-band change lists are kept between generations instead of being reallocated. Dirty and frontier flags are cleared one index at a time, for just the cells that were set, rather than by filling the whole array.
+The list of scheduled chunks and each band's list of changes are kept between generations instead of being reallocated.
 
 ## Fingerprints
 
-Each generation has a 64-bit fingerprint: the XOR of a fixed key for every cell that has flipped since the run began. A cell flipped back cancels out, so returning to the same cells returns to the same value, on either stepping path. It comes from the lists of changed cells that stepping builds anyway, with each band of a dense scan computing its own share, so it costs nothing per board cell.
+Each generation has a 64-bit fingerprint: the XOR of a fixed key for every cell that has flipped since the run began. A cell flipped back cancels out, so returning to the same cells returns to the same value. It comes from the rows that changed, which stepping finds anyway, with each band computing its own share, so it costs nothing for a cell that stays as it is.
 
 `settle` compares each fingerprint with the last 128, which is how a repeating board is noticed. Each generation follows only from the one before it, so one repeat means the board repeats until edited. Edits do not update the fingerprint, so anything that changes the board other than stepping starts the comparison over.
 
@@ -69,9 +53,9 @@ The app runs on `Universe` from `src/universe.rs`, which is either kind of board
 
 `App::set_unbounded` moves the cells onto the plane with the centre of the board at the origin, and choosing edges again moves them back, keeping only the cells that fit the board. Both are ordinary edits: a snapshot records what it takes to bring back the board that took it, so undo can cross between the two and nothing is lost.
 
-Cells have signed 64-bit coordinates and live in a map of 64 × 64 chunks, so memory follows the live cells. A chunk stores one bit per cell, one `u64` per row, and is removed as soon as it empties. Stepping adds up the neighbours of a whole row of 64 cells at once, with each count held across four words, one for each binary digit. This is why a full board runs faster here than the byte-per-cell scan does.
+Cells have signed 64-bit coordinates and live in a map of the same 64 × 64 chunks, rather than a grid of them, so memory follows the live cells. A chunk is removed as soon as it empties. Rows are stepped by the same [`next_cells`](#stepping-a-row-at-a-time).
 
-There is no separate frontier or dense path. A cell can only change after it or a neighbour has, so the board schedules each row beside one that changed, reaching into the neighbouring chunks where the change touches an edge. A lone glider costs a few rows, and a settled pattern costs nothing.
+Rows are [scheduled](#scheduling-rows) as on the finite board, reaching into the neighbouring chunks where a change touches a chunk's edge, and a chunk is created when a change first reaches it.
 
 Chunks are shared behind `Arc`, so a snapshot only copies pointers and a chunk is copied if it changes while a snapshot holds it.
 
@@ -85,9 +69,9 @@ A run stops at `PLANE_CHUNKS_MAX`, about half a gigabyte of chunks, with bookkee
 
 ## Rendering
 
-The minimap counts live cells per block with the same vectorized sum as the population, about 2 ms on a 2048 × 2048 board. It runs five times a second, and only while the map is showing.
+The minimap counts the live cells in each of its blocks by counting bits a word at a time, under 1 ms on a 2048 × 2048 board. It runs five times a second, and only while the map is showing.
 
-The board is drawn as a single texture with one texel per cell, so the cell count costs no entities. After each frame's steps, the renderer takes the board's list of dirty cells and rewrites only those texels. Resizing, randomizing, and clearing request a full redraw instead.
+The board is drawn as a single texture with one texel per cell, so the cell count costs no entities. The board keeps a mask of the cells that changed since the last frame, a word per row of a chunk. After each frame's steps, the renderer takes the rows with a changed cell, each with its mask and its cells, and rewrites only those texels. Resizing, randomizing, and clearing request a full redraw instead.
 
 The grid overlay draws only lines that cross the viewport, and none at all below a few pixels per cell, so its cost follows the screen size, not the board size.
 
@@ -97,12 +81,16 @@ At a fixed speed, a frame runs at most 8 generations to catch up, then drops any
 
 ## Tests
 
-`board.rs` checks the optimized paths against simple references:
+`board.rs` checks stepping against a reference that works out each cell from its eight neighbours, one cell at a time:
 
-- frontier stepping against dense stepping, for both edge modes and several densities
-- the interior fast path against boundary-aware counting
-- banded scans against a single band
-- the live count and the dirty and frontier bookkeeping after every kind of change
+- at sizes that end partway through a chunk, exactly on a chunk's edge, and inside a single chunk, and at widths too narrow for a cell to have eight different neighbours
+- with both edge modes, and five rules including one with `B0`
+- with edits between generations, on corners and edges as often as anywhere else
+- comparing the cells, the live count, the fingerprint, and the cells reported as changed after every generation
+
+It also checks banded steps against serial ones, that a glider keeps the work to a handful of rows, and resizing, snapshots, and the overview across chunk edges.
+
+`render_plugin.rs` steps a board wider and taller than a chunk and checks every texel against the cell it stands for.
 
 `sparse_board.rs` checks stepping against a brute-force simulation and against `Board`, with extra attention to chunk edges and corners, since a row left unscheduled would silently give wrong cells rather than fail. It also checks banded steps against serial ones, the known final population of the R-pentomino, and that a glider stays in a handful of chunks.
 

@@ -19,10 +19,6 @@ criterion = "0.8"
 name = "board_step"
 harness = false
 
-[[bench]]
-name = "dense_crossover"
-harness = false
-
 # Bevy runs far too slowly unoptimized, so dependencies are fully optimized even
 # in dev builds while this crate keeps fast incremental rebuilds.
 [profile.dev]

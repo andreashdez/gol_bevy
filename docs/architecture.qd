@@ -12,7 +12,6 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
       - app.rs
       - board.rs
       - sparse_board.rs
-      - packed_board.rs
       - universe.rs
       - settle.rs
       - patterns.rs
@@ -47,9 +46,8 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
 | Module                  | Responsibility                                                                |
 |-------------------------|-------------------------------------------------------------------------------|
 | `app`                   | Application state and user actions: tools, stamps, speed, undo and redo, import and export |
-| `board`                 | The finite board: cell storage, rules, edge modes, stepping, and dirty-cell tracking |
-| `sparse_board`          | The unbounded board: chunks of live cells at a bit each, stepped a row at a time |
-| `packed_board`          | A finite board at a bit per cell on the unbounded board's row kernel: a prototype the app does not use yet |
+| `board`                 | The finite board: rules, edge modes, and a grid of chunks of cells at a bit each |
+| `sparse_board`          | The unbounded board: a map of the same chunks, and the row-at-a-time step both boards use |
 | `universe`              | Either kind of board behind signed cell coordinates, and the snapshots undo keeps of them |
 | `settle`                | Noticing a board that repeats, from generation fingerprints                   |
 | `patterns`              | Built-in patterns and RLE reading and writing                                 |
@@ -149,6 +147,6 @@ Key bindings are `KeyBinding` constants in `shared.rs`, each with its keys, labe
 
 ## Rendering
 
-The board is a single texture with one texel per cell, scaled up by the camera. Only cells that changed are rewritten, using the dirty list the board keeps. Operations that touch everything, such as resizing, randomizing, and clearing, fall back to a full redraw. See [Simulation engine](engine.qd#rendering) for details.
+The board is a single texture with one texel per cell, scaled up by the camera. Only cells that changed are rewritten, using the masks of changed cells the board keeps. Operations that touch everything, such as resizing, randomizing, and clearing, fall back to a full redraw. See [Simulation engine](engine.qd#rendering) for details.
 
 The unbounded board has no size to make a texture of, so `plane_view` keeps one the size of the canvas and paints whatever part of the plane is in view. See [Unbounded board](engine.qd#unbounded-board).
