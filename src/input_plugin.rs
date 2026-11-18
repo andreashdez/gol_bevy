@@ -63,6 +63,12 @@ impl Plugin for InputPlugin {
             PreUpdate,
             collect_typed_keys.after(bevy::input::InputSystems),
         );
+        if WEB_BUILD {
+            app.add_systems(
+                PreUpdate,
+                release_keys_held_through_command.after(bevy::input::InputSystems),
+            );
+        }
     }
 }
 
@@ -73,6 +79,36 @@ pub const COMMAND_KEYS: [KeyCode; 4] = [
     KeyCode::ControlLeft,
     KeyCode::ControlRight,
 ];
+
+/// Keys that stay down through a Cmd release, like Shift in Cmd+Shift+Z.
+const MODIFIER_KEYS: [KeyCode; 8] = [
+    KeyCode::SuperLeft,
+    KeyCode::SuperRight,
+    KeyCode::ControlLeft,
+    KeyCode::ControlRight,
+    KeyCode::ShiftLeft,
+    KeyCode::ShiftRight,
+    KeyCode::AltLeft,
+    KeyCode::AltRight,
+];
+
+/// Browsers on macOS never report releasing a key pressed while Cmd was
+/// down, so after Cmd+A the app would think A is still held and pan forever.
+/// When Cmd is let go, every other key counts as released; one that really is
+/// still held is pressed again by the browser's key repeat.
+fn release_keys_held_through_command(mut keys: ResMut<ButtonInput<KeyCode>>) {
+    if !keys.any_just_released([KeyCode::SuperLeft, KeyCode::SuperRight]) {
+        return;
+    }
+    let stuck: Vec<KeyCode> = keys
+        .get_pressed()
+        .filter(|key| !MODIFIER_KEYS.contains(key))
+        .copied()
+        .collect();
+    for key in stuck {
+        keys.release(key);
+    }
+}
 
 fn handle_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
@@ -559,6 +595,39 @@ mod tests {
         // The origin's cell is what the click lands on, so it can be erased too.
         let app = click_on_plane(origin, MouseButton::Right);
         assert_eq!(app.board.live_cells_count(), 0);
+    }
+
+    #[test]
+    fn letting_go_of_cmd_releases_keys_the_browser_never_reported_released() {
+        let mut world = World::new();
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::SuperLeft);
+        keys.press(KeyCode::ShiftLeft);
+        keys.press(KeyCode::KeyA);
+        world.insert_resource(keys);
+
+        // Cmd still down: nothing changes yet.
+        world
+            .run_system_once(release_keys_held_through_command)
+            .unwrap();
+        assert!(
+            world
+                .resource::<ButtonInput<KeyCode>>()
+                .pressed(KeyCode::KeyA)
+        );
+
+        // The browser reports Cmd going up but never A.
+        world.resource_mut::<ButtonInput<KeyCode>>().clear();
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::SuperLeft);
+        world
+            .run_system_once(release_keys_held_through_command)
+            .unwrap();
+        let keys = world.resource::<ButtonInput<KeyCode>>();
+        assert!(!keys.pressed(KeyCode::KeyA));
+        assert!(!BINDING_PAN_LEFT.pressed(keys));
+        assert!(keys.pressed(KeyCode::ShiftLeft));
     }
 
     #[test]
