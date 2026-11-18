@@ -221,17 +221,10 @@ fn paint(
     }
 }
 
-fn spawn_plane_sprite(
-    mut commands: Commands,
-    mut images: ResMut<Assets<Image>>,
-    mut canvas: ResMut<PlaneCanvas>,
-) {
+/// A blank texture for the plane, `size` texels big.
+fn plane_image(size: Extent3d) -> Image {
     let mut image = Image::new_fill(
-        Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
-        },
+        size,
         TextureDimension::D2,
         &[0; 4],
         TextureFormat::Rgba8UnormSrgb,
@@ -239,7 +232,19 @@ fn spawn_plane_sprite(
     );
     // Cells are crisp squares; filtering would smear neighbours together.
     image.sampler = ImageSampler::nearest();
-    canvas.handle = images.add(image);
+    image
+}
+
+fn spawn_plane_sprite(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    mut canvas: ResMut<PlaneCanvas>,
+) {
+    canvas.handle = images.add(plane_image(Extent3d {
+        width: 1,
+        height: 1,
+        depth_or_array_layers: 1,
+    }));
     commands.spawn((
         Sprite::from_image(canvas.handle.clone()),
         Transform::default(),
@@ -353,17 +358,24 @@ fn sync_plane(
     }
     canvas.grid = Some(grid);
 
-    let Some(mut image) = images.get_mut(&canvas.handle) else {
-        return;
-    };
     let size = Extent3d {
         width: grid.width as u32,
         height: grid.height as u32,
         depth_or_array_layers: 1,
     };
-    if image.texture_descriptor.size != size {
-        image.resize(size);
+    if images
+        .get(&canvas.handle)
+        .is_some_and(|image| image.texture_descriptor.size != size)
+    {
+        // A new image rather than a resized one: in the browser, the sprite
+        // kept drawing the texture from before a resize, so the board stayed
+        // blank or showed an old view stretched over the new one.
+        canvas.handle = images.add(plane_image(size));
+        sprite.image = canvas.handle.clone();
     }
+    let Some(mut image) = images.get_mut(&canvas.handle) else {
+        return;
+    };
     let Some(data) = image.data.as_mut() else {
         return;
     };
@@ -625,12 +637,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn drawing_the_plane_tells_the_app_what_is_in_view() {
-        use bevy::{
-            camera::{ComputedCameraValues, RenderTargetInfo},
-            ecs::system::RunSystemOnce,
-        };
+    /// A world with an unbounded board and a 400 × 200 camera at `scale`,
+    /// ready for [`sync_plane`].
+    fn plane_world(scale: f32) -> World {
+        use bevy::camera::{ComputedCameraValues, RenderTargetInfo};
         let mut app = crate::app::App::new(16, 16);
         app.set_unbounded().unwrap();
         let mut sim = Simulation::new(app);
@@ -644,12 +654,6 @@ mod tests {
         world.init_resource::<Assets<Image>>();
         world.init_resource::<PlaneCanvas>();
         world.spawn((Window::default(), PrimaryWindow));
-        world.spawn((
-            Sprite::default(),
-            Transform::default(),
-            Visibility::Hidden,
-            PlaneSprite,
-        ));
         let size = UVec2::new(400, 200);
         world.spawn((
             Camera2d,
@@ -669,9 +673,22 @@ mod tests {
                 ..default()
             },
             Projection::Orthographic(OrthographicProjection {
-                scale: CELL_SIZE,
+                scale,
                 ..OrthographicProjection::default_2d()
             }),
+        ));
+        world
+    }
+
+    #[test]
+    fn drawing_the_plane_tells_the_app_what_is_in_view() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = plane_world(CELL_SIZE);
+        world.spawn((
+            Sprite::default(),
+            Transform::default(),
+            Visibility::Hidden,
+            PlaneSprite,
         ));
         world.run_system_once(sync_plane).unwrap();
 
@@ -686,5 +703,58 @@ mod tests {
                 height: 200,
             }
         );
+    }
+
+    #[test]
+    fn a_view_of_another_size_draws_on_a_new_image_of_that_size() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = plane_world(CELL_SIZE);
+        world.run_system_once(spawn_plane_sprite).unwrap();
+        let sprite_image = |world: &mut World| {
+            let handle = world
+                .query_filtered::<&Sprite, With<PlaneSprite>>()
+                .single(world)
+                .unwrap()
+                .image
+                .clone();
+            let size = world
+                .resource::<Assets<Image>>()
+                .get(&handle)
+                .unwrap()
+                .size();
+            (handle, size)
+        };
+        let grid_size = |world: &World| {
+            let grid = world.resource::<PlaneCanvas>().grid.unwrap();
+            UVec2::new(grid.width as u32, grid.height as u32)
+        };
+
+        world.run_system_once(sync_plane).unwrap();
+        let (first, size) = sprite_image(&mut world);
+        assert_eq!(size, grid_size(&world));
+
+        // Zooming in to half a cell a point shows half as many cells each way.
+        // (Zooming out would merge cells into blocks and keep the size.)
+        let mut projection = world
+            .query_filtered::<&mut Projection, With<MainCamera>>()
+            .single_mut(&mut world)
+            .unwrap();
+        if let Projection::Orthographic(ortho) = &mut *projection {
+            ortho.scale = CELL_SIZE / 2.0;
+        }
+        world.run_system_once(sync_plane).unwrap();
+        let (second, size) = sprite_image(&mut world);
+        assert_eq!(size, grid_size(&world));
+        assert_ne!(
+            size,
+            world
+                .resource::<Assets<Image>>()
+                .get(&first)
+                .unwrap()
+                .size()
+        );
+        // A resized image kept its texture in the browser; a new one gets its own.
+        assert_ne!(first.id(), second.id());
+        assert_eq!(world.resource::<PlaneCanvas>().handle, second);
     }
 }
