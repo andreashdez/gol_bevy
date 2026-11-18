@@ -31,6 +31,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
+  # The web build, for the demo on the docs site, compiles without native file
+  # dialogs or settings files, so it is linted on its own.
+  clippy-web:
+    runs-on: ubuntu-latest
+    container: rust:1.100.0-trixie
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup component add clippy && rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --target wasm32-unknown-unknown --locked -- -D warnings
+
   test:
     runs-on: ubuntu-latest
     container: rust:1.100.0-trixie

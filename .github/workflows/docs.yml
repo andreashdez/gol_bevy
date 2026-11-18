@@ -1,10 +1,23 @@
 name: Docs
 
-# Builds the Quarkdown site in docs/ and publishes it to GitHub Pages.
+# Builds the Quarkdown site in docs/, with the web version of the app under
+# demo/, and publishes it to GitHub Pages.
 on:
   push:
     branches: [main]
-    paths: [docs/**, .github/workflows/docs.yml]
+    # The demo is built from the same commit as the docs, so app changes
+    # redeploy the site too.
+    paths:
+      - docs/**
+      - src/**
+      - assets/**
+      - web/**
+      - build.rs
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - scripts/build-web.sh
+      - .github/workflows/docs.yml
   workflow_dispatch:
 
 permissions:
@@ -26,6 +39,19 @@ jobs:
       - uses: quarkdown-labs/setup-quarkdown@v1
       - run: quarkdown c main.qd --strict --clean -o "$RUNNER_TEMP/site"
         working-directory: docs
+      # Installs the version pinned in rust-toolchain.toml.
+      - run: rustup toolchain install
+      # The CLI must match the wasm-bindgen crate in Cargo.lock.
+      - run: echo "WASM_BINDGEN=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')" >> "$GITHUB_ENV"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@${{ env.WASM_BINDGEN }}
+      - name: Install wasm-opt
+        run: |
+          curl -sSfL https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/binaryen-version_133/bin" >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@v2
+      - run: scripts/build-web.sh "$RUNNER_TEMP/site/gol-bevy/demo"
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

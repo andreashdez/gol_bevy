@@ -23,20 +23,22 @@ fn write_with(
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     let temp = parent.join(format!(".gol-bevy-{:016x}.tmp", fastrand::u64(..)));
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp)?;
-    let result = (|| {
-        write_contents(&mut file)?;
-        // Replacing the file must not loosen permissions the user set on it.
-        if let Ok(metadata) = fs::metadata(path) {
-            file.set_permissions(metadata.permissions())?;
-        }
-        file.sync_all()
-    })();
-    // Close before replacing or cleaning up, including on Windows.
-    drop(file);
+    // The file closes at the end of this block, before it is renamed or
+    // cleaned up, which Windows requires.
+    let result = {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        (|| {
+            write_contents(&mut file)?;
+            // Replacing the file must not loosen permissions the user set on it.
+            if let Ok(metadata) = fs::metadata(path) {
+                file.set_permissions(metadata.permissions())?;
+            }
+            file.sync_all()
+        })()
+    };
     let result = result.and_then(|()| fs::rename(&temp, path));
     if result.is_err() {
         let _ = fs::remove_file(&temp);

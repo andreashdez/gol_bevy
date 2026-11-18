@@ -5,7 +5,9 @@ Conway's Game of Life as a native desktop app for Linux, Windows, and macOS, bui
 
 ![Game of Life screenshot](docs/media/screenshot.png)
 
-The full documentation is at <https://andreashdez.github.io/gol_bevy/>.
+The full documentation is at <https://andreashdez.github.io/gol_bevy/>, where you can also
+[try it in your browser](https://andreashdez.github.io/gol_bevy/try-online/) without
+installing anything.
 
 ## Features
 

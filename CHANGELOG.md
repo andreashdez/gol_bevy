@@ -6,6 +6,12 @@ Add a line under Unreleased in the same pull request as the change; see
 
 ## [Unreleased]
 
+### Added
+
+- **Web version** on the docs site: try gol-bevy in a browser without installing it. It
+  has no file dialogs or saved settings, runs on one thread, and has no screen reader
+  support; see [Try it in your browser](https://andreashdez.github.io/gol_bevy/try-online/).
+
 ### Changed
 
 - The dialogs code is split into smaller files for file dialogs, controls, the import

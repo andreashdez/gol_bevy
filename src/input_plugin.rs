@@ -9,7 +9,8 @@ use crate::{
         BINDING_SPEED_UP, BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_DIAGNOSTICS,
         BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, BINDING_TOGGLE_PALETTE, CAMERA_PAN_SPEED,
         CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay, EditFeedback, GridOverlay,
-        MainCamera, Simulation, TOOL_SHORTCUTS, TypedKeys, UpdateSet, collect_typed_keys,
+        MainCamera, Simulation, TOOL_SHORTCUTS, TypedKeys, UpdateSet, WEB_BUILD,
+        collect_typed_keys,
     },
     ui_input::{UiInputCapture, canvas_keyboard_available},
 };
@@ -39,6 +40,10 @@ impl Plugin for InputPlugin {
                 .in_set(UpdateSet::Input),
         )
         .add_systems(PostUpdate, handle_mouse.in_set(UpdateSet::Input))
+        .add_systems(
+            PostUpdate,
+            finish_paste.in_set(UpdateSet::Input).after(handle_keyboard),
+        )
         .add_systems(Update, handle_camera_zoom.in_set(UpdateSet::Camera))
         .add_systems(Update, handle_camera_drag.in_set(UpdateSet::Camera))
         .add_systems(
@@ -165,9 +170,16 @@ fn handle_keyboard(
     if BINDING_TOGGLE_PALETTE.just_pressed(&keys, &typed) {
         sim.app.toggle_palette();
     }
-    if BINDING_QUIT.just_pressed(&keys, &typed) {
+    // Quitting would only freeze the page in the web build.
+    if !WEB_BUILD && BINDING_QUIT.just_pressed(&keys, &typed) {
         sim.app.quit();
     }
+}
+
+/// Finishes a paste whose clipboard text arrives after the key press, as it
+/// does in browsers.
+fn finish_paste(mut sim: ResMut<Simulation>, mut feedback: ResMut<EditFeedback>) {
+    feedback.finish_paste(&mut sim.app);
 }
 
 fn finish_mouse_stroke(mouse_buttons: Res<ButtonInput<MouseButton>>, mut sim: ResMut<Simulation>) {

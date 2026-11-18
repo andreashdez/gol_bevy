@@ -88,7 +88,10 @@ pub(super) fn hint(action: Action) -> &'static str {
                 "Select · 4 · drag a rectangle · Delete clears it, Ctrl+C copies it as RLE"
             }
         }
+        // The web build has no workspace files.
+        Action::Import if crate::shared::WEB_BUILD => "Add an RLE pattern to your library",
         Action::Import => "Add an RLE pattern to your library, or open a workspace file",
+        Action::Export if crate::shared::WEB_BUILD => "Copy the board as RLE",
         Action::Export => "Copy the board as RLE, or save a workspace file",
         Action::Settings => "Board size, rule, randomization, theme, grid, cell age, and edges",
         Action::More => "Grid, cell age, import, export, settings, and help",
@@ -99,6 +102,9 @@ pub(super) fn hint(action: Action) -> &'static str {
             "Pause when the board stops changing, or starts repeating with a period up to 128"
         }
         Action::RulePreset(_) => "Switch the board to this rule · undo with U",
+        Action::Theme(_) if crate::shared::WEB_BUILD => {
+            "Switch the colours of the board and interface"
+        }
         Action::Theme(_) => "Switch the colours of the board and interface · saved automatically",
         Action::ApplyRule => "Use the rulestring above, written in B/S notation",
         Action::EditRule => "The board's rule · click to change it in Settings",

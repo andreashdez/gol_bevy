@@ -4,7 +4,7 @@ use crate::{
     board::{BoundaryMode, RandomizeSettings, Rule},
     shared::{
         BOARD_SIZE_MAX, BOARD_SIZE_MIN, BOARD_SIZE_PRESETS, BoardSettings, DiagnosticsOverlay,
-        Theme, command_key,
+        Theme, WEB_BUILD, command_key,
     },
     universe::Universe,
     workspace::DecodedWorkspace,
@@ -313,9 +313,13 @@ fn dialog_action(
                 } else {
                     "Size to return to"
                 };
-                state.drafts.feedback = format!(
-                    "{what} set to {width} × {height}. Your choice is saved automatically."
-                );
+                state.drafts.feedback = format!("{what} set to {width} × {height}.");
+                if !WEB_BUILD {
+                    state
+                        .drafts
+                        .feedback
+                        .push_str(" Your choice is saved automatically.");
+                }
                 if was_filling {
                     state.drafts.feedback.push_str(" Fill canvas is now off.");
                 }
@@ -588,20 +592,24 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                 flex_grow: 1.0, min_width: px(0), overflow: Overflow::scroll_y(), min_height: px(0), ..default() })).with_children(|p| {
                 match kind {
                     DialogKind::Import => {
-                        heading(p, "Pattern", "Paste RLE or open an .rle file to add a stamp to your palette. A rule in the header also updates the board rule.");
-                        p.spawn(row()).with_children(|p| { button(p, "Open .rle file…", Action::OpenRle); });
+                        heading(p, "Pattern", if WEB_BUILD { "Paste RLE to add a stamp to your palette. A rule in the header also updates the board rule." } else { "Paste RLE or open an .rle file to add a stamp to your palette. A rule in the header also updates the board rule." });
+                        if !WEB_BUILD { p.spawn(row()).with_children(|p| { button(p, "Open .rle file…", Action::OpenRle); }); }
                         field(p, "Pattern name", &drafts.name, Field::Name, false, true);
                         field(p, "RLE source", &drafts.source, Field::Source, true, false);
                         import_preview(p);
                         p.spawn(row()).with_children(|p| { button(p, "Import and select", Action::ImportSubmit); });
-                        heading(p, "Workspace file", &format!("Open a .golw file to replace your board and imported patterns. It asks first. {}+O opens.", command_key()));
-                        p.spawn(row()).with_children(|p| { button(p, "Open workspace…", Action::OpenWorkspace); });
+                        if !WEB_BUILD {
+                            heading(p, "Workspace file", &format!("Open a .golw file to replace your board and imported patterns. It asks first. {}+O opens.", command_key()));
+                            p.spawn(row()).with_children(|p| { button(p, "Open workspace…", Action::OpenWorkspace); });
+                        }
                     }
                     DialogKind::Export => {
                         heading(p, "Pattern", "Copy the live cells, cropped to their bounding box, as RLE with the board rule.");
                         p.spawn(row()).with_children(|p| { button(p, "Copy board as RLE", Action::ExportRle); });
-                        heading(p, "Workspace file", &format!("Save your board and imported patterns to a .golw file. {}+S saves.", command_key()));
-                        p.spawn(row()).with_children(|p| { button(p, "Save workspace…", Action::SaveWorkspace); });
+                        if !WEB_BUILD {
+                            heading(p, "Workspace file", &format!("Save your board and imported patterns to a .golw file. {}+S saves.", command_key()));
+                            p.spawn(row()).with_children(|p| { button(p, "Save workspace…", Action::SaveWorkspace); });
+                        }
                     }
                     DialogKind::Settings => {
                         let note = heading(p, "Board", "");

@@ -1,7 +1,7 @@
 .docname {gol-bevy}
 .include {docs}
 
-**gol-bevy** is Conway's Game of Life as a native desktop app, built on the [Bevy](https://bevyengine.org) game engine. It runs on Linux, Windows, and macOS.
+**gol-bevy** is Conway's Game of Life as a native desktop app, built on the [Bevy](https://bevyengine.org) game engine. It runs on Linux, Windows, and macOS, and you can [try it in your browser](try-online.qd) without installing anything.
 
 !(100%)[gol-bevy screenshot](media/screenshot.png)
 

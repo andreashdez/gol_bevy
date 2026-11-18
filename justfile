@@ -1,4 +1,9 @@
-fmt-check:
+fmt-# Lints the web build, which leaves out file dialogs and settings files.
+clippy-web:
+	rustup target add wasm32-unknown-unknown
+	cargo clippy --target wasm32-unknown-unknown --locked -- -D warnings
+
+check:
 	cargo fmt --all -- --check
 
 clippy:
@@ -19,7 +24,16 @@ readme-check:
 ci-local:
 	just fmt-check
 	just clippy
+	just clippy-web
 	just test
+
+# Builds the web version, as the docs site hosts it, into dist/web.
+web:
+	scripts/build-web.sh dist/web
+
+# Builds the web version and serves it at http://localhost:8000.
+web-serve: web
+	python3 -m http.server --directory dist/web 8000
 
 # Checks that a release tag matches the version in Cargo.toml, as CI does on a tag.
 release-check tag:

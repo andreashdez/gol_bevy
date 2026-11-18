@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>gol-bevy</title>
+    <meta name="description" content="Conway's Game of Life, built on Bevy, running in your browser.">
+    <style>
+      /* The app's own background, so nothing flashes while it loads. */
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #050508;
+        color: #c9ccd6;
+        font: 15px/1.5 system-ui, sans-serif;
+      }
+      /* Bevy sizes the canvas to fit this element. The app needs at least
+         800 × 420, so a smaller window scrolls rather than squeezing it. */
+      #app {
+        position: fixed;
+        inset: 0;
+        overflow: auto;
+      }
+      canvas {
+        display: block;
+        outline: none;
+      }
+      #status {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        text-align: center;
+        padding: 16px;
+      }
+      #status[hidden] {
+        display: none;
+      }
+      #status a {
+        color: #5fc7c7;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="gol-bevy" tabindex="0"></canvas>
+    </div>
+    <div id="status" role="status">Loading gol-bevy…</div>
+    <script type="module">
+      import init from "./gol-bevy.js";
+
+      const status = document.getElementById("status");
+      const canvas = document.getElementById("gol-bevy");
+
+      function fail(message) {
+        status.hidden = false;
+        status.innerHTML = "";
+        const text = document.createElement("p");
+        text.textContent = message;
+        const link = document.createElement("p");
+        link.innerHTML =
+          'The <a href="https://github.com/andreashdez/gol_bevy/releases">desktop app</a> runs everywhere this does not.';
+        status.append(text, link);
+      }
+
+      if (!document.createElement("canvas").getContext("webgl2")) {
+        fail("This browser has no WebGL 2, which gol-bevy needs.");
+      } else {
+        let started = true;
+        try {
+          await init();
+        } catch (error) {
+          // winit hands control to the browser's event loop by throwing this
+          // on purpose, once the app is running.
+          if (!String(error).includes("Using exceptions for control flow")) {
+            started = false;
+            console.error(error);
+            fail("gol-bevy could not start in this browser.");
+          }
+        }
+        if (started) {
+          status.hidden = true;
+          // So the board shortcuts work without clicking first.
+          canvas.focus();
+        }
+      }
+    </script>
+  </body>
+</html>
