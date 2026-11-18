@@ -1,13 +1,13 @@
-fmt-# Lints the web build, which leaves out file dialogs and settings files.
-clippy-web:
-	rustup target add wasm32-unknown-unknown
-	cargo clippy --target wasm32-unknown-unknown --locked -- -D warnings
-
-check:
+fmt-check:
 	cargo fmt --all -- --check
 
 clippy:
 	cargo clippy --all-targets --all-features --locked -- -D warnings
+
+# Lints the web build, which leaves out file dialogs and settings files.
+clippy-web:
+	rustup target add wasm32-unknown-unknown
+	cargo clippy --target wasm32-unknown-unknown --locked -- -D warnings
 
 check:
 	cargo check --all-targets --locked
