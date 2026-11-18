@@ -1,4 +1,6 @@
-use std::time::{Duration, Instant};
+// Bevy's `Instant` reads the browser clock on the web, where `std`'s panics.
+use bevy::platform::time::Instant;
+use std::time::Duration;
 
 use crate::shared::{
     DiagnosticsOverlay, EditFeedback, GridOverlay, RedrawRequested, Simulation, UpdateSet,

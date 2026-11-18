@@ -1,0 +1,27 @@
+.docname {Try it in your browser}
+.include {docs}
+
+You can play with gol-bevy without installing anything: a web version runs right here, built from the same code as the desktop app.
+
+.text {**Open gol-bevy in your browser →**} url:{../demo/}
+
+It opens full screen in a new page. Press .keybinding {/} once it has loaded to see every shortcut.
+
+## What you need
+
+- A desktop or laptop browser with WebGL 2: any recent Chrome, Edge, Firefox, or Safari.
+- A keyboard and mouse. The app is not designed for touch screens, and it needs a window at least 800 × 420 pixels.
+- About 8 MB to download the first time. Your browser caches it after that.
+
+## How it differs from the desktop app
+
+The web version has the full simulation, drawing tools, stamps, rules, undo, and selection. Some things need the desktop app:
+
+- **No files.** You can't open or save workspaces or open \.rle files. To bring in a pattern, paste its RLE into **Import**; to keep one, **Export** copies the board as RLE.
+- **Settings are not saved.** Every visit starts with the defaults.
+- **One thread.** Browsers run the simulation on a single core, so large boards and maximum speed are slower than on the desktop.
+- **No screen reader support.** The web version does not expose its interface to assistive tools. Keyboard navigation and the colour themes work as on the desktop. See [Accessibility](accessibility.qd).
+- **No Quit.** Close the tab instead.
+- **Browser shortcuts.** A few shortcuts the browser keeps for itself, such as closing the tab, can't be used by the app.
+
+For everything else, [install the desktop app](install.qd).

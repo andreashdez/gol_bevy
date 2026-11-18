@@ -8,9 +8,19 @@ accesskit = "0.24"
 bevy = { version = "0.20", default-features = false, features = ["2d", "ui", "system_clipboard"] }
 dirs = "7"
 fastrand = "2.5"
-rfd = "0.18"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+# Native file dialogs; the web build has no file system, so it leaves them out.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rfd = "0.18"
+
+# The web build, for the demo on the docs site. `web` gives Bevy browser clocks
+# and task executors, and `js` seeds random boards from the browser instead of
+# a fixed seed.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bevy = { version = "0.20", default-features = false, features = ["web"] }
+fastrand = { version = "2.5", features = ["js"] }
 
 [dev-dependencies]
 criterion = "0.8"
@@ -30,3 +40,14 @@ opt-level = 3
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# The web build downloads its module on every visit, so Bevy is optimized for
+# size there, while this crate keeps full speed for the simulation.
+[profile.web-release]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+strip = true
+
+[profile.web-release.package.gol-bevy]
+opt-level = 3

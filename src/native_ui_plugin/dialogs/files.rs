@@ -1,7 +1,9 @@
 //! Native file dialogs for workspaces and `.rle` files, and their shortcuts.
 use super::*;
 use crate::workspace::Workspace;
-use bevy::tasks::{IoTaskPool, Task, futures::check_ready};
+#[cfg(not(target_arch = "wasm32"))]
+use bevy::tasks::IoTaskPool;
+use bevy::tasks::{Task, futures::check_ready};
 use std::path::Path;
 
 pub(super) enum FileRequest {
@@ -47,7 +49,31 @@ pub(super) fn file_dialog_busy(state: &mut DialogState) -> bool {
 }
 
 pub(super) fn request_file(state: &mut DialogState, request: FileRequest) {
-    let previous = state.drafts.workspace_path.as_deref();
+    let Some(task) = spawn_file_dialog(&request, state.drafts.workspace_path.as_deref()) else {
+        report(
+            state,
+            true,
+            "Files are not available in the web version.".into(),
+        );
+        return;
+    };
+    state.drafts.error = false;
+    state.drafts.feedback = match request {
+        FileRequest::Save(_) => "Choose where to save the workspace.",
+        FileRequest::Open => "Choose a workspace file to open.",
+        FileRequest::OpenRle => "Choose an RLE pattern file.",
+    }
+    .into();
+    state.file_dialog.0 = Some((request, task));
+}
+
+/// Opens the system file dialog off the main thread, starting where the last
+/// workspace file was.
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn_file_dialog(
+    request: &FileRequest,
+    previous: Option<&Path>,
+) -> Option<Task<Option<PathBuf>>> {
     let directory = previous
         .and_then(Path::parent)
         .map(Path::to_path_buf)
@@ -70,16 +96,14 @@ pub(super) fn request_file(state: &mut DialogState, request: FileRequest) {
             FileRequest::Save(_) => Box::pin(dialog.set_file_name(file_name).save_file()),
             FileRequest::Open | FileRequest::OpenRle => Box::pin(dialog.pick_file()),
         };
-    let task =
-        IoTaskPool::get().spawn(async move { chosen.await.map(|file| file.path().to_owned()) });
-    state.drafts.error = false;
-    state.drafts.feedback = match request {
-        FileRequest::Save(_) => "Choose where to save the workspace.",
-        FileRequest::Open => "Choose a workspace file to open.",
-        FileRequest::OpenRle => "Choose an RLE pattern file.",
-    }
-    .into();
-    state.file_dialog.0 = Some((request, task));
+    Some(IoTaskPool::get().spawn(async move { chosen.await.map(|file| file.path().to_owned()) }))
+}
+
+/// The browser has no file paths to hand back, so the web build hides every
+/// way to reach a file dialog.
+#[cfg(target_arch = "wasm32")]
+fn spawn_file_dialog(_: &FileRequest, _: Option<&Path>) -> Option<Task<Option<PathBuf>>> {
+    None
 }
 
 pub(in crate::native_ui_plugin) fn poll_file_dialog(mut state: DialogState) {
@@ -175,6 +199,9 @@ pub(in crate::native_ui_plugin) fn file_shortcuts(
     typed: Res<crate::shared::TypedKeys>,
     mut state: DialogState,
 ) {
+    if crate::shared::WEB_BUILD {
+        return;
+    }
     match file_shortcut(&keys, &typed, state.mode.dialog) {
         Some(FileShortcut::Save) => request_save(&mut state),
         Some(FileShortcut::Open) => request_open(&mut state),

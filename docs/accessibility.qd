@@ -28,6 +28,8 @@ Dialogs are modal: .keybinding {Tab} stays inside the open dialog. The Export, H
 
 ## Screen readers
 
+> Note: Screen readers need the desktop app. The [web version](try-online.qd) does not expose its interface to assistive tools.
+
 - Buttons expose their action and, for toggles such as tools, patterns, **Grid**, and **Cell age**, whether they are selected. The switches in Settings are announced as switches, and the **Wrap** / **Fixed** and theme choices say which one is selected.
 - Icon buttons are announced by name: **Play** as *Play* or *Pause*, then **Reset to start**, **Step**, **Draw**, **Erase**, **Stamp**, **Randomize**, **Clear**, **Undo**, **Redo**, **Grid**, **Cell age**, **Import**, **Export**, **Settings**, and **Help**.
 - The status bar's rule and edges buttons include their current value in their names, such as *Rule: B3/S23* and *Edges: Wrap*.

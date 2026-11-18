@@ -10,7 +10,7 @@ use gol_bevy::render_plugin::RenderPlugin;
 use gol_bevy::settings_plugin::SettingsPlugin;
 use gol_bevy::shared::{
     BG_COLOR, BoardSettings, DiagnosticsOverlay, GridOverlay, RedrawRequested, StartupSet,
-    UpdateSet,
+    UpdateSet, WEB_BUILD,
 };
 use gol_bevy::simulation_plugin::SimulationPlugin;
 use gol_bevy::ui_input::UiInputPlugin;
@@ -27,6 +27,10 @@ fn main() {
                     min_height: 420.0,
                     ..default()
                 },
+                // The web build draws into the page's canvas and follows the
+                // size of the element around it.
+                canvas: WEB_BUILD.then(|| "#gol-bevy".into()),
+                fit_canvas_to_parent: WEB_BUILD,
                 ..default()
             }),
             ..default()

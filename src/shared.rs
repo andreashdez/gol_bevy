@@ -361,18 +361,29 @@ pub fn help_sections() -> [HelpSection; 6] {
         },
         HelpSection {
             title: "Interface",
-            entries: vec![
-                BINDING_TOGGLE_GRID.into(),
-                BINDING_TOGGLE_PALETTE.into(),
-                BINDING_TOGGLE_DIAGNOSTICS.into(),
-                BINDING_TOGGLE_HELP.into(),
-                entry(&["Mod+S"], "Save workspace"),
-                entry(&["Mod+O"], "Open workspace"),
-                BINDING_QUIT.into(),
-            ],
+            entries: {
+                let mut entries = vec![
+                    BINDING_TOGGLE_GRID.into(),
+                    BINDING_TOGGLE_PALETTE.into(),
+                    BINDING_TOGGLE_DIAGNOSTICS.into(),
+                    BINDING_TOGGLE_HELP.into(),
+                ];
+                if !WEB_BUILD {
+                    entries.extend([
+                        entry(&["Mod+S"], "Save workspace"),
+                        entry(&["Mod+O"], "Open workspace"),
+                        BINDING_QUIT.into(),
+                    ]);
+                }
+                entries
+            },
         },
     ]
 }
+
+/// Whether this is the browser build, which has no file system to save
+/// settings or workspaces to and no app to quit.
+pub const WEB_BUILD: bool = cfg!(target_arch = "wasm32");
 
 /// The name of the command modifier on this platform, for `Mod` in key caps.
 pub fn command_key() -> &'static str {
@@ -546,6 +557,9 @@ pub struct RedrawRequested(pub bool);
 pub struct EditFeedback {
     pub message: Cow<'static, str>,
     pub remaining: f32,
+    /// A Cmd/Ctrl+V clipboard read still on its way. Native reads finish at
+    /// once; browsers hand the text over a frame or more later.
+    pending_paste: Option<bevy::clipboard::ClipboardRead>,
 }
 
 impl EditFeedback {
@@ -619,14 +633,29 @@ impl EditFeedback {
         app: &mut GolApp,
         clipboard: Option<ResMut<bevy::clipboard::Clipboard>>,
     ) {
-        let text = match clipboard.map(|mut clipboard| clipboard.fetch_text().poll_result()) {
-            Some(Some(Ok(text))) => text,
-            Some(Some(Err(error))) => {
+        let Some(mut clipboard) = clipboard else {
+            self.show("Could not read the clipboard: no clipboard is available");
+            return;
+        };
+        self.pending_paste = Some(clipboard.fetch_text());
+        self.finish_paste(app);
+    }
+
+    /// Makes the clipboard text the stamp once the read started by `paste`
+    /// has finished. Until then, and with no paste in progress, does nothing.
+    pub fn finish_paste(&mut self, app: &mut GolApp) {
+        let Some(result) = self
+            .pending_paste
+            .as_mut()
+            .and_then(|read| read.poll_result())
+        else {
+            return;
+        };
+        self.pending_paste = None;
+        let text = match result {
+            Ok(text) => text,
+            Err(error) => {
                 self.show(format!("Could not read the clipboard: {error}"));
-                return;
-            }
-            Some(None) | None => {
-                self.show("Could not read the clipboard: no clipboard is available");
                 return;
             }
         };

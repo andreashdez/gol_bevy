@@ -41,6 +41,23 @@ cargo run --features bevy/dynamic_linking
 
 Release builds use thin LTO and a single codegen unit.
 
+## Web build
+
+The docs site hosts a [web version](try-online.qd) of the app, built from the same code for the `wasm32-unknown-unknown` target. It needs two tools besides the toolchain:
+
+- `wasm-bindgen-cli` at the same version as the `wasm-bindgen` crate in `Cargo.lock`. The build script names the version to install if it does not match.
+- `wasm-opt` from [binaryen](https://github.com/WebAssembly/binaryen), which shrinks the module. It is optional for local builds.
+
+```shell
+cargo install wasm-bindgen-cli --version <version> --locked
+just web         # builds dist/web
+just web-serve   # builds it and serves it at http://localhost:8000
+```
+
+`scripts/build-web.sh` builds with the `web-release` profile, which optimizes Bevy for size and this crate for speed, then copies in `web/index.html`. The docs workflow runs the same script and publishes the result under `demo/`.
+
+The browser has no file system and no app to quit, so the web build leaves those out. `WEB_BUILD` in `src/shared.rs` hides the file dialogs, file shortcuts, and **Quit**, and skips loading and saving settings; only the native file dialog code is behind `#[cfg(target_arch = "wasm32")]`. Use `bevy::platform::time::Instant` rather than `std::time::Instant`, which panics in the browser.
+
 ## Checks
 
 The `justfile` wraps the commands CI runs:
@@ -50,10 +67,11 @@ The `justfile` wraps the commands CI runs:
 | `just fmt-check`   | `cargo fmt --all -- --check`                                   |
 | `just clippy`      | `cargo clippy --all-targets --all-features --locked -- -D warnings` |
 | `just check`       | `cargo check --all-targets --locked`                           |
+| `just clippy-web`  | Clippy for the web build (`--target wasm32-unknown-unknown`)   |
 | `just test`        | `cargo test --all-targets --all-features --locked`             |
 | `just bench`       | `cargo bench --bench board_step --locked`                      |
 | `just readme-check`| The test that keeps the README's controls list in sync         |
-| `just ci-local`    | `fmt-check`, `clippy`, and `test`, like CI                     |
+| `just ci-local`    | `fmt-check`, `clippy`, `clippy-web`, and `test`, like CI       |
 
 Run `just ci-local` before pushing.
 

@@ -1,7 +1,7 @@
 //! Persisted workspace settings, independent of the UI implementation.
 use crate::{
     board::{BoundaryMode, RandomizeSettings, Rule},
-    shared::{BoardSettings, CellAge, GridOverlay, Simulation, StartupSet, Theme},
+    shared::{BoardSettings, CellAge, GridOverlay, Simulation, StartupSet, Theme, WEB_BUILD},
     universe::{Universe, plane_from_board},
 };
 use bevy::prelude::*;
@@ -21,17 +21,24 @@ impl Plugin for SettingsPlugin {
             .init_resource::<CellAge>()
             .add_systems(
                 Startup,
-                (
-                    setup_settings_persistence.in_set(StartupSet::LoadSettings),
-                    apply_simulation_settings.after(StartupSet::BuildWorld),
-                ),
-            )
-            .add_systems(
-                Last,
-                persist_settings
-                    .in_set(OnAppExitSystems)
-                    .after(bevy::window::ExitSystems),
+                apply_simulation_settings.after(StartupSet::BuildWorld),
             );
+        // The web build has no file system, so it starts from the defaults
+        // each time and saves nothing.
+        if WEB_BUILD {
+            app.init_resource::<SimulationSettings>();
+            return;
+        }
+        app.add_systems(
+            Startup,
+            setup_settings_persistence.in_set(StartupSet::LoadSettings),
+        )
+        .add_systems(
+            Last,
+            persist_settings
+                .in_set(OnAppExitSystems)
+                .after(bevy::window::ExitSystems),
+        );
     }
 }
 
