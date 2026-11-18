@@ -41,6 +41,7 @@ release-check tag:
 
 # Universal (Apple silicon + Intel) macOS binary in dist/. CI runs this for
 # tagged releases; run it locally to test a release build. Needs a Mac.
+[doc("Builds a universal macOS release binary into dist/. Needs a Mac.")]
 release-macos version=`git describe --tags --always`:
 	rustup target add aarch64-apple-darwin x86_64-apple-darwin
 	CARGO_PROFILE_RELEASE_STRIP=symbols cargo build --release --locked --target aarch64-apple-darwin
