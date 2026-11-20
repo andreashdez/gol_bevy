@@ -14,7 +14,12 @@ use crate::{
     },
     ui_input::{UiInputCapture, canvas_keyboard_available},
 };
-use bevy::{clipboard::Clipboard, input::mouse::MouseWheel, prelude::*, window::PrimaryWindow};
+use bevy::{
+    clipboard::Clipboard,
+    input::mouse::{MouseScrollPixelsPerLine, MouseScrollUnit, MouseWheel},
+    prelude::*,
+    window::PrimaryWindow,
+};
 pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
@@ -323,6 +328,7 @@ fn handle_camera_zoom(
     mut wheel_events: MessageReader<MouseWheel>,
     mut camera_q: Query<&mut Projection, With<MainCamera>>,
     capture: Res<UiInputCapture>,
+    pixels_per_line: Res<MouseScrollPixelsPerLine>,
     sim: Res<Simulation>,
 ) {
     if capture.pointer {
@@ -333,19 +339,36 @@ fn handle_camera_zoom(
         return;
     };
 
-    let mut total_scroll = 0.0;
-    for event in wheel_events.read() {
-        total_scroll += event.y;
-    }
-    if total_scroll == 0.0 {
+    let lines: f32 = wheel_events
+        .read()
+        .map(|event| scroll_lines(event, *pixels_per_line))
+        .sum();
+    if lines == 0.0 {
         return;
     }
 
-    let Projection::Orthographic(ref mut ortho) = *projection else {
+    let Projection::Orthographic(ortho) = &mut *projection else {
         return;
     };
-    let factor = (1.0 - total_scroll * CAMERA_ZOOM_STEP).clamp(0.5, 2.0);
-    ortho.scale = (ortho.scale * factor).clamp(CAMERA_ZOOM_MIN, sim.zoom_max());
+    ortho.scale = (ortho.scale * zoom_factor(lines)).clamp(CAMERA_ZOOM_MIN, sim.zoom_max());
+}
+
+/// A wheel event's vertical scroll in lines. Trackpads, and browser wheels in
+/// Chrome, report pixels, many small events per gesture or about a hundred
+/// pixels per notch, which must zoom as far as the same scroll on a wheel that
+/// reports lines.
+fn scroll_lines(event: &MouseWheel, pixels_per_line: MouseScrollPixelsPerLine) -> f32 {
+    match event.unit {
+        MouseScrollUnit::Line => event.y,
+        MouseScrollUnit::Pixel => event.y / pixels_per_line,
+    }
+}
+
+/// How much the view scale changes for a scroll of `lines`: a step per line,
+/// compounded, so many small events add up to the same zoom as one large one.
+/// A frame's change is still capped, so one flick cannot jump across the range.
+fn zoom_factor(lines: f32) -> f32 {
+    (1.0 - CAMERA_ZOOM_STEP).powf(lines).clamp(0.5, 2.0)
 }
 
 fn handle_camera_pan(
@@ -871,5 +894,32 @@ mod tests {
         let (app, message) = run(app, None, Some("x"));
         assert_eq!(app.board.live_cells_count(), 1);
         assert!(message.contains("clipboard"), "{message}");
+    }
+
+    #[test]
+    fn pixel_scrolls_zoom_as_far_as_the_same_scroll_in_lines() {
+        let wheel = |unit, y| MouseWheel {
+            unit,
+            x: 0.0,
+            y,
+            window: Entity::PLACEHOLDER,
+            phase: bevy::input::touch::TouchPhase::Moved,
+        };
+        let per_line = MouseScrollPixelsPerLine::default();
+        let notch = zoom_factor(scroll_lines(&wheel(MouseScrollUnit::Line, 1.0), per_line));
+        assert!((notch - (1.0 - CAMERA_ZOOM_STEP)).abs() < 1e-6);
+
+        // A browser notch in pixels zooms one step, not to the frame's cap.
+        let browser = zoom_factor(scroll_lines(
+            &wheel(MouseScrollUnit::Pixel, *per_line),
+            per_line,
+        ));
+        assert!((browser - notch).abs() < 1e-6);
+
+        // A trackpad gesture of many small events adds up to the same zoom.
+        let gesture: f32 = (0..20)
+            .map(|_| zoom_factor(scroll_lines(&wheel(MouseScrollUnit::Pixel, 5.0), per_line)))
+            .product();
+        assert!((gesture - notch).abs() < 1e-4, "{gesture} vs {notch}");
     }
 }
