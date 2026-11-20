@@ -26,10 +26,11 @@ pub(super) fn request_save(state: &mut DialogState) {
     }
     match state.sim.app.workspace() {
         Ok(workspace) => request_file(state, FileRequest::Save(Box::new(workspace))),
-        Err(error) => {
-            state.drafts.error = true;
-            state.drafts.feedback = format!("Could not save the workspace: {error}");
-        }
+        Err(error) => report(
+            state,
+            true,
+            format!("Could not save the workspace: {error}"),
+        ),
     }
 }
 
@@ -39,11 +40,12 @@ pub(super) fn request_open(state: &mut DialogState) {
     }
 }
 
+/// Whether a file dialog is already open, which Cmd/Ctrl+S or O from the board
+/// must say over the board, as no dialog is there to show it.
 pub(super) fn file_dialog_busy(state: &mut DialogState) -> bool {
     let busy = state.file_dialog.0.is_some();
     if busy {
-        state.drafts.error = false;
-        state.drafts.feedback = "A file dialog is already open.".into();
+        report(state, false, "A file dialog is already open.".into());
     }
     busy
 }
