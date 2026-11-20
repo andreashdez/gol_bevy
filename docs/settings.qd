@@ -9,7 +9,7 @@ Choices that are on or off use switches, choices between options use joined butt
 
 Pick a preset (128², 256², 512², or 1024²) to fill in the size, or type a **Width** and **Height** in cells, then click **Apply**. Each side can be from 8 to 2048 cells. Anything else is rejected with a message, and the board keeps its size.
 
-Resizing keeps the cells that fit in the new size, fits the board into view, and clears the [undo history](editing.qd#history-limits).
+Resizing keeps the cells that fit in the new size and fits the board into view. [Undo](editing.qd#history-limits) still reaches edits from before the resize.
 
 An unbounded board has no size, so here you choose the one it returns to when you pick **Wrap** or **Fixed**, and how much of it survives. Undo steps that lead back to a finite board of another size are dropped.
 

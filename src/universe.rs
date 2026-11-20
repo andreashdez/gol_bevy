@@ -194,11 +194,26 @@ impl Universe {
     }
 
     /// Brings back the cells of `snapshot`, and the kind of board that held them
-    /// if this is the other kind. The rule is the caller's to restore.
+    /// if this is the other kind. A finite board keeps its size: a snapshot taken
+    /// before a resize brings back the cells that fit, as the resize itself
+    /// would. The rule is the caller's to restore.
     pub fn restore_cells(&mut self, snapshot: CellSnapshot) {
         match (&mut *self, snapshot) {
-            (Self::Finite(board), CellSnapshot::Finite { cells, .. }) => {
-                board.restore_snapshot(&cells);
+            (
+                Self::Finite(board),
+                CellSnapshot::Finite {
+                    cells, cols, rows, ..
+                },
+            ) => {
+                let (to_cols, to_rows) = board.size();
+                if (cols, rows) == (to_cols, to_rows) {
+                    board.restore_snapshot(&cells);
+                } else {
+                    let mut resized = Board::new(cols, rows);
+                    resized.restore_snapshot(&cells);
+                    resized.resize(to_cols, to_rows);
+                    board.restore_snapshot(&resized.snapshot_cells());
+                }
             }
             (Self::Unbounded(plane), CellSnapshot::Unbounded(chunks)) => plane.restore(chunks),
             (

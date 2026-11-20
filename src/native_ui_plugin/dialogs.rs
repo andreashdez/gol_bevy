@@ -557,7 +557,7 @@ pub(super) fn update_dialogs(
                 )
             }
             DialogReadout::BoardNote => if state.sim.app.board.finite().is_some() {
-                "Resizing keeps the cells that fit and clears undo history."
+                "Resizing keeps the cells that fit. Undo still goes back past it."
             } else {
                 "The unbounded board has no size. This is the one it returns to when you choose Wrap or Fixed."
             }

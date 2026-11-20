@@ -616,9 +616,8 @@ impl App {
         match &mut self.board {
             Universe::Finite(board) => {
                 if board.resize(new_cols, new_rows) {
-                    // Snapshots hold cells in the old layout, so they no longer fit.
-                    self.undo_history.clear();
-                    self.redo_history.clear();
+                    // Undo history survives: a snapshot from another size brings
+                    // back the cells that fit this one.
                     self.forget_run();
                     self.end_stroke();
                     self.needs_redraw = true;
@@ -1820,6 +1819,31 @@ mod tests {
     }
 
     #[test]
+    fn undo_and_redo_survive_a_resize_and_keep_the_new_size() {
+        let mut app = App::new(16, 16);
+        app.populate_board(1, 1);
+        app.end_stroke();
+        app.populate_board(12, 12);
+        app.end_stroke();
+
+        app.resize_board(32, 32);
+        assert!(app.undo(), "history outlives a resize");
+        assert_eq!(app.board.size(), Some((32, 32)));
+        assert!(app.board.is_alive(1, 1) && !app.board.is_alive(12, 12));
+        assert!(app.redo());
+        assert!(app.board.is_alive(12, 12));
+
+        // A snapshot from a larger board brings back only the cells that fit.
+        app.populate_board(20, 20);
+        app.end_stroke();
+        app.resize_board(8, 8);
+        assert!(app.undo());
+        assert_eq!(app.board.size(), Some((8, 8)));
+        assert!(app.board.is_alive(1, 1));
+        assert_eq!(app.board.live_cells_count(), 1);
+    }
+
+    #[test]
     fn a_still_life_settles_on_the_first_generation_and_an_oscillator_on_its_period() {
         let mut app = App::new(16, 16);
         for (col, row) in [(4, 4), (5, 4), (4, 5), (5, 5)] {
@@ -2182,18 +2206,6 @@ mod tests {
     }
 
     #[test]
-    fn resize_invalidates_the_redo_chain_too() {
-        let mut app = App::new(8, 8);
-        app.populate_board(1, 1);
-        assert!(app.undo());
-        assert!(app.can_redo());
-
-        app.resize_board(9, 8);
-        assert!(!app.can_redo());
-        assert!(!app.can_undo());
-    }
-
-    #[test]
     fn importing_rle_applies_a_declared_rule() {
         let mut app = App::new(12, 12);
         assert_eq!(app.rule_label(), "B3/S23");
@@ -2248,17 +2260,15 @@ mod tests {
     }
 
     #[test]
-    fn undo_history_is_bounded_and_invalidated_only_on_actual_resize() {
+    fn undo_history_is_bounded_and_survives_a_resize() {
         let mut app = App::new(8, 8);
         for i in 0..40 {
             app.populate_board(i % 8, i / 8);
         }
         assert_eq!(app.undo_history.len(), 32);
-        app.resize_board(8, 8);
-        assert!(app.can_undo());
         app.resize_board(9, 8);
-        assert!(!app.can_undo());
-        assert!(!app.undo());
+        assert_eq!(app.undo_history.len(), 32);
+        assert!(app.undo());
     }
 
     #[test]
