@@ -133,14 +133,22 @@ fn bench_sparse_board(c: &mut Criterion) {
     });
 
     for size in [512, 1024, 2048] {
-        let mut seeded = SparseBoard::default();
-        for (col, row) in noise_cells(size, size, 30) {
-            seeded.populate(col as i64, row as i64);
-        }
-        let _ = seeded.take_dirty_chunks();
+        let cells: Vec<(i64, i64)> = noise_cells(size, size, 30)
+            .map(|(col, row)| (col as i64, row as i64))
+            .collect();
         group.bench_function(format!("fresh_noise30_{size}"), |b| {
             b.iter_batched_ref(
-                || seeded.clone(),
+                // Built cell by cell rather than cloned: a clone shares its chunks,
+                // so the step would copy every one it changes, as only the first
+                // generation after an undo snapshot does.
+                || {
+                    let mut board = SparseBoard::default();
+                    for &(x, y) in &cells {
+                        board.populate(x, y);
+                    }
+                    let _ = board.take_dirty_chunks();
+                    board
+                },
                 |board| {
                     let _ = board.step();
                     black_box(board.take_dirty_chunks())
