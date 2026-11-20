@@ -307,6 +307,9 @@ struct RleText {
 
 impl RleText {
     fn new(source: &str) -> Result<Self, PatternParseError> {
+        // Notepad and other Windows tools start UTF-8 files with a byte-order
+        // mark, which `trim` keeps.
+        let source = source.strip_prefix('\u{feff}').unwrap_or(source);
         let mut header_line = None;
         let mut name = None;
         let mut body = String::new();
@@ -439,9 +442,14 @@ fn parse_header(header: &str) -> Result<RleHeader, PatternParseError> {
                 );
             }
             // A declared rule used to be discarded, which silently simulated
-            // non-Life patterns under B3/S23.
+            // non-Life patterns under B3/S23. Golly appends a bounded grid's
+            // topology after a colon (`B3/S23:T64,64`); boards here have their
+            // own edges, so it is ignored, and the comma inside it splits off
+            // an entry with no key, which the match ignores too.
             "rule" => {
-                rule = Some(Rule::parse(value).map_err(PatternParseError::InvalidRule)?);
+                let rule_string = value.split_once(':').map_or(value, |(rule, _)| rule);
+                rule =
+                    Some(Rule::parse(rule_string.trim()).map_err(PatternParseError::InvalidRule)?);
             }
             _ => {}
         }
@@ -475,6 +483,22 @@ mod tests {
         assert_eq!(pattern.cells.len(), 6);
         assert!(pattern.cells.contains(&(0, 0)));
         assert!(pattern.cells.contains(&(2, 2)));
+    }
+
+    #[test]
+    fn reads_files_with_a_byte_order_mark_or_a_golly_topology() {
+        let bom = Pattern::from_rle("BOM", "\u{feff}#N Blinker\nx = 3, y = 1\n3o!")
+            .expect("a leading byte-order mark is skipped");
+        assert_eq!(bom.cells.len(), 3);
+        let bom_header = Pattern::from_rle("BOM", "\u{feff}x = 3, y = 1\n3o!")
+            .expect("a byte-order mark before the header is skipped");
+        assert_eq!(bom_header.width, 3);
+
+        let (width, height, rule) =
+            read_rle_runs("x = 3, y = 1, rule = B36/S23:T64,64\n3o!", |_, _, _| Ok(()))
+                .expect("Golly's bounded-grid suffix is ignored");
+        assert_eq!((width, height), (3, 1));
+        assert_eq!(rule, Some(Rule::parse("B36/S23").unwrap()));
     }
 
     #[test]
