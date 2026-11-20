@@ -32,6 +32,13 @@ const MIN_BAND_CHUNKS: usize = 16;
 /// Nothing else bounds the list, as a run may cross new chunks forever between syncs.
 const DIRTY_CHUNKS_MAX: usize = 1 << 14;
 
+/// Staged changes a band's list may keep between generations without having to
+/// account for them. A staged chunk takes about half a kilobyte, so this is about
+/// half a megabyte a band: enough that ordinary patterns never give their lists
+/// back and grow them again, while a list that once held a busy plane's worth is
+/// cut down once the pattern calms, rather than holding its peak for good.
+const CHANGE_SCRATCH_KEPT: usize = 1 << 10;
+
 /// Chunks a run may reach before it pauses. A chunk's cells take 512 bytes, so
 /// this is half a gigabyte of them, with its bookkeeping and history on top.
 pub const PLANE_CHUNKS_MAX: usize = 1 << 20;
@@ -295,6 +302,8 @@ impl SparseBoard {
         self.chunks.clear();
         self.active.clear();
         self.live_count = 0;
+        // Nothing is left to step, so no step would cut the lists down.
+        self.change_scratch = Vec::new();
         self.mark_dirty_full();
         true
     }
@@ -364,10 +373,13 @@ impl SparseBoard {
         work.extend(self.active.drain());
         let band_len = work.len().div_ceil(bands.max(1));
         let mut changes = std::mem::take(&mut self.change_scratch);
-        changes.resize_with(work.len().div_ceil(band_len), Vec::new);
+        let band_count = work.len().div_ceil(band_len);
+        if changes.len() < band_count {
+            changes.resize_with(band_count, Vec::new);
+        }
 
         let (chunks, rule) = (&self.chunks, self.rule);
-        let mut bands = work.chunks(band_len).zip(&mut changes);
+        let mut bands = work.chunks(band_len).zip(&mut changes[..band_count]);
         let (live_delta, flips) = if bands.len() == 1 {
             let (band, changes) = bands.next().expect("scheduled work has a band");
             step_band(chunks, rule, band, changes)
@@ -390,7 +402,11 @@ impl SparseBoard {
             for change in list.iter() {
                 self.apply(change);
             }
+            let used = list.len();
             list.clear();
+            if list.capacity() > (used * 4).max(CHANGE_SCRATCH_KEPT) {
+                list.shrink_to(used * 2);
+            }
         }
         self.work_scratch = work;
         self.change_scratch = changes;
@@ -850,8 +866,8 @@ pub(crate) fn next_cells(below: RowPlanes, level: RowPlanes, above: RowPlanes, m
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockGrid, CHUNK_SIZE, CellRect, DIRTY_CHUNKS_MAX, DirtyChunks, SparseBoard,
-        UnboundedRuleError,
+        BlockGrid, CHANGE_SCRATCH_KEPT, CHUNK_SIZE, CellRect, DIRTY_CHUNKS_MAX, DirtyChunks,
+        SparseBoard, UnboundedRuleError,
     };
     use crate::board::{Board, BoundaryMode, Rule};
     use std::collections::{HashMap, HashSet};
@@ -1509,5 +1525,26 @@ mod tests {
     fn a_rectangle_around_the_origin_is_where_a_board_lands() {
         let board = CellRect::around_origin(4, 3);
         assert_eq!((board.left, board.bottom), (-2, -1));
+    }
+
+    #[test]
+    fn staged_changes_give_back_their_room_once_the_pattern_calms() {
+        let scratch =
+            |board: &SparseBoard| -> usize { board.change_scratch.iter().map(Vec::capacity).sum() };
+        let blinker = |x: i64| (0..3).map(move |dy| (x * CHUNK_SIZE + 10, 10 + dy));
+        let busy_chunks = 4 * CHANGE_SCRATCH_KEPT as i64;
+        let mut board = board_with((0..busy_chunks).flat_map(blinker));
+        let calm = board_with(blinker(0)).snapshot();
+
+        board.step_in_bands(1);
+        assert!(scratch(&board) >= busy_chunks as usize);
+
+        board.restore(calm);
+        board.step_in_bands(1);
+        assert!(scratch(&board) < CHANGE_SCRATCH_KEPT);
+        assert_eq!(live_cells(&board), sorted((9..12).map(|x| (x, 11))));
+
+        board.clear();
+        assert_eq!(scratch(&board), 0);
     }
 }
