@@ -17,7 +17,7 @@ An unbounded board has no size, so here you choose the one it returns to when yo
 
 The **Fill canvas** switch is on by default. It sizes the board to the canvas, so **Fit board** shows it edge to edge at 100% with no empty border. While it is on, the board follows the canvas: resizing the window resizes the board too. The palette floats over the canvas, so it has no effect on the board.
 
-> Warning: Like any resize, a canvas change keeps only the cells that fit and clears the undo history. Shrinking the window removes cells beyond the new right and top edges.
+Shrinking the window never removes live cells. If cells sit beyond the new right or top edge, the board keeps enough width or height to hold them, and the view zooms out to fit it. The board catches up with the canvas at the next window resize after those cells are gone.
 
 Switch it off to keep the current size from then on; with it off, resizing the window only changes how much of the board you can see. Applying a size also switches it off. Settings files saved before Fill canvas existed keep their saved size.
 
