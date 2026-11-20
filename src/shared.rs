@@ -62,6 +62,10 @@ impl TypedKeys {
     }
 }
 
+/// Records the characters typed this frame. On layouts whose letter keys type
+/// no Latin letters (Russian, Greek, Hebrew, Arabic), a letter key also counts
+/// as the letter it has on a US layout, so letter shortcuts and Cmd/Ctrl chords
+/// still work there. Latin layouts keep following the typed character.
 pub fn collect_typed_keys(
     mut events: MessageReader<bevy::input::keyboard::KeyboardInput>,
     mut typed: ResMut<TypedKeys>,
@@ -75,8 +79,46 @@ pub fn collect_typed_keys(
             && let bevy::input::keyboard::Key::Character(character) = &event.logical_key
         {
             typed.press(character);
+            if !character.is_ascii()
+                && let Some(letter) = us_letter(event.key_code)
+            {
+                typed.press(letter);
+            }
         }
     }
+}
+
+/// The letter a physical letter key types on a US layout.
+fn us_letter(key: KeyCode) -> Option<&'static str> {
+    Some(match key {
+        KeyCode::KeyA => "a",
+        KeyCode::KeyB => "b",
+        KeyCode::KeyC => "c",
+        KeyCode::KeyD => "d",
+        KeyCode::KeyE => "e",
+        KeyCode::KeyF => "f",
+        KeyCode::KeyG => "g",
+        KeyCode::KeyH => "h",
+        KeyCode::KeyI => "i",
+        KeyCode::KeyJ => "j",
+        KeyCode::KeyK => "k",
+        KeyCode::KeyL => "l",
+        KeyCode::KeyM => "m",
+        KeyCode::KeyN => "n",
+        KeyCode::KeyO => "o",
+        KeyCode::KeyP => "p",
+        KeyCode::KeyQ => "q",
+        KeyCode::KeyR => "r",
+        KeyCode::KeyS => "s",
+        KeyCode::KeyT => "t",
+        KeyCode::KeyU => "u",
+        KeyCode::KeyV => "v",
+        KeyCode::KeyW => "w",
+        KeyCode::KeyX => "x",
+        KeyCode::KeyY => "y",
+        KeyCode::KeyZ => "z",
+        _ => return None,
+    })
 }
 
 pub const BINDING_RUN_PAUSE: KeyBinding = KeyBinding {
