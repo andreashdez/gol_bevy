@@ -3,8 +3,8 @@ use super::*;
 use crate::{
     board::{BoundaryMode, RandomizeSettings, Rule},
     shared::{
-        BOARD_SIZE_MAX, BOARD_SIZE_MIN, BOARD_SIZE_PRESETS, BoardSettings, DiagnosticsOverlay,
-        Theme, WEB_BUILD, command_key,
+        BINDING_TOGGLE_HELP, BOARD_SIZE_MAX, BOARD_SIZE_MIN, BOARD_SIZE_PRESETS, BoardSettings,
+        DiagnosticsOverlay, Theme, TypedKeys, WEB_BUILD, command_key,
     },
     universe::Universe,
     workspace::DecodedWorkspace,
@@ -482,7 +482,7 @@ fn parse_size(width: &str, height: &str) -> Result<(usize, usize), &'static str>
 pub(super) fn update_dialogs(
     mut commands: Commands,
     mut state: DialogState,
-    keys: Res<ButtonInput<KeyCode>>,
+    (keys, typed): (Res<ButtonInput<KeyCode>>, Res<TypedKeys>),
     roots: Query<Entity, With<DialogRoot>>,
     mut rendered: Local<Option<DialogKind>>,
     fields: Query<(&Field, &mut EditableText), Changed<EditableText>>,
@@ -500,7 +500,8 @@ pub(super) fn update_dialogs(
         && (keys.just_pressed(KeyCode::Escape)
             || (state.mode.dialog == Some(DialogKind::Diagnostics)
                 && keys.just_pressed(KeyCode::F3))
-            || (state.mode.dialog == Some(DialogKind::Help) && keys.just_pressed(KeyCode::Slash)))
+            || (state.mode.dialog == Some(DialogKind::Help)
+                && BINDING_TOGGLE_HELP.just_pressed(&keys, &typed)))
     {
         close(&mut state);
     }

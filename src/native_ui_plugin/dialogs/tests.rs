@@ -23,6 +23,7 @@ fn test_world(dialog: DialogKind) -> World {
     world.insert_resource(DiagnosticsOverlay { enabled: false });
     world.insert_resource(InputFocus::default());
     world.insert_resource(ButtonInput::<KeyCode>::default());
+    world.init_resource::<crate::shared::TypedKeys>();
     world.init_resource::<FileDialog>();
     world.init_resource::<crate::shared::EditFeedback>();
     world.add_observer(dialog_action);
@@ -45,6 +46,31 @@ fn closing_dialog_restores_its_opener_even_after_the_dialog_is_despawned() {
     });
     world.run_system_once(update_dialogs).unwrap();
     assert_eq!(world.resource::<InputFocus>().get(), Some(opener));
+}
+
+#[test]
+fn help_closes_on_the_typed_slash_not_the_physical_slash_key() {
+    let mut world = test_world(DialogKind::Help);
+    world
+        .resource_mut::<Simulation>()
+        .app
+        .set_help_visible(true);
+    // German layout: the physical Slash key types `-`.
+    world
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::Slash);
+    world.resource_mut::<crate::shared::TypedKeys>().press("-");
+    world.run_system_once(update_dialogs).unwrap();
+    assert_eq!(world.resource::<NativeUi>().dialog, Some(DialogKind::Help));
+
+    // Shift+7 types `/` there.
+    world.insert_resource(ButtonInput::<KeyCode>::default());
+    let mut typed = crate::shared::TypedKeys::default();
+    typed.press("/");
+    world.insert_resource(typed);
+    world.run_system_once(update_dialogs).unwrap();
+    assert!(world.resource::<NativeUi>().dialog.is_none());
+    assert!(!world.resource::<Simulation>().app.is_help_visible());
 }
 
 #[test]
