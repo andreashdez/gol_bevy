@@ -93,7 +93,7 @@ Undo restores the board, the generation counter, and the rule as they were befor
 
 History keeps up to 32 edits, within a budget of about 16 MiB of board snapshots. A snapshot takes one bit per cell, so every board size keeps all 32. On an unbounded board a snapshot grows with the pattern, so a very large one fits fewer edits, but at least one is always kept.
 
-Resizing the board clears the undo and redo history, because old snapshots no longer fit the new size. Resizing the *window* does not affect history, unless [Fill canvas](settings.qd#fill-canvas) is on and the board resizes with it.
+Resizing the board keeps the undo and redo history. Undoing past a resize keeps the board at its new size and brings back the cells of the earlier board that fit in it.
 
 ## Save and reopen workspaces
 

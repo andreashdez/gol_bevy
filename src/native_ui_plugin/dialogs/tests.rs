@@ -283,7 +283,7 @@ fn the_board_section_says_what_its_size_means_on_each_board() {
         world.run_system_once(update_dialogs).unwrap();
         world.get::<Text>(note).unwrap().0.clone()
     };
-    assert!(text(&mut world).contains("clears undo history"));
+    assert!(text(&mut world).contains("keeps the cells that fit"));
     let app = &mut world.resource_mut::<Simulation>().into_inner().app;
     app.set_unbounded().unwrap();
     assert!(text(&mut world).contains("has no size"));
