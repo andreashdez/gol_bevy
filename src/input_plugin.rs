@@ -739,6 +739,13 @@ mod tests {
         app.world_mut().run_system_once(handle_keyboard).unwrap();
         assert_ne!(rotation(&app), before);
 
+        // Russian layout: letter keys type Cyrillic, so they fall back to the
+        // US letter on the same key.
+        let before = rotation(&app);
+        press(&mut app, KeyCode::KeyZ, "я");
+        app.world_mut().run_system_once(handle_keyboard).unwrap();
+        assert_ne!(rotation(&app), before);
+
         // Digits pick tools, by the digit typed or by the key's position, since
         // AZERTY layouts type `"` on the unshifted 3 key.
         let tool = |app: &App| app.world().resource::<Simulation>().app.tool();
