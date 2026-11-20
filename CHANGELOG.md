@@ -16,6 +16,28 @@ Add a line under Unreleased in the same pull request as the change; see
 
 - The dialogs code is split into smaller files for file dialogs, controls, the import
   preview, help, and tests. Nothing changes for players.
+- Resizing the board, or the window with Fill canvas on, keeps undo and redo history.
+  Undoing past a resize brings back the cells that fit the new size.
+- With Fill canvas on, shrinking the window no longer deletes cells near the right or top
+  edge: the board stays large enough to hold them, and the view zooms out.
+- The stamp preview is drawn as one image, so a large pasted stamp no longer slows every
+  frame.
+
+### Fixed
+
+- Trackpad and browser scroll zoom one step at a time, instead of doubling or halving with
+  every event.
+- On keyboard layouts where `/` is not on its own key, such as German, `/` closes Help as
+  well as opening it.
+- On Cyrillic, Greek, Hebrew, and Arabic layouts, letter shortcuts and `Cmd/Ctrl` chords
+  work by the key's position on a US layout.
+- When `Cmd/Ctrl+S` from the board cannot save, or a file dialog is already open, a notice
+  over the board says so.
+- RLE files that start with a UTF-8 byte-order mark open, as do Golly files whose rule has a
+  bounded-grid suffix such as `B3/S23:T64,64`, which is ignored.
+- Undo history stays within its memory budget when snapshots of different sizes are mixed.
+- An unbounded board frees the working memory a busy pattern used once it calms down or is
+  cleared.
 
 ## [0.2.0] - 2026-11-17
 
