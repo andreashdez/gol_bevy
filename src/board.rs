@@ -530,10 +530,13 @@ impl Board {
         );
         let band_len = work.len().div_ceil(bands.max(1));
         let mut changes = std::mem::take(&mut self.change_scratch);
-        changes.resize_with(work.len().div_ceil(band_len), Vec::new);
+        let band_count = work.len().div_ceil(band_len);
+        if changes.len() < band_count {
+            changes.resize_with(band_count, Vec::new);
+        }
 
         let (chunks, shape, rule) = (&self.chunks[..], self.shape, self.rule);
-        let mut bands = work.chunks(band_len).zip(&mut changes);
+        let mut bands = work.chunks(band_len).zip(&mut changes[..band_count]);
         let (live_delta, flips) = if bands.len() == 1 {
             let (band, changes) = bands.next().expect("scheduled work has a band");
             step_band(chunks, shape, rule, band, changes)
