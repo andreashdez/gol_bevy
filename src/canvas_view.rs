@@ -21,6 +21,9 @@ pub struct CanvasView {
     canvas: Vec2,
     /// Whether the view is on the plane, to notice leaving it.
     on_plane: bool,
+    /// The board size Fill canvas last asked for, so a board kept larger than
+    /// the canvas for its cells is not resized again until the canvas changes.
+    fill_target: Option<(usize, usize)>,
 }
 
 impl CanvasView {
@@ -138,8 +141,18 @@ fn update_viewport(
     let size = camera.viewport.as_ref().map_or(window.size(), |v| {
         v.physical_size.as_vec2() / window.scale_factor()
     });
-    if settings.fill_canvas {
-        let (cols, rows) = board_size_for_canvas(size);
+    let fill_target = settings.fill_canvas.then(|| board_size_for_canvas(size));
+    let refill = fill_target != view.fill_target;
+    view.fill_target = fill_target;
+    if let Some(target) = fill_target.filter(|_| refill) {
+        // Shrinking never cuts off live cells: the board stays large enough to
+        // hold them and the view zooms out instead. A window drag or a browser
+        // zoom would otherwise lose them for good.
+        let extent = sim
+            .as_ref()
+            .and_then(|sim| sim.app.board.finite()?.live_bounds())
+            .map_or((0, 0), |(_, max)| (max.0 + 1, max.1 + 1));
+        let (cols, rows) = (target.0.max(extent.0), target.1.max(extent.1));
         if (settings.cols, settings.rows) != (cols, rows) {
             // Resized here, before the camera fits, so both change in one frame.
             settings.set(cols, rows);
@@ -239,6 +252,7 @@ mod tests {
             board: Some((16, 16)),
             canvas: Vec2::new(1000.0, 500.0),
             on_plane: false,
+            fill_target: None,
         });
         let camera = world.spawn((Camera2d, MainCamera)).id();
         (world, camera)
@@ -555,6 +569,51 @@ mod tests {
             .set(1400.0, 900.0);
         world.run_system_once(update_viewport).unwrap();
         assert!(*world.resource::<BoardSettings>() == before);
+    }
+
+    #[test]
+    fn fill_canvas_never_shrinks_the_board_past_its_live_cells() {
+        let mut world = World::new();
+        world.insert_resource(BoardSettings {
+            cols: 64,
+            rows: 64,
+            fill_canvas: true,
+        });
+        world.init_resource::<CanvasView>();
+        let window = world.spawn((Window::default(), PrimaryWindow)).id();
+        world.spawn((Camera2d, MainCamera));
+        let resize = |world: &mut World, width: f32, height: f32| {
+            world
+                .get_mut::<Window>(window)
+                .unwrap()
+                .resolution
+                .set(width, height);
+            world.run_system_once(update_viewport).unwrap();
+            let settings = *world.resource::<BoardSettings>();
+            (settings.cols, settings.rows)
+        };
+        let (cols, rows) = resize(&mut world, 1400.0, 900.0);
+        let mut app = crate::app::App::new(cols, rows);
+        app.populate_board(cols as i64 - 1, 3);
+        world.insert_resource(Simulation::new(app));
+
+        // The window shrinks: the board keeps its width for the cell at the far
+        // edge, and takes the canvas height, which crops nothing.
+        let canvas = canvas_rect(Vec2::new(900.0, 600.0)).size();
+        let (small_cols, small_rows) = board_size_for_canvas(canvas);
+        assert!(small_cols < cols && small_rows < rows);
+        assert_eq!(resize(&mut world, 900.0, 600.0), (cols, small_rows));
+
+        // With the cell gone, the next canvas change fits the canvas again.
+        world
+            .resource_mut::<Simulation>()
+            .app
+            .depopulate_board(cols as i64 - 1, 3);
+        let canvas = canvas_rect(Vec2::new(950.0, 620.0)).size();
+        assert_eq!(
+            resize(&mut world, 950.0, 620.0),
+            board_size_for_canvas(canvas)
+        );
     }
 
     #[test]
