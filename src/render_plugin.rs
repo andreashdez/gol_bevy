@@ -24,8 +24,9 @@ pub struct RenderPlugin;
 #[derive(Resource, Default)]
 pub struct HoveredCell(pub Option<(i64, i64)>);
 
+/// The single sprite that shows the stamp under the pointer.
 #[derive(Component)]
-struct GhostPreviewCell;
+struct StampGhost;
 
 #[derive(Component)]
 struct BoundaryWall;
@@ -220,9 +221,94 @@ impl BoardCanvas<'_, '_> {
     }
 }
 
+/// Which stamp the ghost texture was drawn from. The stamp is a paste or a
+/// library pattern, turned and flipped; any of those changing means new cells.
+/// The library revision is in it because a restored workspace starts the paste
+/// count again and can put another pattern at the same index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StampKey {
+    library_pattern: Option<usize>,
+    paste_revision: u64,
+    library_revision: u64,
+    orientation: (u8, bool),
+}
+
+impl StampKey {
+    fn of(app: &GolApp) -> Self {
+        Self {
+            library_pattern: app.selected_pattern_index(),
+            paste_revision: app.paste_revision(),
+            library_revision: app.library_revision(),
+            orientation: app.stamp_orientation(),
+        }
+    }
+}
+
+/// The stamp ghost's texture and the stamp it shows. Laying the stamp out
+/// touches every one of its cells, so it happens only when the stamp changes,
+/// not every frame the pointer moves.
 #[derive(Resource, Default)]
-struct PatternPreviewPool {
-    entities: Vec<Entity>,
+struct StampGhostImage {
+    key: Option<StampKey>,
+    handle: Handle<Image>,
+    width: usize,
+    height: usize,
+}
+
+/// The stamp ghost's texture and the assets it lives in, which change together.
+#[derive(SystemParam)]
+struct GhostTexture<'w> {
+    images: ResMut<'w, Assets<Image>>,
+    current: ResMut<'w, StampGhostImage>,
+}
+
+impl GhostTexture<'_> {
+    /// The texture of the app's stamp, drawn again only when the stamp changed.
+    fn of_stamp(&mut self, app: &GolApp) -> Option<&StampGhostImage> {
+        let key = StampKey::of(app);
+        if self.current.key != Some(key) {
+            let (cells, width, height) = app.selected_pattern_layout()?;
+            *self.current = StampGhostImage {
+                key: Some(key),
+                handle: self.images.add(stamp_ghost_image(&cells, width, height)),
+                width,
+                height,
+            };
+        }
+        Some(&self.current)
+    }
+
+    /// Drops the texture; the assets free it once no sprite holds it.
+    fn release(&mut self) {
+        if self.current.key.is_some() {
+            *self.current = StampGhostImage::default();
+        }
+    }
+}
+
+/// One texel per stamp cell: opaque white where a cell is alive, clear elsewhere,
+/// so the sprite's colour tints it and a theme change needs no new texture. Row 0
+/// of the stamp is its bottom row, as on the board.
+fn stamp_ghost_image(cells: &[(usize, usize)], width: usize, height: usize) -> Image {
+    let mut data = vec![0; width * height * 4];
+    for &(dx, dy) in cells {
+        let offset = texel_offset(dy * width + dx, width, height);
+        data[offset..offset + 4].fill(u8::MAX);
+    }
+    let mut image = Image::new(
+        Extent3d {
+            width: width as u32,
+            height: height as u32,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        // Never read back, so only the GPU keeps a copy.
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::nearest();
+    image
 }
 
 #[derive(Resource)]
@@ -252,7 +338,7 @@ impl Plugin for RenderPlugin {
             .insert_resource(BoundaryWallPulse::default())
             .insert_resource(BoardTexture::default())
             .init_resource::<CellAges>()
-            .insert_resource(PatternPreviewPool::default())
+            .init_resource::<StampGhostImage>()
             .add_systems(Startup, setup_world.in_set(StartupSet::BuildWorld))
             .add_systems(
                 Update,
@@ -362,25 +448,6 @@ fn spawn_boundary_walls(commands: &mut Commands, cols: usize, rows: usize, color
         Visibility::Hidden,
         BoundaryWall,
     ));
-}
-
-fn ensure_preview_pool(
-    commands: &mut Commands,
-    pool: &mut PatternPreviewPool,
-    target: usize,
-    color: Color,
-) {
-    while pool.entities.len() < target {
-        let entity = commands
-            .spawn((
-                Sprite::from_color(color, Vec2::splat(CELL_SIZE - 2.0)),
-                Transform::from_translation(Vec3::new(0.0, 0.0, 2.0)),
-                Visibility::Hidden,
-                GhostPreviewCell,
-            ))
-            .id();
-        pool.entities.push(entity);
-    }
 }
 
 /// Window resizes no longer touch the board; only an explicit size change does.
@@ -709,82 +776,99 @@ fn blend_color(from: Color, to: Color, t: f32) -> Color {
     )
 }
 
-type PreviewCell<'a> = (&'a mut Transform, &'a mut Visibility, &'a mut Sprite);
+type GhostSprite<'a> = (
+    Entity,
+    &'a mut Transform,
+    &'a mut Visibility,
+    &'a mut Sprite,
+);
 
+/// Shows the stamp as one sprite over the footprint it would fill, however many
+/// cells it has. On a finite board the sprite is cropped to the board like the
+/// cells a click places; the board holds a stamp back from its low edges, so
+/// only its top and right can run off. Nothing is written on frames where the
+/// ghost stays put.
 fn sync_pattern_preview(
     mut commands: Commands,
     hovered: Res<HoveredCell>,
     sim: Res<Simulation>,
     theme: Res<Theme>,
-    mut preview_pool: ResMut<PatternPreviewPool>,
-    mut preview_q: Query<PreviewCell, With<GhostPreviewCell>>,
+    mut texture: GhostTexture,
+    mut ghost_q: Query<GhostSprite, With<StampGhost>>,
     mut gizmos: Gizmos,
 ) {
-    let ghost = theme.board().ghost;
-    if theme.is_changed() {
-        for (_, _, mut sprite) in &mut preview_q {
-            sprite.color = ghost;
+    let ghost = ghost_q.single_mut().ok();
+    if !sim.app.has_selected_pattern() {
+        // Without a stamp the texture goes too, rather than sit on the GPU.
+        if let Some((entity, ..)) = ghost {
+            commands.entity(entity).despawn();
         }
+        texture.release();
+        return;
     }
-    let Some((cursor_col, cursor_row)) = hovered.0 else {
-        hide_preview_cells(&preview_pool, &mut preview_q);
+    let Some(cursor) = hovered.0 else {
+        if let Some((_, _, mut visibility, _)) = ghost {
+            visibility.set_if_neq(Visibility::Hidden);
+        }
         return;
     };
-    let Some((pattern, width, height)) = sim.app.selected_pattern_layout() else {
-        hide_preview_cells(&preview_pool, &mut preview_q);
-        return;
-    };
-    ensure_preview_pool(&mut commands, &mut preview_pool, pattern.len(), ghost);
-    let map = sim.cell_map();
 
+    let Some(ghost_image) = texture.of_stamp(&sim.app) else {
+        return;
+    };
+    let (width, height) = (ghost_image.width as i64, ghost_image.height as i64);
     let (origin_col, origin_row) = sim
         .app
         .board
-        .stamp_origin((cursor_col, cursor_row), (width, height));
+        .stamp_origin(cursor, (ghost_image.width, ghost_image.height));
 
-    // Outline the footprint, clipped to the board like the cells themselves.
-    let (mut end_col, mut end_row) = (origin_col + width as i64, origin_row + height as i64);
+    let (mut shown_width, mut shown_height) = (width, height);
     if let Some((cols, rows)) = sim.app.board.size() {
-        end_col = end_col.min(cols as i64);
-        end_row = end_row.min(rows as i64);
+        shown_width = shown_width.min(cols as i64 - origin_col);
+        shown_height = shown_height.min(rows as i64 - origin_row);
     }
-    if end_col > origin_col && end_row > origin_row {
-        let first = map.cell_to_world(origin_col, origin_row).truncate();
-        let last = map.cell_to_world(end_col - 1, end_row - 1).truncate();
-        gizmos.rect_2d(
-            Isometry2d::from_translation((first + last) / 2.0),
-            (last - first).abs() + Vec2::splat(CELL_SIZE),
-            theme.board().ghost_outline,
-        );
-    }
-
-    for (idx, entity) in preview_pool.entities.iter().copied().enumerate() {
-        let Ok((mut transform, mut visibility, _)) = preview_q.get_mut(entity) else {
-            continue;
-        };
-        let Some(&(dx, dy)) = pattern.get(idx) else {
-            *visibility = Visibility::Hidden;
-            continue;
-        };
-        let col = origin_col + dx as i64;
-        let row = origin_row + dy as i64;
-        if !sim.app.board.contains(col, row) {
-            *visibility = Visibility::Hidden;
-            continue;
+    if shown_width <= 0 || shown_height <= 0 {
+        if let Some((_, _, mut visibility, _)) = ghost {
+            visibility.set_if_neq(Visibility::Hidden);
         }
-
-        *transform = Transform::from_translation(map.cell_to_world(col, row) + Vec3::Z * 2.0);
-        *visibility = Visibility::Visible;
+        return;
     }
-}
 
-fn hide_preview_cells(
-    preview_pool: &PatternPreviewPool,
-    preview_q: &mut Query<PreviewCell, With<GhostPreviewCell>>,
-) {
-    for entity in &preview_pool.entities {
-        if let Ok((_, mut visibility, _)) = preview_q.get_mut(*entity) {
-            *visibility = Visibility::Hidden;
+    let map = sim.cell_map();
+    let first = map.cell_to_world(origin_col, origin_row).truncate();
+    let last = map
+        .cell_to_world(origin_col + shown_width - 1, origin_row + shown_height - 1)
+        .truncate();
+    let centre = (first + last) / 2.0;
+    gizmos.rect_2d(
+        Isometry2d::from_translation(centre),
+        (last - first).abs() + Vec2::splat(CELL_SIZE),
+        theme.board().ghost_outline,
+    );
+
+    // The stamp's bottom row is the texture's last, so cropping the top keeps
+    // the texture's bottom rows.
+    let sprite = Sprite {
+        image: ghost_image.handle.clone(),
+        color: theme.board().ghost,
+        custom_size: Some(Vec2::new(shown_width as f32, shown_height as f32) * CELL_SIZE),
+        rect: Some(Rect::new(
+            0.0,
+            (height - shown_height) as f32,
+            shown_width as f32,
+            height as f32,
+        )),
+        ..default()
+    };
+    let transform = Transform::from_translation(centre.extend(2.0));
+    match ghost {
+        Some((_, mut current_transform, mut visibility, mut current_sprite)) => {
+            current_transform.set_if_neq(transform);
+            visibility.set_if_neq(Visibility::Visible);
+            current_sprite.set_if_neq(sprite);
+        }
+        None => {
+            commands.spawn((sprite, transform, Visibility::Visible, StampGhost));
         }
     }
 }
@@ -1236,5 +1320,110 @@ mod tests {
         // Of its cells, only the four that turn on and off: its centre has grown old.
         let cells = &world.resource::<CellAges>().ageing_cells;
         assert_eq!(cells.iter().map(|cells| cells.count_ones()).sum::<u32>(), 4);
+    }
+
+    #[test]
+    fn the_stamp_ghost_texture_has_one_texel_per_cell_with_the_bottom_row_last() {
+        // An L, three tall: a foot two wide on the bottom row.
+        let image = stamp_ghost_image(&[(0, 0), (1, 0), (0, 1), (0, 2)], 2, 3);
+        assert_eq!((image.width(), image.height()), (2, 3));
+        assert_eq!(image.sampler, ImageSampler::nearest());
+        let texels = image.data.as_ref().unwrap().as_chunks::<4>().0;
+        let (alive, clear) = ([u8::MAX; 4], [0; 4]);
+        // Texel rows run top to bottom.
+        assert_eq!(texels, [alive, clear, alive, clear, alive, alive]);
+    }
+
+    fn stamp_world(app: GolApp) -> World {
+        use bevy::gizmos::config::{DefaultGizmoConfigGroup, GizmoConfig, GizmoConfigStore};
+        let mut world = World::new();
+        world.insert_resource(Simulation::new(app));
+        world.insert_resource(Theme::Dark);
+        world.insert_resource(HoveredCell(Some((8, 12))));
+        world.insert_resource(Assets::<Image>::default());
+        world.init_resource::<StampGhostImage>();
+        let mut gizmos = GizmoConfigStore::default();
+        gizmos.insert(GizmoConfig::default(), DefaultGizmoConfigGroup);
+        world.insert_resource(gizmos);
+        world
+    }
+
+    fn ghosts(world: &mut World) -> Vec<Entity> {
+        world
+            .query_filtered::<Entity, With<StampGhost>>()
+            .iter(world)
+            .collect()
+    }
+
+    #[test]
+    fn a_large_stamp_is_one_cropped_sprite_laid_out_once() {
+        use bevy::ecs::system::RunSystemOnce;
+        let (width, height) = (300, 200);
+        let mut rle = format!("x = {width}, y = {height}\n");
+        for _ in 1..height {
+            rle.push_str(&format!("{width}o$"));
+        }
+        rle.push_str(&format!("{width}o!"));
+        let mut app = GolApp::new(16, 24);
+        app.paste_rle(&rle).unwrap();
+        let mut world = stamp_world(app);
+
+        world.run_system_once(sync_pattern_preview).unwrap();
+        let [ghost] = ghosts(&mut world)[..] else {
+            panic!("one ghost sprite");
+        };
+        let handle = world.resource::<StampGhostImage>().handle.clone();
+        let sprite = world.get::<Sprite>(ghost).unwrap();
+        assert_eq!(sprite.image, handle);
+        assert_eq!(sprite.color, Theme::Dark.board().ghost);
+        // Held back to the board's corner and cropped to the whole 16 × 24 board,
+        // keeping the stamp's bottom rows, which are the texture's last.
+        assert_eq!(sprite.custom_size, Some(Vec2::new(16.0, 24.0) * CELL_SIZE));
+        assert_eq!(sprite.rect, Some(Rect::new(0.0, 176.0, 16.0, 200.0)));
+        assert_eq!(
+            world.get::<Transform>(ghost).unwrap().translation,
+            Vec3::new(0.0, 0.0, 2.0)
+        );
+        assert_eq!(world.get::<Visibility>(ghost), Some(&Visibility::Visible));
+
+        // A frame with the same stamp in the same place neither lays it out
+        // again nor touches the sprite.
+        let ticks = |world: &World| {
+            let entity = world.entity(ghost);
+            [
+                entity.get_ref::<Sprite>().unwrap().last_changed(),
+                entity.get_ref::<Transform>().unwrap().last_changed(),
+                entity.get_ref::<Visibility>().unwrap().last_changed(),
+            ]
+        };
+        let before = ticks(&world);
+        world.run_system_once(sync_pattern_preview).unwrap();
+        assert_eq!(ticks(&world), before);
+        assert_eq!(world.resource::<StampGhostImage>().handle, handle);
+        assert_eq!(world.resource::<Assets<Image>>().len(), 1);
+        assert_eq!(ghosts(&mut world), [ghost]);
+
+        // Turning the stamp draws it again, on its side.
+        world
+            .resource_mut::<Simulation>()
+            .app
+            .rotate_stamp_clockwise();
+        world.run_system_once(sync_pattern_preview).unwrap();
+        let ghost_image = world.resource::<StampGhostImage>();
+        assert_ne!(ghost_image.handle, handle);
+        assert_eq!((ghost_image.width, ghost_image.height), (height, width));
+        assert_eq!(ghosts(&mut world), [ghost]);
+
+        // Off the board it hides; without a stamp it goes, texture and all.
+        world.resource_mut::<HoveredCell>().0 = None;
+        world.run_system_once(sync_pattern_preview).unwrap();
+        assert_eq!(world.get::<Visibility>(ghost), Some(&Visibility::Hidden));
+        world
+            .resource_mut::<Simulation>()
+            .app
+            .set_tool(EditTool::Draw);
+        world.run_system_once(sync_pattern_preview).unwrap();
+        assert!(ghosts(&mut world).is_empty());
+        assert_eq!(world.resource::<StampGhostImage>().key, None);
     }
 }
