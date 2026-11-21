@@ -23,6 +23,9 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
       - workspace.rs
       - atomic_file.rs
       - shared.rs
+      - keybindings.rs
+      - feedback.rs
+      - coords.rs
       - settings_plugin.rs
       - ui_input.rs
       - canvas_view.rs
@@ -58,7 +61,10 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
 | `patterns`              | Built-in patterns and RLE reading and writing                                 |
 | `workspace`             | Versioned workspace files, checked completely before they replace anything    |
 | `atomic_file`           | Writing through a temporary file, so a failed save keeps the old contents     |
-| `shared`                | Bevy resources, system sets, key bindings, colours, and constants used across plugins |
+| `shared`                | App-wide Bevy state: the simulation resource, system sets, overlay toggles, themes, board size settings |
+| `keybindings`           | Key binding constants, typed characters, and the Help and README controls lists built from them |
+| `feedback`              | Short notices shown after edits from the toolbar or the keyboard              |
+| `coords`                | Cells in world space, cell size, zoom and pan limits, and fitting the camera to a board or pattern |
 | `settings_plugin`       | Loading and saving `settings.toml`                                            |
 | `ui_input`              | Deciding whether the pointer and keyboard belong to the UI or the board       |
 | `canvas_view`           | The board camera's viewport, and fitting the board into it                    |
@@ -157,7 +163,7 @@ Board shortcuts run only when `canvas_keyboard_available` allows it. This keeps 
 
 ## Key bindings
 
-Key bindings are `KeyBinding` constants in `shared.rs`, each with its keys, label, and action. The same constants drive the keyboard handler, the in-app help text, and the README test, so the documentation of a key cannot drift from what it does.
+Key bindings are `KeyBinding` constants in `keybindings.rs`, each with its keys, label, and action. The same constants drive the keyboard handler, the in-app help text, and the README test, so the documentation of a key cannot drift from what it does.
 
 ## Rendering
 

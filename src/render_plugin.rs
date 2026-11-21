@@ -3,9 +3,10 @@ use std::f32::consts::PI;
 use crate::app::{App as GolApp, EditTool};
 use crate::board::{BoundaryMode, DirtyCells, RowCells};
 use crate::canvas_view::cursor_world;
+use crate::coords::{CELL_SIZE, board_size_for_window};
 use crate::shared::{
-    BoardColors, BoardSettings, CELL_SIZE, CellAge, GridOverlay, MainCamera, RedrawRequested,
-    Simulation, StartupSet, Theme, UpdateSet, board_size_for_window,
+    BoardColors, BoardSettings, CellAge, GridOverlay, MainCamera, RedrawRequested, Simulation,
+    StartupSet, Theme, UpdateSet,
 };
 use crate::ui_input::UiInputCapture;
 use bevy::{
@@ -1081,7 +1082,7 @@ fn render_hover_cell(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::cell_to_world;
+    use crate::coords::cell_to_world;
 
     #[test]
     fn texel_rows_are_flipped_relative_to_board_rows() {

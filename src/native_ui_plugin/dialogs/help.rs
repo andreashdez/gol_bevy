@@ -1,6 +1,6 @@
 //! The shortcut reference in the Help dialog.
 use super::*;
-use crate::shared::{HelpSection, help_sections};
+use crate::keybindings::{HelpSection, help_sections};
 
 /// Width of the key caps beside each action, so the actions line up.
 const HELP_KEY_COLUMN: f32 = 132.0;

@@ -1,6 +1,6 @@
 //! Everyday controls, shortcut hints, and first-use guidance.
 use super::*;
-use crate::shared::{CAMERA_ZOOM_MIN, MainCamera};
+use crate::{coords::CAMERA_ZOOM_MIN, shared::MainCamera};
 use bevy::{
     a11y::AccessibilityNode,
     text::{FontFeatureTag, Justify},

@@ -2,9 +2,8 @@
 use bevy::platform::time::Instant;
 use std::time::Duration;
 
-use crate::shared::{
-    DiagnosticsOverlay, EditFeedback, GridOverlay, RedrawRequested, Simulation, UpdateSet,
-};
+use crate::feedback::EditFeedback;
+use crate::shared::{DiagnosticsOverlay, GridOverlay, RedrawRequested, Simulation, UpdateSet};
 use bevy::{
     app::AppExit,
     prelude::*,
@@ -178,7 +177,7 @@ mod tests {
 
     #[test]
     fn a_board_out_of_room_stops_a_max_speed_run_and_says_why() {
-        use crate::shared::EditFeedback;
+        use crate::feedback::EditFeedback;
         use bevy::{ecs::system::RunSystemOnce, prelude::*};
 
         let mut sim = running_simulation();
