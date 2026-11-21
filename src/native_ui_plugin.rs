@@ -302,7 +302,7 @@ fn button_frame(parent: &mut ChildSpawnerCommands, name: &str, action: Action) -
             ThemedBackground(Token::Surface),
             ThemedBorder(Token::Line),
             Name::new(name.to_owned()),
-            controls::Tooltip(controls::hint(action).to_owned()),
+            controls::Tooltip(controls::hint(action)),
         ))
         .id()
 }

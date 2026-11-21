@@ -307,6 +307,14 @@ pub const BINDING_QUIT: KeyBinding = KeyBinding {
     action: "Quit",
 };
 
+/// Key caps of the Cmd/Ctrl chords, which have no `KeyBinding` as each is
+/// matched where it is handled, shared by Help and the toolbar's tooltips.
+pub const CAPS_UNDO: &[&str] = &["U", "Mod+Z"];
+pub const CAPS_REDO: &[&str] = &["Mod+Shift+Z"];
+pub const CAPS_COPY: &[&str] = &["Mod+C"];
+pub const CAPS_SAVE: &[&str] = &["Mod+S"];
+pub const CAPS_OPEN: &[&str] = &["Mod+O"];
+
 /// A row of the Help dialog: alternative key caps and what they do. `Mod`
 /// stands for Cmd on macOS and Ctrl elsewhere.
 pub struct HelpEntry {
@@ -355,8 +363,8 @@ pub fn help_sections() -> [HelpSection; 6] {
                 entry(&["Right drag"], "Erase"),
                 BINDING_RANDOMIZE.into(),
                 BINDING_CLEAR.into(),
-                entry(&["U", "Mod+Z"], "Undo and pause"),
-                entry(&["Mod+Shift+Z"], "Redo"),
+                entry(CAPS_UNDO, "Undo and pause"),
+                entry(CAPS_REDO, "Redo"),
             ],
         },
         HelpSection {
@@ -372,7 +380,7 @@ pub fn help_sections() -> [HelpSection; 6] {
             title: "Selection",
             entries: vec![
                 entry(&["Mod+A"], "Select the live cells"),
-                entry(&["Mod+C"], "Copy the selection as RLE"),
+                entry(CAPS_COPY, "Copy the selection as RLE"),
                 entry(&["Mod+X"], "Cut the selection as RLE"),
                 entry(&["Mod+V"], "Paste RLE as the stamp"),
                 BINDING_ERASE_SELECTION.into(),
@@ -399,8 +407,8 @@ pub fn help_sections() -> [HelpSection; 6] {
                 ];
                 if !WEB_BUILD {
                     entries.extend([
-                        entry(&["Mod+S"], "Save workspace"),
-                        entry(&["Mod+O"], "Open workspace"),
+                        entry(CAPS_SAVE, "Save workspace"),
+                        entry(CAPS_OPEN, "Open workspace"),
                         BINDING_QUIT.into(),
                     ]);
                 }
@@ -412,11 +420,32 @@ pub fn help_sections() -> [HelpSection; 6] {
 
 /// The name of the command modifier on this platform, for `Mod` in key caps.
 pub fn command_key() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "Cmd"
-    } else {
-        "Ctrl"
+    if on_mac() { "Cmd" } else { "Ctrl" }
+}
+
+/// Whether the keyboard has a Cmd key. The web build asks the browser, as it is
+/// compiled once for every platform.
+fn on_mac() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        static ON_MAC: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+            web_sys::window()
+                .and_then(|window| window.navigator().platform().ok())
+                .is_some_and(|platform| platform.starts_with("Mac"))
+        });
+        *ON_MAC
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        cfg!(target_os = "macos")
+    }
+}
+
+/// A shortcut as a tooltip names it: its first key cap, with `Mod` named for
+/// this platform.
+pub fn shortcut_label(caps: &[&str]) -> String {
+    caps.first()
+        .map_or_else(String::new, |cap| cap.replace("Mod", command_key()))
 }
 
 /// The shortcut list in the README, generated so it cannot drift from the app.
