@@ -11,7 +11,7 @@ Each archive has the binary, the README, the changelog, the licence, the font's 
 
 Download the `x86_64-linux.tar.gz` archive. It needs:
 
-- glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40, or later)
+- glibc 2.36 or newer (Debian 12, Ubuntu 24.04, Fedora 37, or later)
 - a Wayland or X11 desktop
 - for the file dialogs that open and save workspaces and \.rle files, an xdg-desktop-portal backend, such as `xdg-desktop-portal-gtk` or `xdg-desktop-portal-kde`
 

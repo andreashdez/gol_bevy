@@ -34,15 +34,17 @@ This runs `scripts/check-release-version.sh`, which passes only if the tag is `v
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-On a tag, CI runs the usual lint and test jobs, then:
+On a tag, CI runs the usual lint and test jobs, then, once all of them pass:
 
 | Job               | Output                                         | Notes                                    |
 |-------------------|------------------------------------------------|------------------------------------------|
 | `version`         | Nothing                                        | Runs the same check as `just release-check`; no release job starts unless it passes |
-| `release-linux`   | `gol-bevy-<tag>-x86_64-linux.tar.gz`           | Built on Debian trixie, so it needs glibc 2.39 or newer |
+| `release-linux`   | `gol-bevy-<tag>-x86_64-linux.tar.gz`           | Built on Debian bookworm, so it needs glibc 2.36 or newer. The job fails if the binary needs a newer glibc than `GLIBC_MAX` in `ci.yml` |
 | `release-windows` | `gol-bevy-<tag>-x86_64-windows.zip`            | Cross-compiled with MinGW, so no Windows runner is needed |
 | `release-macos`   | `gol-bevy-<tag>-universal-macos.tar.gz`        | Universal binary for Apple silicon and Intel, built on a macOS runner |
-| `release`         | A GitHub release named `gol-bevy <tag>`        | Has all three archives attached, and the version's notes from `CHANGELOG.md` |
+| `release`         | A GitHub release named `gol-bevy <tag>`        | Has all three archives and their `SHA256SUMS` attached, and the version's notes from `CHANGELOG.md` |
+
+Release builds start from scratch rather than from a cache, so a release takes longer than an ordinary CI run.
 
 ## Release notes
 
