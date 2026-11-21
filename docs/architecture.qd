@@ -147,6 +147,6 @@ Key bindings are `KeyBinding` constants in `shared.rs`, each with its keys, labe
 
 ## Rendering
 
-The board is a single texture with one texel per cell, scaled up by the camera. Only cells that changed are rewritten, using the masks of changed cells the board keeps. Operations that touch everything, such as resizing, randomizing, and clearing, fall back to a full redraw. See [Simulation engine](engine.qd#rendering) for details.
+The board is drawn as 256 × 256-cell tiles, each a texture with one texel per cell, scaled up by the camera. Only cells that changed are rewritten, using the masks of changed cells the board keeps, and only the tiles that hold them are sent to the GPU again. Operations that touch everything, such as resizing, randomizing, and clearing, fall back to a full redraw. See [Simulation engine](engine.qd#rendering) for details.
 
 The unbounded board has no size to make a texture of, so `plane_view` keeps one the size of the canvas and paints whatever part of the plane is in view. See [Unbounded board](engine.qd#unbounded-board).

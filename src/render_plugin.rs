@@ -31,17 +31,138 @@ struct StampGhost;
 #[derive(Component)]
 struct BoundaryWall;
 
-/// The board is drawn as one texture with a single texel per cell, so rendering
+/// The board is drawn as textures with a single texel per cell, so rendering
 /// cost tracks the cells that changed instead of one sprite entity per cell.
+/// The texture is cut into tiles, each its own image, so that painting a few
+/// cells sends the GPU only the tiles they are on rather than the whole board.
 #[derive(Resource, Default)]
 struct BoardTexture {
-    handle: Handle<Image>,
+    layout: TileLayout,
+    /// One image per tile, in the order of [`TileLayout::rect`].
+    tiles: Vec<Handle<Image>>,
+    /// The tiles painted on since they were last handed to the renderer.
+    touched: Vec<bool>,
+}
+
+/// Cells along a side of a board tile. An edit re-uploads the 256 KiB of its
+/// tile instead of the whole board (16 MiB at 2048 × 2048), while the largest
+/// board is still only 64 tiles, each a sprite and a draw call. A multiple of
+/// the runs the board hands cells over in, so a run never straddles two tiles.
+const TILE_CELLS: usize = 256;
+const _: () = assert!(TILE_CELLS.is_multiple_of(RUN_CELLS));
+
+/// How a `cols` × `rows` board is cut into tiles: row by row from the bottom
+/// left, with the tiles at the right and top edges cut short.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct TileLayout {
     cols: usize,
     rows: usize,
 }
 
+impl TileLayout {
+    fn across(self) -> usize {
+        self.cols.div_ceil(TILE_CELLS)
+    }
+
+    fn count(self) -> usize {
+        self.across() * self.rows.div_ceil(TILE_CELLS)
+    }
+
+    /// The first column and row of a tile, and its width and height in cells.
+    fn rect(self, tile: usize) -> (usize, usize, usize, usize) {
+        let (col, row) = (
+            tile % self.across() * TILE_CELLS,
+            tile / self.across() * TILE_CELLS,
+        );
+        let width = (self.cols - col).min(TILE_CELLS);
+        let height = (self.rows - row).min(TILE_CELLS);
+        (col, row, width, height)
+    }
+
+    /// The tile cell `idx` is on, the byte offset of its texel in that tile's
+    /// texture, and how many cells of its row the tile holds from it on.
+    fn locate(self, idx: usize) -> (usize, usize, usize) {
+        let (col, row) = (idx % self.cols, idx / self.cols);
+        let tile = row / TILE_CELLS * self.across() + col / TILE_CELLS;
+        let (first_col, first_row, width, height) = self.rect(tile);
+        let (x, y) = (col - first_col, row - first_row);
+        (tile, texel_offset(y * width + x, width, height), width - x)
+    }
+}
+
+impl BoardTexture {
+    /// Blank tiles, the colour of dead cells, for a `cols` × `rows` board.
+    fn new(images: &mut Assets<Image>, cols: usize, rows: usize, dead: Color) -> Self {
+        let layout = TileLayout { cols, rows };
+        let tiles = (0..layout.count())
+            .map(|tile| {
+                let (_, _, width, height) = layout.rect(tile);
+                images.add(tile_image(width, height, dead))
+            })
+            .collect();
+        Self {
+            layout,
+            tiles,
+            touched: vec![false; layout.count()],
+        }
+    }
+
+    /// A sprite for each tile, under `board`, which sits at the board's centre.
+    fn spawn_sprites(&self, commands: &mut Commands, board: Entity) {
+        let TileLayout { cols, rows } = self.layout;
+        let corner = -board_sprite_size(cols, rows) / 2.0;
+        for (tile, handle) in self.tiles.iter().enumerate() {
+            let (col, row, width, height) = self.layout.rect(tile);
+            let size = board_sprite_size(width, height);
+            let min = corner + Vec2::new(col as f32, row as f32) * CELL_SIZE;
+            commands.spawn((
+                Sprite {
+                    image: handle.clone(),
+                    custom_size: Some(size),
+                    ..default()
+                },
+                Transform::from_translation((min + size / 2.0).extend(0.0)),
+                BoardTile,
+                ChildOf(board),
+            ));
+        }
+    }
+
+    /// The texels of the cells from `first` to the end of its row on its tile,
+    /// side by side. The tile counts as painted on, but the renderer sees the
+    /// paint only once it is [`upload`](Self::upload)ed.
+    fn row_texels<'a>(
+        &mut self,
+        images: &'a mut Assets<Image>,
+        first: usize,
+    ) -> Option<&'a mut [u8]> {
+        let (tile, offset, cells) = self.layout.locate(first);
+        self.touched[tile] = true;
+        let data = images.get_mut_untracked(&self.tiles[tile])?.data.as_mut()?;
+        Some(&mut data[offset..][..cells * 4])
+    }
+
+    /// Marks the tiles painted on as modified, so the renderer uploads those
+    /// and leaves the rest of the board alone.
+    fn upload(&mut self, images: &mut Assets<Image>) {
+        for (handle, touched) in self.tiles.iter().zip(&mut self.touched) {
+            if std::mem::take(touched)
+                && let Some(image) = images.get_mut(handle)
+            {
+                image.into_inner();
+            }
+        }
+    }
+}
+
+/// The entity the board's tile sprites hang from, at the board's centre;
+/// hiding it hides the board.
 #[derive(Component)]
 pub(crate) struct BoardSprite;
+
+/// A sprite drawing one tile of the board.
+#[derive(Component)]
+struct BoardTile;
 
 /// Generations since each cell last changed state. The renderer keeps these so
 /// the engine's step loop pays nothing for them. A cell stops ageing once its
@@ -176,16 +297,11 @@ fn board_sprite_size(cols: usize, rows: usize) -> Vec2 {
     Vec2::new(cols as f32 * CELL_SIZE, rows as f32 * CELL_SIZE)
 }
 
-fn create_board_image(
-    images: &mut Assets<Image>,
-    cols: usize,
-    rows: usize,
-    dead: Color,
-) -> Handle<Image> {
+fn tile_image(width: usize, height: usize, dead: Color) -> Image {
     let mut image = Image::new_fill(
         Extent3d {
-            width: cols as u32,
-            height: rows as u32,
+            width: width as u32,
+            height: height as u32,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
@@ -195,29 +311,32 @@ fn create_board_image(
     );
     // Cells are crisp squares; filtering would smear neighbours together.
     image.sampler = ImageSampler::nearest();
-    images.add(image)
+    image
 }
 
-/// The board texture, its dimensions, and the sprite that draws it always change
-/// together, so they travel as one system parameter.
+/// The board texture, its dimensions, and the sprites that draw it always
+/// change together, so they travel as one system parameter.
 #[derive(SystemParam)]
 struct BoardCanvas<'w, 's> {
+    commands: Commands<'w, 's>,
     images: ResMut<'w, Assets<Image>>,
     texture: ResMut<'w, BoardTexture>,
-    sprite_q: Query<'w, 's, &'static mut Sprite, With<BoardSprite>>,
+    board_q: Query<'w, 's, Entity, With<BoardSprite>>,
+    tile_q: Query<'w, 's, Entity, With<BoardTile>>,
     theme: Res<'w, Theme>,
 }
 
 impl BoardCanvas<'_, '_> {
-    /// Point the sprite at a freshly sized texture. The previous image is dropped
-    /// once the old handle goes away.
+    /// Draw the board with freshly sized tiles. The previous images are dropped
+    /// once their sprites go.
     fn rebuild(&mut self, cols: usize, rows: usize) {
-        let handle = create_board_image(&mut self.images, cols, rows, self.theme.board().dead);
-        if let Ok(mut sprite) = self.sprite_q.single_mut() {
-            sprite.image = handle.clone();
-            sprite.custom_size = Some(board_sprite_size(cols, rows));
+        for tile in &self.tile_q {
+            self.commands.entity(tile).despawn();
         }
-        *self.texture = BoardTexture { handle, cols, rows };
+        *self.texture = BoardTexture::new(&mut self.images, cols, rows, self.theme.board().dead);
+        if let Ok(board) = self.board_q.single() {
+            self.texture.spawn_sprites(&mut self.commands, board);
+        }
     }
 }
 
@@ -390,17 +509,11 @@ fn setup_world(
     ));
     commands.insert_resource(Simulation::new(GolApp::new(cols, rows)));
 
-    let handle = create_board_image(&mut images, cols, rows, theme.board().dead);
-    commands.spawn((
-        Sprite {
-            image: handle.clone(),
-            custom_size: Some(board_sprite_size(cols, rows)),
-            ..default()
-        },
-        Transform::from_translation(Vec3::ZERO),
-        BoardSprite,
-    ));
-    *board_texture = BoardTexture { handle, cols, rows };
+    *board_texture = BoardTexture::new(&mut images, cols, rows, theme.board().dead);
+    let board = commands
+        .spawn((Transform::default(), Visibility::default(), BoardSprite))
+        .id();
+    board_texture.spawn_sprites(&mut commands, board);
 
     spawn_boundary_walls(&mut commands, cols, rows, theme.board().wall);
 }
@@ -453,7 +566,6 @@ fn spawn_boundary_walls(commands: &mut Commands, cols: usize, rows: usize, color
 /// Window resizes no longer touch the board; only an explicit size change does.
 fn apply_board_settings(
     settings: Res<BoardSettings>,
-    mut commands: Commands,
     mut sim: ResMut<Simulation>,
     mut canvas: BoardCanvas,
     wall_q: Query<Entity, With<BoundaryWall>>,
@@ -463,7 +575,7 @@ fn apply_board_settings(
     }
     let (cols, rows) = (settings.cols, settings.rows);
     if sim.app.board.size() == Some((cols, rows))
-        && (canvas.texture.cols, canvas.texture.rows) == (cols, rows)
+        && canvas.texture.layout == (TileLayout { cols, rows })
     {
         return;
     }
@@ -474,10 +586,10 @@ fn apply_board_settings(
     canvas.rebuild(cols, rows);
 
     for entity in &wall_q {
-        commands.entity(entity).despawn();
+        canvas.commands.entity(entity).despawn();
     }
     let wall = canvas.theme.board().wall;
-    spawn_boundary_walls(&mut commands, cols, rows, wall);
+    spawn_boundary_walls(&mut canvas.commands, cols, rows, wall);
 }
 
 /// Draws only the grid lines that intersect the viewport, so the cost tracks
@@ -586,7 +698,7 @@ fn sync_cells(
     redraw_requested: Res<RedrawRequested>,
     mut style: CellStyle,
     mut sim: ResMut<Simulation>,
-    board_texture: Res<BoardTexture>,
+    mut texture: ResMut<BoardTexture>,
     mut images: ResMut<Assets<Image>>,
 ) {
     // A new theme or cell style recolours every cell, not just the ones that changed.
@@ -603,31 +715,40 @@ fn sync_cells(
     let (cols, rows) = board.size();
     // A resize rebuilds the texture and marks the board fully dirty, so bailing
     // out on a mismatch defers the repaint by a frame rather than dropping it.
-    if cols == 0 || rows == 0 || cols != board_texture.cols || rows != board_texture.rows {
+    if cols == 0 || rows == 0 || texture.layout != (TileLayout { cols, rows }) {
         return;
     }
-    let Some(mut image) = images.get_mut(&board_texture.handle) else {
-        return;
-    };
-    let Some(data) = image.data.as_mut() else {
-        return;
-    };
 
     let dirty = board.take_dirty_cells();
     // Undo and resetting the counter move it backwards; neither is a generation.
     let steps = u8::try_from(epoch.saturating_sub(style.ages.epoch)).unwrap_or(u8::MAX);
     style.ages.epoch = epoch;
-    let board = &*board;
     let by_age = style.cell_age.enabled;
-    let palette = CellPalette::new(style.theme.board(), by_age);
     let len = cols * rows;
+    // A redraw with nothing to show, such as turning the stamp, leaves the
+    // texture alone rather than sending it to the GPU again.
+    let ageing = steps > 0 && !style.ages.ageing.is_empty();
+    let ages_known = style.ages.ages.len() == len;
+    if !recolor && dirty == DirtyCells::None && (!by_age || (!ageing && ages_known)) {
+        return;
+    }
+
+    let board = &*board;
+    let palette = CellPalette::new(style.theme.board(), by_age);
     let across = cols.div_ceil(RUN_CELLS);
     let aged = &mut *style.ages;
+    let (texture, images) = (&mut *texture, &mut *images);
 
     if !by_age {
         let mut paint = |run: RowCells| {
-            for (idx, alive) in run.iter().filter(|&(idx, _)| idx < len) {
-                palette.paint(data, texel_offset(idx, cols, rows), alive, 0);
+            if run.first >= len {
+                return;
+            }
+            let Some(texels) = texture.row_texels(images, run.first) else {
+                return;
+            };
+            for (idx, alive) in run.iter() {
+                palette.paint(texels, (idx - run.first) * 4, alive, 0);
             }
         };
         match dirty {
@@ -635,11 +756,12 @@ fn sync_cells(
             DirtyCells::None if !recolor => {}
             _ => board.row_cells().for_each(&mut paint),
         }
+        texture.upload(images);
         return;
     }
 
     // Switching the style on starts from a calm board: nobody knows the ages yet.
-    let reset = style.cell_age.is_changed() || aged.ages.len() != len || dirty == DirtyCells::Full;
+    let reset = style.cell_age.is_changed() || !ages_known || dirty == DirtyCells::Full;
     if reset {
         aged.ages.clear();
         aged.ages.resize(len, settled_age(false));
@@ -664,8 +786,8 @@ fn sync_cells(
             ageing.retain(|&first| {
                 let run = board.cells_from(first as usize);
                 let cells = &mut ageing_cells[run_index(run.first, cols, across)];
-                // Texels of a row sit side by side, as its cells do.
-                let texels = texel_offset(run.first, cols, rows);
+                // Texels of a row sit side by side on its tile, as its cells do.
+                let mut texels = texture.row_texels(images, run.first);
                 for (idx, alive) in (RowCells {
                     cells: *cells,
                     ..run
@@ -675,7 +797,9 @@ fn sync_cells(
                     let (age, bit) = (&mut ages[idx], idx - run.first);
                     if *age < SETTLED_AGE {
                         *age = age.saturating_add(steps);
-                        palette.paint(data, texels + bit * 4, alive, *age);
+                        if let Some(texels) = texels.as_deref_mut() {
+                            palette.paint(texels, bit * 4, alive, *age);
+                        }
                     }
                     if *age >= SETTLED_AGE {
                         *cells &= !(1 << bit);
@@ -685,12 +809,15 @@ fn sync_cells(
             });
         }
         if let DirtyCells::Cells(changed) = dirty {
-            for run in changed {
-                for (idx, alive) in run.iter().filter(|&(idx, _)| idx < len) {
+            for run in changed.into_iter().filter(|run| run.first < len) {
+                let mut texels = texture.row_texels(images, run.first);
+                for (idx, alive) in run.iter() {
                     // A generation gives births and deaths age 0; hand edits look settled.
                     let age = if steps > 0 { 0 } else { settled_age(alive) };
                     aged.ages[idx] = age;
-                    palette.paint(data, texel_offset(idx, cols, rows), alive, age);
+                    if let Some(texels) = texels.as_deref_mut() {
+                        palette.paint(texels, (idx - run.first) * 4, alive, age);
+                    }
                 }
                 // A cell that just died by hand has no trail, and settles at once.
                 let ageing = if steps > 0 {
@@ -705,12 +832,16 @@ fn sync_cells(
     let ages = &aged.ages;
     if reset || recolor {
         for run in board.row_cells() {
+            let Some(texels) = texture.row_texels(images, run.first) else {
+                continue;
+            };
             for (&age, bit) in ages[run.first..][..run.len()].iter().zip(0..) {
                 let alive = run.alive >> bit & 1 != 0;
-                palette.paint(data, texel_offset(run.first + bit, cols, rows), alive, age);
+                palette.paint(texels, bit * 4, alive, age);
             }
         }
     }
+    texture.upload(images);
 }
 
 fn sync_boundary_wall_visibility(
@@ -998,42 +1129,87 @@ mod tests {
         assert_eq!(color_to_texel(colors.dead), [20, 23, 28, 255]);
     }
 
+    /// A world with `app`'s finite board on blank tiles, ready for [`sync_cells`].
+    fn board_world(app: GolApp, by_age: bool) -> World {
+        let mut world = World::new();
+        fill_board_world(&mut world, app, by_age);
+        world
+    }
+
+    fn fill_board_world(world: &mut World, app: GolApp, by_age: bool) {
+        let (cols, rows) = app.board.size().unwrap();
+        world.insert_resource(Simulation::new(app));
+        world.insert_resource(RedrawRequested(true));
+        world.insert_resource(Theme::Dark);
+        world.insert_resource(CellAge { enabled: by_age });
+        world.init_resource::<CellAges>();
+        world.init_resource::<Assets<Image>>();
+        let mut images = world.resource_mut::<Assets<Image>>();
+        let texture = BoardTexture::new(&mut images, cols, rows, Theme::Dark.board().dead);
+        world.insert_resource(texture);
+    }
+
+    /// The tiles put back together into the one texture a whole board used to
+    /// be drawn on: a texel per cell, rows from the top of the board down.
+    fn board_texels(world: &World) -> Vec<u8> {
+        let texture = world.resource::<BoardTexture>();
+        let images = world.resource::<Assets<Image>>();
+        let TileLayout { cols, rows } = texture.layout;
+        let mut whole = vec![0; cols * rows * 4];
+        for (tile, handle) in texture.tiles.iter().enumerate() {
+            let (col, row, width, height) = texture.layout.rect(tile);
+            let image = images.get(handle).unwrap();
+            assert_eq!(image.size(), UVec2::new(width as u32, height as u32));
+            assert_eq!(image.sampler, ImageSampler::nearest());
+            let data = image.data.as_ref().unwrap();
+            // A tile's texel rows run top down too, from its top row of cells.
+            for (y, line) in data.chunks_exact(width * 4).enumerate() {
+                let board_row = row + height - 1 - y;
+                let start = ((rows - 1 - board_row) * cols + col) * 4;
+                whole[start..][..width * 4].copy_from_slice(line);
+            }
+        }
+        whole
+    }
+
+    fn texel_at(texels: &[u8], idx: usize, cols: usize, rows: usize) -> [u8; 4] {
+        let offset = texel_offset(idx, cols, rows);
+        texels[offset..offset + 4].try_into().unwrap()
+    }
+
     #[test]
     fn restored_board_dimensions_rebuild_the_texture_and_repaint_loaded_cells() {
         use bevy::ecs::system::RunSystemOnce;
-        let mut world = World::new();
         let mut app = GolApp::new(16, 24);
         app.populate_board(15, 23);
-        world.insert_resource(Simulation::new(app));
+        let mut world = board_world(GolApp::new(8, 8), false);
+        world.resource_mut::<Simulation>().app = app;
         world.insert_resource(BoardSettings {
             cols: 16,
             rows: 24,
             fill_canvas: false,
         });
-        world.insert_resource(Theme::Dark);
-        world.insert_resource(RedrawRequested(true));
-        world.insert_resource(CellAge { enabled: false });
-        world.init_resource::<CellAges>();
-        let mut images = Assets::<Image>::default();
-        let old = create_board_image(&mut images, 8, 8, Theme::Dark.board().dead);
-        world.insert_resource(images);
-        world.insert_resource(BoardTexture {
-            handle: old,
-            cols: 8,
-            rows: 8,
-        });
-        let sprite = world.spawn((BoardSprite, Sprite::default())).id();
+        let board = world
+            .spawn((BoardSprite, Transform::default(), Visibility::default()))
+            .id();
+        let old_tile = world
+            .spawn((BoardTile, Sprite::default(), ChildOf(board)))
+            .id();
         world.run_system_once(apply_board_settings).unwrap();
         let texture = world.resource::<BoardTexture>();
-        assert_eq!((texture.cols, texture.rows), (16, 24));
-        assert_eq!(world.get::<Sprite>(sprite).unwrap().image, texture.handle);
+        assert_eq!(texture.layout, TileLayout { cols: 16, rows: 24 });
+        let tiles = texture.tiles.clone();
+        assert!(world.get_entity(old_tile).is_err());
+        let sprites: Vec<_> = world
+            .query_filtered::<(&Sprite, &ChildOf), With<BoardTile>>()
+            .iter(&world)
+            .map(|(sprite, parent)| (sprite.image.clone(), parent.parent()))
+            .collect();
+        assert_eq!(sprites, [(tiles[0].clone(), board)]);
+
         world.run_system_once(sync_cells).unwrap();
-        let texture = world.resource::<BoardTexture>();
-        let images = world.resource::<Assets<Image>>();
-        let data = images.get(&texture.handle).unwrap().data.as_ref().unwrap();
-        let offset = texel_offset(23 * 16 + 15, 16, 24);
         assert_eq!(
-            data[offset..offset + 4],
+            texel_at(&board_texels(&world), 23 * 16 + 15, 16, 24),
             color_to_texel(Theme::Dark.board().live)
         );
     }
@@ -1041,50 +1217,23 @@ mod tests {
     #[test]
     fn syncing_cells_leaves_the_texture_alone_on_the_unbounded_board() {
         use bevy::ecs::system::RunSystemOnce;
-        let mut world = World::new();
-        let mut app = GolApp::new(4, 3);
+        let mut world = board_world(GolApp::new(4, 3), false);
+        let app = &mut world.resource_mut::<Simulation>().app;
         app.set_unbounded().unwrap();
         app.board.populate(1, 2);
-        world.insert_resource(Simulation::new(app));
-        world.insert_resource(RedrawRequested(true));
-        world.insert_resource(Theme::Dark);
-        world.insert_resource(CellAge { enabled: false });
-        world.init_resource::<CellAges>();
-        let mut images = Assets::<Image>::default();
-        let handle = create_board_image(&mut images, 4, 3, Theme::Dark.board().dead);
-        world.insert_resource(images);
-        world.insert_resource(BoardTexture {
-            handle: handle.clone(),
-            cols: 4,
-            rows: 3,
-        });
         world.run_system_once(sync_cells).unwrap();
 
-        let images = world.resource::<Assets<Image>>();
-        let data = images.get(&handle).unwrap().data.as_ref().unwrap();
+        let texels = board_texels(&world);
         let dead = color_to_texel(Theme::Dark.board().dead);
-        assert!(data.as_chunks::<4>().0.iter().all(|&texel| texel == dead));
+        assert!(texels.as_chunks::<4>().0.iter().all(|&texel| texel == dead));
     }
 
     #[test]
     fn switching_themes_repaints_every_cell_without_a_board_change() {
         use bevy::ecs::system::RunSystemOnce;
-        let mut world = World::new();
         let mut app = GolApp::new(4, 3);
         app.board.populate(1, 2);
-        world.insert_resource(Simulation::new(app));
-        world.insert_resource(RedrawRequested(true));
-        world.insert_resource(Theme::Dark);
-        world.insert_resource(CellAge { enabled: false });
-        world.init_resource::<CellAges>();
-        let mut images = Assets::<Image>::default();
-        let handle = create_board_image(&mut images, 4, 3, Theme::Dark.board().dead);
-        world.insert_resource(images);
-        world.insert_resource(BoardTexture {
-            handle: handle.clone(),
-            cols: 4,
-            rows: 3,
-        });
+        let mut world = board_world(app, false);
         world.run_system_once(sync_cells).unwrap();
 
         // Nothing on the board changes, so only the theme can cause a repaint.
@@ -1092,47 +1241,33 @@ mod tests {
         *world.resource_mut::<Theme>() = Theme::Light;
         world.run_system_once(sync_cells).unwrap();
         let colors = Theme::Light.board();
-        let images = world.resource::<Assets<Image>>();
-        let data = images.get(&handle).unwrap().data.as_ref().unwrap();
+        let texels = board_texels(&world);
         for idx in 0..12 {
             let expected = if idx == 2 * 4 + 1 {
                 colors.live
             } else {
                 colors.dead
             };
-            let offset = texel_offset(idx, 4, 3);
-            assert_eq!(data[offset..offset + 4], color_to_texel(expected), "{idx}");
+            assert_eq!(
+                texel_at(&texels, idx, 4, 3),
+                color_to_texel(expected),
+                "{idx}"
+            );
         }
     }
 
     #[test]
     fn generations_shade_births_deaths_and_survivors_but_edits_look_settled() {
-        let mut world = World::new();
         // A horizontal blinker in the middle row.
         let mut app = GolApp::new(5, 5);
         for col in 1..=3 {
             app.board.populate(col, 2);
         }
-        world.insert_resource(Simulation::new(app));
-        world.insert_resource(RedrawRequested(true));
-        world.insert_resource(Theme::Dark);
-        world.insert_resource(CellAge { enabled: true });
-        world.init_resource::<CellAges>();
-        let mut images = Assets::<Image>::default();
-        let handle = create_board_image(&mut images, 5, 5, Theme::Dark.board().dead);
-        world.insert_resource(images);
-        world.insert_resource(BoardTexture {
-            handle: handle.clone(),
-            cols: 5,
-            rows: 5,
-        });
+        let mut world = board_world(app, true);
         // A registered system remembers what it has seen, unlike `run_system_once`.
         let sync = world.register_system(sync_cells);
         let texel = |world: &World, col: usize, row: usize| {
-            let images = world.resource::<Assets<Image>>();
-            let data = images.get(&handle).unwrap().data.as_ref().unwrap();
-            let offset = texel_offset(row * 5 + col, 5, 5);
-            <[u8; 4]>::try_from(&data[offset..offset + 4]).unwrap()
+            texel_at(&board_texels(world), row * 5 + col, 5, 5)
         };
         let colors = Theme::Dark.board();
 
@@ -1167,30 +1302,19 @@ mod tests {
         world.run_system(sync).unwrap();
         assert_eq!(texel(&world, 2, 2), color_to_texel(colors.live));
     }
+
     #[test]
-    fn a_board_wider_and_taller_than_a_chunk_paints_every_cell_at_its_own_texel() {
-        // Cells are stored a chunk at a time, so this is where a cell could land
-        // on a neighbour's texel: past column 64, past row 64, and at both edges.
-        let (cols, rows) = (130, 70);
+    fn a_board_of_several_tiles_paints_every_cell_at_its_own_texel() {
+        // Cells are stored a chunk at a time and drawn a tile at a time, so this
+        // is where a cell could land on a neighbour's texel: past columns 64 and
+        // 256, past rows 64 and 256, and at the edges of the tiles cut short.
+        let (cols, rows) = (300, 270);
         for by_age in [false, true] {
-            let mut world = World::new();
             let mut app = GolApp::new(cols, rows);
             let noise = crate::board::RandomizeSettings::new(30, Some(5)).unwrap();
             app.set_randomize_settings(noise);
             app.randomize_board();
-            world.insert_resource(Simulation::new(app));
-            world.insert_resource(RedrawRequested(true));
-            world.insert_resource(Theme::Dark);
-            world.insert_resource(CellAge { enabled: by_age });
-            world.init_resource::<CellAges>();
-            let mut images = Assets::<Image>::default();
-            let handle = create_board_image(&mut images, cols, rows, Theme::Dark.board().dead);
-            world.insert_resource(images);
-            world.insert_resource(BoardTexture {
-                handle: handle.clone(),
-                cols,
-                rows,
-            });
+            let mut world = board_world(app, by_age);
             let sync = world.register_system(sync_cells);
             let palette = CellPalette::new(Theme::Dark.board(), by_age);
             let cells = |world: &World| -> Vec<bool> {
@@ -1225,8 +1349,8 @@ mod tests {
                     after = next;
                 }
                 if generations == 0 {
-                    // A cell past the first chunk, drawn or erased by hand.
-                    let (col, row) = (64 + frame, 65);
+                    // A cell drawn or erased by hand, by the corner of four tiles.
+                    let (col, row) = (250 + frame, 255);
                     let app = &mut world.resource_mut::<Simulation>().app;
                     if before[row * cols + col] {
                         app.depopulate_board(col as i64, row as i64);
@@ -1251,12 +1375,10 @@ mod tests {
                         };
                     }
                 }
-                let images = world.resource::<Assets<Image>>();
-                let data = images.get(&handle).unwrap().data.as_ref().unwrap();
+                let texels = board_texels(&world);
                 for idx in 0..cols * rows {
-                    let offset = texel_offset(idx, cols, rows);
                     assert_eq!(
-                        data[offset..offset + 4],
+                        texel_at(&texels, idx, cols, rows),
                         palette.texel(after[idx], if by_age { ages[idx] } else { 0 }),
                         "cell {idx} in frame {frame}, by age: {by_age}"
                     );
@@ -1270,8 +1392,112 @@ mod tests {
     }
 
     #[test]
+    fn tile_sprites_cover_their_own_cells_and_together_the_board() {
+        let (cols, rows) = (300, 270);
+        let mut world = board_world(GolApp::new(cols, rows), false);
+        let board = world
+            .spawn((BoardSprite, Transform::default(), Visibility::default()))
+            .id();
+        world.resource_scope(|world, texture: Mut<BoardTexture>| {
+            texture.spawn_sprites(&mut world.commands(), board);
+        });
+        world.flush();
+
+        let texture = world.resource::<BoardTexture>();
+        let (tiles, layout) = (texture.tiles.clone(), texture.layout);
+        let sprites: Vec<_> = world
+            .query_filtered::<(&Sprite, &Transform, &ChildOf), With<BoardTile>>()
+            .iter(&world)
+            .map(|(sprite, transform, parent)| {
+                assert_eq!(parent.parent(), board);
+                let rect = Rect::from_center_size(
+                    transform.translation.truncate(),
+                    sprite.custom_size.unwrap(),
+                );
+                (sprite.image.clone(), rect)
+            })
+            .collect();
+        assert_eq!(sprites.len(), 4);
+        let mut area = 0.0;
+        for (tile, handle) in tiles.iter().enumerate() {
+            let (col, row, width, height) = layout.rect(tile);
+            let rects: Vec<_> = sprites
+                .iter()
+                .filter(|(image, _)| image == handle)
+                .map(|(_, rect)| *rect)
+                .collect();
+            // Its corners are the outer corners of its corner cells.
+            let half = Vec2::splat(CELL_SIZE / 2.0);
+            let low = cell_to_world(col as i64, row as i64, cols, rows).truncate() - half;
+            let (right, top) = ((col + width - 1) as i64, (row + height - 1) as i64);
+            let high = cell_to_world(right, top, cols, rows).truncate() + half;
+            assert_eq!(rects, [Rect::from_corners(low, high)], "tile {tile}");
+            area += rects[0].size().x * rects[0].size().y;
+        }
+        let whole = board_sprite_size(cols, rows);
+        assert_eq!(area, whole.x * whole.y);
+    }
+
+    #[test]
+    fn a_frame_sends_the_gpu_only_the_tiles_it_painted_on() {
+        use bevy::{app::TaskPoolPlugin, asset::AssetPlugin, ecs::message::Messages};
+        for by_age in [false, true] {
+            let mut app = App::new();
+            app.add_plugins((
+                TaskPoolPlugin::default(),
+                AssetPlugin {
+                    watch_for_changes_override: Some(false),
+                    use_asset_processor_override: Some(false),
+                    ..default()
+                },
+            ))
+            .init_asset::<Image>()
+            .add_systems(Update, sync_cells);
+            fill_board_world(app.world_mut(), GolApp::new(1024, 1024), by_age);
+            // The tiles a frame modified, after `change` to the board.
+            let mut frame = |change: &dyn Fn(&mut GolApp)| {
+                change(&mut app.world_mut().resource_mut::<Simulation>().app);
+                app.world_mut().resource_mut::<RedrawRequested>().0 = true;
+                app.update();
+                let tiles = app.world().resource::<BoardTexture>().tiles.clone();
+                let mut events = app
+                    .world_mut()
+                    .resource_mut::<Messages<AssetEvent<Image>>>();
+                let modified: Vec<_> = events.drain().collect();
+                (0..tiles.len())
+                    .filter(|&tile| {
+                        let id = tiles[tile].id();
+                        modified.iter().any(|event| event.is_modified(id))
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let (nothing, none) = (|_: &mut GolApp| {}, [0usize; 0]);
+
+            assert_eq!(frame(&nothing), (0..16).collect::<Vec<_>>(), "first paint");
+            assert_eq!(frame(&nothing), none, "nothing changed, by age: {by_age}");
+            // Column 600 and row 300 are on the third tile of the second row.
+            assert_eq!(frame(&|app| app.populate_board(600, 300)), [6]);
+            assert_eq!(frame(&nothing), none, "by age: {by_age}");
+            // The lone cell dies, and its trail fades on its own tile.
+            for generation in 0..=SETTLED_AGE {
+                let tiles = frame(&|app| app.increment_epoch());
+                if by_age || generation == 0 {
+                    assert_eq!(tiles, [6], "generation {generation}, by age: {by_age}");
+                } else {
+                    assert_eq!(tiles, none, "generation {generation}");
+                }
+            }
+            // Settled, so nothing is left to paint.
+            assert_eq!(
+                frame(&|app| app.increment_epoch()),
+                none,
+                "by age: {by_age}"
+            );
+        }
+    }
+
+    #[test]
     fn only_cells_still_ageing_are_visited() {
-        let mut world = World::new();
         let mut app = GolApp::new(200, 150);
         // A block, which never changes, and a blinker, which never stops.
         for (col, row) in [(100, 100), (101, 100), (100, 101), (101, 101)] {
@@ -1280,19 +1506,7 @@ mod tests {
         for col in 9..12 {
             app.board.populate(col, 10);
         }
-        world.insert_resource(Simulation::new(app));
-        world.insert_resource(RedrawRequested(true));
-        world.insert_resource(Theme::Dark);
-        world.insert_resource(CellAge { enabled: true });
-        world.init_resource::<CellAges>();
-        let mut images = Assets::<Image>::default();
-        let handle = create_board_image(&mut images, 200, 150, Theme::Dark.board().dead);
-        world.insert_resource(images);
-        world.insert_resource(BoardTexture {
-            handle,
-            cols: 200,
-            rows: 150,
-        });
+        let mut world = board_world(app, true);
         let sync = world.register_system(sync_cells);
         let frame = |world: &mut World| {
             world.resource_mut::<Simulation>().app.increment_epoch();
