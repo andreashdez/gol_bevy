@@ -6,6 +6,8 @@ Add a line under Unreleased in the same pull request as the change; see
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-21
+
 ### Added
 
 - **Web version** on the docs site: try gol-bevy in a browser without installing it. It
@@ -22,8 +24,6 @@ Add a line under Unreleased in the same pull request as the change; see
 
 ### Changed
 
-- The dialogs code is split into smaller files for file dialogs, controls, the import
-  preview, help, and tests. Nothing changes for players.
 - Resizing the board, or the window with Fill canvas on, keeps undo and redo history.
   Undoing past a resize brings back the cells that fit the new size.
 - With Fill canvas on, shrinking the window no longer deletes cells near the right or top
@@ -35,11 +35,10 @@ Add a line under Unreleased in the same pull request as the change; see
 - The board is drawn in 256 × 256 tiles, and a frame sends the GPU only the tiles whose
   cells changed, instead of the whole board. Frames that change nothing send nothing, on
   finite and unbounded boards alike.
-- Stepping is faster: each row's neighbour sums are worked out once and added with a
-  carry-save adder, and boards with little to do no longer split their work across
-  threads. Settled boards step 15–45% faster and busy ones 5–10% faster. RLE files load
-  onto an unbounded board a run at a time instead of a cell at a time, and the minimap
-  finds an unbounded board's extent from its edge chunks instead of reading every chunk.
+- Generations run faster. At ∞, a busy 1024 × 1024 board runs 8–22% more generations a
+  second than in 0.2.0, and boards that have settled into debris step 15–45% faster. RLE
+  files load onto an unbounded board a run at a time, and the minimap no longer reads
+  every chunk of an unbounded board to find its extent.
 - The Linux download runs on glibc 2.36 and newer (Debian 12, Ubuntu 24.04, Fedora 37),
   down from 2.39, and no longer needs libudev.
 - The app leaves out Bevy's gamepad, scene, and animation support, which it never used;
@@ -94,6 +93,7 @@ Add a line under Unreleased in the same pull request as the change; see
 First release, with finite and unbounded boards, a pattern library with stamps, RLE import
 and export, saved workspaces, and builds for Linux, Windows, and macOS.
 
-[Unreleased]: https://github.com/andreashdez/gol_bevy/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/andreashdez/gol_bevy/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/andreashdez/gol_bevy/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/andreashdez/gol_bevy/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/andreashdez/gol_bevy/releases/tag/v0.1.0
