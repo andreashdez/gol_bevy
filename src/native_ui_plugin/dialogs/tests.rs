@@ -25,9 +25,9 @@ fn test_world(dialog: DialogKind) -> World {
     world.insert_resource(DiagnosticsOverlay { enabled: false });
     world.insert_resource(InputFocus::default());
     world.insert_resource(ButtonInput::<KeyCode>::default());
-    world.init_resource::<crate::shared::TypedKeys>();
+    world.init_resource::<crate::keybindings::TypedKeys>();
     world.init_resource::<FileDialog>();
-    world.init_resource::<crate::shared::EditFeedback>();
+    world.init_resource::<crate::feedback::EditFeedback>();
     world.add_observer(dialog_action);
     world
 }
@@ -61,13 +61,15 @@ fn help_closes_on_the_typed_slash_not_the_physical_slash_key() {
     world
         .resource_mut::<ButtonInput<KeyCode>>()
         .press(KeyCode::Slash);
-    world.resource_mut::<crate::shared::TypedKeys>().press("-");
+    world
+        .resource_mut::<crate::keybindings::TypedKeys>()
+        .press("-");
     world.run_system_once(update_dialogs).unwrap();
     assert_eq!(world.resource::<NativeUi>().dialog, Some(DialogKind::Help));
 
     // Shift+7 types `/` there.
     world.insert_resource(ButtonInput::<KeyCode>::default());
-    let mut typed = crate::shared::TypedKeys::default();
+    let mut typed = crate::keybindings::TypedKeys::default();
     typed.press("/");
     world.insert_resource(typed);
     world.run_system_once(update_dialogs).unwrap();
@@ -236,7 +238,7 @@ fn file_results_stay_in_the_export_dialog_instead_of_covering_the_board() {
     assert_eq!(world.resource::<Drafts>().feedback, "No file was chosen.");
     assert!(
         world
-            .resource::<crate::shared::EditFeedback>()
+            .resource::<crate::feedback::EditFeedback>()
             .message
             .is_empty()
     );
@@ -635,18 +637,18 @@ fn a_save_from_the_board_reports_as_a_notice() {
     world.resource_mut::<NativeUi>().dialog = None;
     let request = save_request(&world);
     choose(&mut world, request, Some(&path));
-    let notice = world.resource::<crate::shared::EditFeedback>();
+    let notice = world.resource::<crate::feedback::EditFeedback>();
     assert!(notice.remaining > 0.0);
     assert!(notice.message.starts_with("Workspace saved to"));
     // With the dialog open, the result shows there instead.
     world
-        .resource_mut::<crate::shared::EditFeedback>()
+        .resource_mut::<crate::feedback::EditFeedback>()
         .remaining = 0.0;
     world.resource_mut::<NativeUi>().dialog = Some(DialogKind::Import);
     let request = save_request(&world);
     choose(&mut world, request, Some(&path));
     assert_eq!(
-        world.resource::<crate::shared::EditFeedback>().remaining,
+        world.resource::<crate::feedback::EditFeedback>().remaining,
         0.0
     );
     assert!(
@@ -673,7 +675,7 @@ fn a_second_save_is_refused_while_the_first_is_still_writing() {
         })
         .unwrap();
     assert_eq!(
-        world.resource::<crate::shared::EditFeedback>().message,
+        world.resource::<crate::feedback::EditFeedback>().message,
         "Still working on the last file."
     );
     finish_work(&mut world);
@@ -692,7 +694,7 @@ fn cmd_or_ctrl_s_saves_and_o_opens_unless_a_dialog_without_feedback_is_open() {
         if let Some(modifier) = modifier {
             keys.press(modifier);
         }
-        let mut typed = crate::shared::TypedKeys::default();
+        let mut typed = crate::keybindings::TypedKeys::default();
         typed.press(key);
         (keys, typed)
     };

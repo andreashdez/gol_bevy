@@ -5,8 +5,9 @@
 //! Like the icons, the map is a white mask tinted by [`ThemedImage`].
 use super::*;
 use crate::{
+    coords::CELL_SIZE,
     plane_view::{grid_rect, view_cells},
-    shared::{CELL_SIZE, MainCamera},
+    shared::MainCamera,
     sparse_board::{BlockGrid, CellRect, SparseBoard},
     universe::Universe,
 };

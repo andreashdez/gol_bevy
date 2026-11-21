@@ -2,8 +2,9 @@
 //! so one the size of the canvas shows whatever part of the plane is in view,
 //! and a zoomed-out view merges cells into blocks that fit its pixels.
 use crate::{
+    coords::CELL_SIZE,
     render_plugin::{BoardSprite, CellPalette, CellStyle, SETTLED_AGE, settled_age, texel_offset},
-    shared::{CELL_SIZE, MainCamera, RedrawRequested, Simulation, StartupSet, UpdateSet},
+    shared::{MainCamera, RedrawRequested, Simulation, StartupSet, UpdateSet},
     sparse_board::{BlockGrid, CHUNK_SIZE, CellRect, Chunk, ChunkKey, DirtyChunks, SparseBoard},
     universe::Universe,
 };

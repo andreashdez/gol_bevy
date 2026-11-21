@@ -1,17 +1,18 @@
 use crate::{
     app::EditTool,
     canvas_view::{CanvasView, cursor_world},
-    shared::{
+    coords::{CAMERA_PAN_SPEED, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP},
+    feedback::EditFeedback,
+    keybindings::{
         BINDING_CLEAR, BINDING_CLEAR_STAMP, BINDING_DESELECT, BINDING_ERASE_SELECTION,
         BINDING_FLIP_STAMP, BINDING_PAN_DOWN, BINDING_PAN_LEFT, BINDING_PAN_RIGHT, BINDING_PAN_UP,
         BINDING_QUIT, BINDING_RANDOMIZE, BINDING_RESET_CAMERA, BINDING_RESET_EPOCH,
         BINDING_RESET_TO_START, BINDING_ROTATE_STAMP, BINDING_RUN_PAUSE, BINDING_SLOW_DOWN,
         BINDING_SPEED_UP, BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_DIAGNOSTICS,
-        BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, BINDING_TOGGLE_PALETTE, CAMERA_PAN_SPEED,
-        CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, DiagnosticsOverlay, EditFeedback, GridOverlay,
-        MainCamera, Simulation, TOOL_SHORTCUTS, TypedKeys, UpdateSet, WEB_BUILD,
-        collect_typed_keys,
+        BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, BINDING_TOGGLE_PALETTE, TOOL_SHORTCUTS,
+        TypedKeys, collect_typed_keys,
     },
+    shared::{DiagnosticsOverlay, GridOverlay, MainCamera, Simulation, UpdateSet, WEB_BUILD},
     ui_input::{UiInputCapture, canvas_keyboard_available},
 };
 use bevy::{

@@ -2,9 +2,10 @@
 use super::*;
 use crate::{
     board::{BoundaryMode, RandomizeSettings, Rule},
+    keybindings::{BINDING_TOGGLE_HELP, TypedKeys, command_key},
     shared::{
-        BINDING_TOGGLE_HELP, BOARD_SIZE_MAX, BOARD_SIZE_MIN, BOARD_SIZE_PRESETS, BoardSettings,
-        DiagnosticsOverlay, Theme, TypedKeys, WEB_BUILD, command_key,
+        BOARD_SIZE_MAX, BOARD_SIZE_MIN, BOARD_SIZE_PRESETS, BoardSettings, DiagnosticsOverlay,
+        Theme, WEB_BUILD,
     },
     universe::Universe,
     workspace::DecodedWorkspace,
@@ -158,7 +159,7 @@ pub(super) struct DialogState<'w> {
     focus: ResMut<'w, InputFocus>,
     file_dialog: ResMut<'w, FileDialog>,
     /// Where file results go when no dialog shows feedback, as after Cmd+S.
-    notice: ResMut<'w, crate::shared::EditFeedback>,
+    notice: ResMut<'w, crate::feedback::EditFeedback>,
     /// Absent in tests, which must not touch the system clipboard.
     clipboard: Option<ResMut<'w, Clipboard>>,
 }
@@ -365,7 +366,7 @@ fn dialog_action(
                     state.drafts.feedback = if *action == Action::RandomizeNow {
                         format!(
                             "{} randomized at {}% with {seed}. U to undo.",
-                            crate::shared::randomized_what(&state.sim.app),
+                            crate::feedback::randomized_what(&state.sim.app),
                             settings.density_percent()
                         )
                     } else {

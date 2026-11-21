@@ -1,10 +1,11 @@
 //! The board camera occupies the workspace while UI keeps a full-window camera.
 use crate::{
-    native_ui_plugin::canvas_rect,
-    shared::{
-        BoardSettings, CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CELL_SIZE, MainCamera, Simulation,
-        UpdateSet, board_size_for_canvas, camera_scale_to_fit_board, camera_scale_to_fit_pattern,
+    coords::{
+        CAMERA_ZOOM_MAX, CAMERA_ZOOM_MIN, CELL_SIZE, board_size_for_canvas,
+        camera_scale_to_fit_board, camera_scale_to_fit_pattern,
     },
+    native_ui_plugin::canvas_rect,
+    shared::{BoardSettings, MainCamera, Simulation, UpdateSet},
     universe::Universe,
 };
 use bevy::{camera::Viewport, prelude::*, window::PrimaryWindow};
@@ -460,7 +461,7 @@ mod tests {
 
     #[test]
     fn the_largest_board_fits_at_the_minimum_window_size() {
-        use crate::shared::{BOARD_SIZE_MAX, CELL_SIZE};
+        use crate::{coords::CELL_SIZE, shared::BOARD_SIZE_MAX};
         let size = Vec2::new(800.0, 420.0);
         let rect = canvas_rect(size);
         let fit = camera_scale_to_fit_board(rect.size(), BOARD_SIZE_MAX, BOARD_SIZE_MAX);
@@ -526,7 +527,7 @@ mod tests {
 
     #[test]
     fn fill_canvas_sizes_the_board_to_the_canvas_at_100_percent_and_follows_it() {
-        use crate::shared::{CELL_SIZE, FILL_CELL_POINTS};
+        use crate::coords::{CELL_SIZE, FILL_CELL_POINTS};
         let mut world = World::new();
         world.insert_resource(BoardSettings {
             cols: 64,

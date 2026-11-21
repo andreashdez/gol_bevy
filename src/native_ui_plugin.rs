@@ -23,7 +23,8 @@ mod theme;
 mod toolbar;
 use crate::{
     app::{App as GolApp, EditTool},
-    shared::{CellAge, EditFeedback, GridOverlay, Simulation, StartupSet, Theme, UpdateSet},
+    feedback::EditFeedback,
+    shared::{CellAge, GridOverlay, Simulation, StartupSet, Theme, UpdateSet},
     ui_input::{BoardFocus, KeyboardFocus, UiInputRegions, UiInputSet},
 };
 use bevy::{

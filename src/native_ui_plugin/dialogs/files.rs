@@ -253,7 +253,7 @@ fn report(state: &mut DialogState, error: bool, feedback: String) {
 /// from the dialogs that show feedback.
 pub(in crate::native_ui_plugin) fn file_shortcuts(
     keys: Res<ButtonInput<KeyCode>>,
-    typed: Res<crate::shared::TypedKeys>,
+    typed: Res<crate::keybindings::TypedKeys>,
     mut state: DialogState,
 ) {
     if crate::shared::WEB_BUILD {
@@ -276,7 +276,7 @@ pub(super) enum FileShortcut {
 /// feedback, such as Help, leave them alone.
 pub(super) fn file_shortcut(
     keys: &ButtonInput<KeyCode>,
-    typed: &crate::shared::TypedKeys,
+    typed: &crate::keybindings::TypedKeys,
     dialog: Option<DialogKind>,
 ) -> Option<FileShortcut> {
     let modifier = crate::input_plugin::COMMAND_KEYS;
