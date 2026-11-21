@@ -15,6 +15,10 @@ Add a line under Unreleased in the same pull request as the change; see
   compiled in (`THIRD-PARTY-LICENSES.html`), and each release lists the archives'
   checksums in `SHA256SUMS`.
 - **Die Easy**, a 23 × 23 built-in pattern.
+- **Cell cursor** for editing the board from the keyboard: with the board focused by Tab,
+  the arrow keys move a cursor, Enter draws, erases, stamps, or selects at it, and
+  Shift+arrows extend a selection. Screen readers read the cursor's cell, the generation,
+  and the population on the board.
 
 ### Changed
 
@@ -45,6 +49,7 @@ Add a line under Unreleased in the same pull request as the change; see
 
 ### Fixed
 
+- The web version on a Mac shows `Cmd`, not `Ctrl`, in Help and tooltips.
 - Trackpad and browser scroll zoom one step at a time, instead of doubling or halving with
   every event.
 - On keyboard layouts where `/` is not on its own key, such as German, `/` closes Help as
