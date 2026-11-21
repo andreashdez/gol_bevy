@@ -17,7 +17,9 @@ A `Rule` stores birth and survival counts as two 9-bit masks, one bit per possib
 
 ## Stepping a row at a time
 
-`next_cells` in `src/sparse_board.rs` works out the next state of a whole row of a chunk, 64 cells, in one go, and both boards step with it. It takes the row and the rows below and above as *planes*: the row itself, and the same row moved one cell west and one cell east, so that bit *i* of each plane is one of cell *i*'s neighbours. Adding the eight neighbour planes with bitwise logic gives each cell's neighbour count as four bits spread over four words. The rule is then applied to all 64 cells at once: for each count the rule mentions, the cells with that count are born if dead or survive if alive.
+`next_rows` in `src/sparse_board.rs` works out the next state of a chunk's scheduled rows, 64 cells of a row in one go, and both boards step with it. Each row is first summed across: with the row moved one cell west and one cell east, so that bit *i* of each word is one of cell *i*'s neighbours, bitwise logic gives every cell the count of itself and its two neighbours, 0 to 3, and of just its two neighbours, 0 to 2, each as two bits over two words. A cell's neighbour count is the three-cell sums of the rows below and above it plus the two-cell sum of its own row, so `next_rows` walks a chunk's rows from the lowest, keeping the last three rows' sums, and works out each row's sums once rather than once for each of the three rows that see it. A carry-save adder turns the three sums into each cell's count as four bits spread over four words, about a dozen operations for all 64 cells.
+
+The rule is then applied to all 64 cells at once. A `Transitions`, worked out from the rule once a generation, holds each count's outcome for a dead cell and a live one, and each cell's outcome is picked out by one bit of its count at a time. Life, which most boards run, comes down to a few operations: three neighbours, or two and alive.
 
 No step of this depends on how many cells are alive, so a row full of activity costs the same as a quiet one.
 
@@ -33,7 +35,7 @@ What sets the finite board apart is its edges. A row's west and east neighbours 
 
 ## Parallel steps
 
-The scheduled chunks are split into bands, one per thread of Bevy's compute task pool, once there are at least 16 chunks for each. A band only reads the board and stages the rows it changes; the changes are applied once every band has finished, so no band sees another's half of the generation and no locking is needed.
+The scheduled chunks are split into bands, one per thread of Bevy's compute task pool, once there are at least 1024 scheduled rows for each, sixteen chunks' worth. A row of 30% noise takes about 50 ns, so that is some 50 µs of work, well beyond what waking a thread costs, and settled debris, with a row or two scheduled in each of many chunks, stays on one thread. Bands are whole chunks with about as many rows each, so a band of busy chunks takes no longer than one of quiet ones. A band only reads the board and stages the rows it changes; the changes are applied once every band has finished, so no band sees another's half of the generation and no locking is needed.
 
 ## Recycled buffers
 
@@ -65,7 +67,9 @@ Rules with B0 are refused, because every empty cell would be born and the plane 
 
 A board-sized texture can't exist here, so one the size of the canvas shows what's in view. When zoomed out, each texel covers a square block of cells, lit if any of them is alive, and blocks are aligned to their own size so that panning moves them whole. Painting costs the lesser of what's in view and what's in memory, however large the pattern, and is skipped, upload and all, unless the view moved, the colours changed, a changed chunk lies in view, or a cell in view aged. Cell ages are kept only for chunks in view at one texel per cell, so a chunk scrolling in starts out settled, and trails don't show when zoomed out.
 
-A run stops at `PLANE_CHUNKS_MAX`, about half a gigabyte of chunks, with bookkeeping and history on top. Edits aren't held to it, as they can't outrun the person making them and randomizing a view stops at 2048 × 2048 cells. A bounding box needn't fit in memory, so RLE is read and written a run of cells at a time. Writing walks sorted chunks, and reading checks each run before expanding it, so a short file can't ask for more than the plane may hold. A file may hold twice the budget's chunks, or a run that stopped just past it couldn't reopen.
+A run stops at `PLANE_CHUNKS_MAX`, about half a gigabyte of chunks, with bookkeeping and history on top. Edits aren't held to it, as they can't outrun the person making them and randomizing a view stops at 2048 × 2048 cells. A bounding box needn't fit in memory, so RLE is read and written a run of cells at a time. Writing walks sorted chunks, and reading checks each run before expanding it, so a short file can't ask for more than the plane may hold, then writes it a chunk's row at a time with `populate_run`. A file may hold twice the budget's chunks, or a run that stopped just past it couldn't reopen.
+
+The bounding box of the live cells, which the minimap asks for five times a second, comes from the chunk keys first. Every chunk in memory has a live cell, so only the chunks on the edges of the box of chunks are read for the exact cells.
 
 ## Rendering
 
@@ -94,6 +98,6 @@ It also checks banded steps against serial ones, that a glider keeps the work to
 
 `render_plugin.rs` steps a board wider and taller than a chunk and checks every texel, and every cell's age, against the cell it stands for. It also checks that only cells still ageing are revisited.
 
-`sparse_board.rs` checks stepping against a brute-force simulation and against `Board`, with extra attention to chunk edges and corners, since a row left unscheduled would silently give wrong cells rather than fail. It also checks banded steps against serial ones, the known final population of the R-pentomino, and that a glider stays in a handful of chunks.
+`sparse_board.rs` checks stepping against a brute-force simulation and against `Board`, with extra attention to chunk edges and corners, since a row left unscheduled would silently give wrong cells rather than fail. It checks `next_rows` on its own against counting each cell's neighbours, for scheduled rows in runs and gaps of every length, under named rules and random ones, `B0` among them. It also checks banded steps against serial ones, that bands keep every chunk and split the rows evenly, the known final population of the R-pentomino, that a glider stays in a handful of chunks, the live bounds against every cell's, and that loading a run matches populating each of its cells.
 
 `patterns.rs` evolves the built-in oscillators and spaceships and checks that they behave as named. It also checks that the Gosper glider gun fires one glider every 30 generations, and that Diehard vanishes after exactly 130.

@@ -261,11 +261,20 @@ pub fn plane_from_board(board: &Board) -> Result<SparseBoard, UnboundedRuleError
     let mut plane = SparseBoard::default();
     plane.set_rule(board.rule())?;
     let (cols, rows) = board.size();
-    for (col, row) in board.live_cells() {
-        plane.populate(
-            col as i64 - (cols / 2) as i64,
-            row as i64 - (rows / 2) as i64,
-        );
+    let origin = (-((cols / 2) as i64), -((rows / 2) as i64));
+    for run in board.row_cells() {
+        let (x, y) = ((run.first % cols) as i64, (run.first / cols) as i64);
+        let mut cells = run.alive;
+        while cells != 0 {
+            let start = cells.trailing_zeros();
+            let length = (cells >> start).trailing_ones();
+            plane.populate_run(
+                origin.0 + x + i64::from(start),
+                origin.1 + y,
+                length as usize,
+            );
+            cells &= u64::MAX.checked_shl(start + length).unwrap_or(0);
+        }
     }
     Ok(plane)
 }
@@ -280,15 +289,12 @@ pub fn board_from_plane(
     let mut board = Board::new(cols, rows);
     board.set_rule(plane.rule());
     board.set_boundary_mode(mode);
-    for (x, y) in plane.live_cells() {
-        let cell = (
-            x.saturating_add((cols / 2) as i64),
-            y.saturating_add((rows / 2) as i64),
-        );
-        if let Some((col, row)) = board_cell(&board, cell.0, cell.1) {
-            board.populate(col, row);
-        }
-    }
+    // Cells past the board's edges are left out.
+    board.replace_cells(plane.live_cells().filter_map(|(x, y)| {
+        let col = usize::try_from(x.saturating_add((cols / 2) as i64)).ok()?;
+        let row = usize::try_from(y.saturating_add((rows / 2) as i64)).ok()?;
+        Some((col, row))
+    }));
     board
 }
 
@@ -355,9 +361,7 @@ fn plane_within(
         if !within_reach(origin.0, x + length) || !within_reach(origin.1, y + 1) {
             return Err(PatternParseError::PlaneOutOfReach);
         }
-        for x in x..x + length {
-            plane.populate(origin.0 + x as i64, origin.1 + y as i64);
-        }
+        plane.populate_run(origin.0 + x as i64, origin.1 + y as i64, length);
         Ok(())
     })?;
     Ok((plane, rule))

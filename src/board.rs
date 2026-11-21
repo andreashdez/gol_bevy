@@ -4,7 +4,10 @@
 //! row's neighbours come from the far side of the board when it wraps and from
 //! nowhere when it does not, and the last chunk across and the last one up may
 //! be only partly on the board.
-use crate::sparse_board::{CHUNK_SIZE, ChangedRows, Chunk, RowPlanes, bits, next_cells};
+use crate::sparse_board::{
+    CHUNK_SIZE, ChangedRows, Chunk, MIN_BAND_ROWS, RowSums, Transitions, bits, next_rows,
+    split_bands,
+};
 use bevy::tasks::{ComputeTaskPool, TaskPool};
 
 /// Preferences for replacing a board with random cells. A fixed seed repeats
@@ -237,10 +240,6 @@ impl PackedCells {
 const SIDE: usize = CHUNK_SIZE as usize;
 const LAST: usize = SIDE - 1;
 static EMPTY_CHUNK: Chunk = [0; SIDE];
-
-/// Fewest scheduled chunks that justify another parallel band, as on the
-/// unbounded board.
-const MIN_BAND_CHUNKS: usize = 16;
 
 /// The low `count` bits, for `count` up to 64.
 fn low_bits(count: usize) -> u64 {
@@ -508,14 +507,15 @@ impl Board {
 
     pub fn step(&mut self) -> bool {
         let threads = ComputeTaskPool::get_or_init(TaskPool::default).thread_num();
-        self.step_in_bands(threads.min(self.active_list.len() / MIN_BAND_CHUNKS))
+        self.step_in_bands(|rows| threads.min(rows / MIN_BAND_ROWS))
     }
 
-    /// Evaluates the scheduled rows in up to `bands` bands of whole chunks, in
-    /// parallel on the compute task pool when there is more than one. Bands only
-    /// read the chunks and stage their changes, which are applied once all have
-    /// finished, so no band can see another's half of the generation.
-    fn step_in_bands(&mut self, bands: usize) -> bool {
+    /// Evaluates the scheduled rows in as many bands of whole chunks as `bands`
+    /// asks for, given the number of rows, each with about as many rows. Bands
+    /// run in parallel on the compute task pool when there is more than one, and
+    /// only read the chunks and stage their changes, which are applied once all
+    /// have finished, so no band can see another's half of the generation.
+    fn step_in_bands(&mut self, bands: impl FnOnce(usize) -> usize) -> bool {
         if self.active_list.is_empty() {
             return false;
         }
@@ -528,22 +528,23 @@ impl Board {
                 .drain(..)
                 .map(|slot| (slot, std::mem::take(&mut active[slot as usize]))),
         );
-        let band_len = work.len().div_ceil(bands.max(1));
+        let rows = work
+            .iter()
+            .map(|&(_, rows)| rows.count_ones() as usize)
+            .sum();
+        let bands = bands(rows).max(1);
         let mut changes = std::mem::take(&mut self.change_scratch);
-        let band_count = work.len().div_ceil(band_len);
-        if changes.len() < band_count {
-            changes.resize_with(band_count, Vec::new);
+        if changes.len() < bands {
+            changes.resize_with(bands, Vec::new);
         }
 
         let (chunks, shape, rule) = (&self.chunks[..], self.shape, self.rule);
-        let mut bands = work.chunks(band_len).zip(&mut changes[..band_count]);
-        let (live_delta, flips) = if bands.len() == 1 {
-            let (band, changes) = bands.next().expect("scheduled work has a band");
-            step_band(chunks, shape, rule, band, changes)
+        let (live_delta, flips) = if bands == 1 {
+            step_band(chunks, shape, rule, &work, &mut changes[0])
         } else {
             ComputeTaskPool::get_or_init(TaskPool::default)
                 .scope(|scope| {
-                    for (band, changes) in bands {
+                    for (band, changes) in split_bands(&work, rows, bands).zip(&mut changes) {
                         scope.spawn(async move { step_band(chunks, shape, rule, band, changes) });
                     }
                 })
@@ -865,13 +866,13 @@ struct Rows<'a> {
 }
 
 impl Rows<'_> {
-    fn planes(&self, row: usize) -> RowPlanes {
+    fn sums(&self, row: usize) -> RowSums {
         let [west, centre, east] = self.chunks.map(|chunk| chunk[row]);
-        RowPlanes {
-            west: centre << 1 | (west >> self.west_col & 1),
+        RowSums::new(
+            centre << 1 | (west >> self.west_col & 1),
             centre,
-            east: centre >> 1 | (east & 1) << self.east_col,
-        }
+            centre >> 1 | (east & 1) << self.east_col,
+        )
     }
 }
 
@@ -884,9 +885,7 @@ fn step_band(
     band: &[(u32, u64)],
     changes: &mut Vec<ChunkChange>,
 ) -> (isize, u64) {
-    let mask = rule.transition_mask();
-    // Empty rows stay empty unless the rule gives birth among no neighbours.
-    let empty_stays = !rule.births_from_nothing();
+    let rule = Transitions::new(rule);
     let (mut live_delta, mut flips) = (0, 0);
     for &(slot, scheduled) in band {
         let (cx, cy) = (slot as usize % shape.across, slot as usize / shape.across);
@@ -910,30 +909,22 @@ fn step_band(
             rows_of(Some(cy)),
             rows_of(shape.after(cy, shape.down)),
         );
-        let top = shape.top_row(cy);
+        // The board's last row may end partway up the chunk, and the line past
+        // it is the first row of the chunk above.
+        let past_top = shape.top_row(cy) + 2;
         let on_board = shape.valid_cols(cx);
 
         let old = level.chunks[1];
         let mut next = *old;
+        let sums = |line: usize| match line {
+            0 => below.sums(below_row),
+            _ if line == past_top => above.sums(0),
+            _ => level.sums(line - 1),
+        };
+        next_rows(scheduled, &rule, sums, &mut next);
         let mut rows = ChangedRows::default();
         for row in bits(scheduled) {
-            let under = if row == 0 {
-                below.planes(below_row)
-            } else {
-                level.planes(row - 1)
-            };
-            let here = level.planes(row);
-            let over = if row == top {
-                above.planes(0)
-            } else {
-                level.planes(row + 1)
-            };
-            next[row] = if empty_stays && under.any() | here.any() | over.any() == 0 {
-                0
-            } else {
-                next_cells(under, here, over, mask) & on_board
-            };
-
+            next[row] &= on_board;
             let flipped = old[row] ^ next[row];
             if flipped == 0 {
                 continue;
@@ -967,8 +958,7 @@ pub(crate) fn cell_key(idx: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Board, BoundaryMode, DirtyCells, MIN_BAND_CHUNKS, RandomizeSettings, Rule, RuleParseError,
-        cell_key,
+        Board, BoundaryMode, DirtyCells, RandomizeSettings, Rule, RuleParseError, cell_key,
     };
 
     fn live_cells(board: &Board) -> Vec<(usize, usize)> {
@@ -1236,6 +1226,7 @@ mod tests {
             (70, 130),
             (128, 64),
             (200, 71),
+            (100, 70),
         ];
         // B0 gives birth in empty space, which only a finite board allows.
         let rules = ["B3/S23", "B36/S23", "B3678/S34678", "B2/S", "B03/S23"];
@@ -1336,9 +1327,8 @@ mod tests {
     fn bands_step_like_a_serial_scan() {
         let mut banded = soup(600, 520, 0.3, 21);
         let mut serial = banded.clone();
-        assert!(banded.active_list.len() >= 4 * MIN_BAND_CHUNKS);
         for generation in 0..12 {
-            assert_eq!(banded.step_in_bands(4), serial.step_in_bands(1));
+            assert_eq!(banded.step_in_bands(|_| 4), serial.step_in_bands(|_| 1));
             assert_eq!(banded.chunks, serial.chunks, "generation {generation}");
             assert_eq!(banded.live_cells_count(), serial.live_cells_count());
             assert_eq!(banded.fingerprint(), serial.fingerprint());
