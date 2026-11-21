@@ -29,8 +29,9 @@ cargo build --profile web-release --locked --target "$target"
 
 rm -rf "$out_dir"
 mkdir -p "$out_dir"
+# Where cargo put the module, which CARGO_TARGET_DIR can move.
 wasm-bindgen --target web --no-typescript --out-dir "$out_dir" --out-name gol-bevy \
-  "target/$target/web-release/gol-bevy.wasm"
+  "${CARGO_TARGET_DIR:-target}/$target/web-release/gol-bevy.wasm"
 
 module="$out_dir/gol-bevy_bg.wasm"
 if command -v wasm-opt >/dev/null; then
