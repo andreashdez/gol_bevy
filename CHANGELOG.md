@@ -22,6 +22,18 @@ Add a line under Unreleased in the same pull request as the change; see
   edge: the board stays large enough to hold them, and the view zooms out.
 - The stamp preview is drawn as one image, so a large pasted stamp no longer slows every
   frame.
+- At ∞, a frame steps for half of the display's refresh interval, so 120 Hz and faster
+  displays keep their frame rate; 60 Hz displays and the browser keep 8 ms.
+- Saving and opening workspaces and RLE files no longer freeze the window: the file work
+  runs in the background, with "Saving…" or "Opening…" shown meanwhile.
+- The board is drawn in 256 × 256 tiles, and a frame sends the GPU only the tiles whose
+  cells changed, instead of the whole board. Frames that change nothing send nothing, on
+  finite and unbounded boards alike.
+- Stepping is faster: each row's neighbour sums are worked out once and added with a
+  carry-save adder, and boards with little to do no longer split their work across
+  threads. Settled boards step 15–45% faster and busy ones 5–10% faster. RLE files load
+  onto an unbounded board a run at a time instead of a cell at a time, and the minimap
+  finds an unbounded board's extent from its edge chunks instead of reading every chunk.
 
 ### Fixed
 
