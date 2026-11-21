@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Builds the browser version into a folder of static files: web/index.html, the
-# JavaScript glue, and the WebAssembly module. Serve the folder over HTTP; a
-# file:// URL cannot load the module.
+# JavaScript glue, the WebAssembly module, and the licences of the font and the
+# crates compiled in. Serve the folder over HTTP; a file:// URL cannot load the
+# module.
 #
 # Usage: scripts/build-web.sh [out-dir]   (default: dist/web)
 #
 # Needs the wasm32-unknown-unknown target and wasm-bindgen-cli at the same
 # version as the wasm-bindgen crate in Cargo.lock. wasm-opt, from binaryen, is
-# used to shrink the module when it is installed.
+# used to shrink the module when it is installed, and cargo-about to write the
+# crates' licence notices; the docs workflow installs both.
 set -euo pipefail
 
 out_dir=${1:-dist/web}
@@ -38,5 +40,10 @@ else
   echo "note: wasm-opt not found; the module is left unoptimized." >&2
 fi
 
-cp web/index.html "$out_dir/"
+cp web/index.html assets/fonts/OFL.txt "$out_dir/"
+if command -v cargo-about >/dev/null; then
+  scripts/third-party-licenses.sh "$out_dir/THIRD-PARTY-LICENSES.html" >/dev/null
+else
+  echo "note: cargo-about not found; THIRD-PARTY-LICENSES.html is left out." >&2
+fi
 echo "Built $out_dir ($(du -h "$module" | cut -f1) module)."

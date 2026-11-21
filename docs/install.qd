@@ -5,7 +5,7 @@
 
 Every tagged release on the .repolink {GitHub Releases page} {releases} has ready-to-run builds, so you don't need a Rust toolchain. Download the archive for your platform, unpack it, and run `gol-bevy`.
 
-Each archive contains the same three files: the binary, the README, and the licence. The app needs nothing else on disk: built-in patterns and the UI font are embedded in the binary.
+Each archive has the binary, the README, the changelog, the licence, the font's licence (`OFL.txt`), and the licences of the crates compiled in (`THIRD-PARTY-LICENSES.html`). The app needs nothing else on disk: built-in patterns and the UI font are embedded in the binary. Each release also lists the SHA-256 checksum of every archive in `SHA256SUMS`. To check a download, put both in one folder and run `sha256sum -c SHA256SUMS --ignore-missing`, or `shasum -a 256 -c SHA256SUMS --ignore-missing` on macOS.
 
 ### Linux (x86_64)
 

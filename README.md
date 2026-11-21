@@ -154,4 +154,6 @@ The pages are built from `docs/`, so they can be read there too.
 ## License
 
 MIT; see [LICENSE](LICENSE). The bundled IBM Plex Sans font is under the SIL Open Font
-License 1.1; see `assets/fonts/`.
+License 1.1; see `assets/fonts/`, or `OFL.txt` in a release download. Release downloads
+also list the licences of every crate compiled in, in `THIRD-PARTY-LICENSES.html`. Where
+the built-in patterns come from is in `assets/patterns/README.md`.

@@ -1,0 +1,36 @@
+# cargo-about configuration for THIRD-PARTY-LICENSES.html, the notices of every
+# crate compiled into gol-bevy, which scripts/package-release.sh adds to each
+# release archive. Generate it with scripts/third-party-licenses.sh.
+
+# Licences the dependencies may use. A new dependency under any other licence
+# fails the release build until it is reviewed and added here.
+accepted = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    # File-level copyleft: the crates' sources are unchanged and on crates.io,
+    # which the notice says.
+    "MPL-2.0",
+    "OFL-1.1",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+# Every platform a release or the web build is made for, so one file covers
+# all of them.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "wasm32-unknown-unknown",
+]
+
+# Benchmarks and tests are not shipped. gol-bevy itself is under LICENSE.
+ignore-dev-dependencies = true
+private = { ignore = true }
