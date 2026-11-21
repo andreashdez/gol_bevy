@@ -64,6 +64,13 @@ Add a line under Unreleased in the same pull request as the change; see
 - An unbounded board frees the working memory a busy pattern used once it calms down or is
   cleared.
 
+### Removed
+
+- The built-in **Cambrian Explosion** and **Ordovician Radiation** patterns. They came
+  from Golly's pattern library, which is distributed under the GPL, so they were not
+  clearly free to ship in an MIT-licensed app. Both can still be imported as RLE from
+  Golly's pattern library.
+
 ## [0.2.0] - 2026-11-17
 
 ### Added
