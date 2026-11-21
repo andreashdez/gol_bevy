@@ -11,6 +11,9 @@ Add a line under Unreleased in the same pull request as the change; see
 - **Web version** on the docs site: try gol-bevy in a browser without installing it. It
   has no file dialogs or saved settings, runs on one thread, and has no screen reader
   support; see [Try it in your browser](https://andreashdez.github.io/gol_bevy/try-online/).
+- Release downloads include the fonts' licence (`OFL.txt`) and the licences of every crate
+  compiled in (`THIRD-PARTY-LICENSES.html`), and each release lists the archives'
+  checksums in `SHA256SUMS`.
 
 ### Changed
 
@@ -34,6 +37,10 @@ Add a line under Unreleased in the same pull request as the change; see
   threads. Settled boards step 15–45% faster and busy ones 5–10% faster. RLE files load
   onto an unbounded board a run at a time instead of a cell at a time, and the minimap
   finds an unbounded board's extent from its edge chunks instead of reading every chunk.
+- The Linux download runs on glibc 2.36 and newer (Debian 12, Ubuntu 24.04, Fedora 37),
+  down from 2.39, and no longer needs libudev.
+- The app leaves out Bevy's gamepad, scene, and animation support, which it never used;
+  the web version's download is about 9% smaller.
 
 ### Fixed
 
