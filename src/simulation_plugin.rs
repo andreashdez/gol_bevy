@@ -4,11 +4,7 @@ use std::time::Duration;
 
 use crate::feedback::EditFeedback;
 use crate::shared::{DiagnosticsOverlay, GridOverlay, RedrawRequested, Simulation, UpdateSet};
-use bevy::{
-    app::AppExit,
-    prelude::*,
-    window::{Monitor, OnMonitor, PrimaryMonitor, PrimaryWindow},
-};
+use bevy::{app::AppExit, prelude::*};
 
 pub struct SimulationPlugin;
 
@@ -30,18 +26,12 @@ impl Plugin for SimulationPlugin {
 /// catch-up frame is slower still, and the app never recovers.
 const MAX_STEPS_PER_FRAME: u64 = 8;
 
-/// Share of a display refresh that max-speed stepping may take, leaving the
-/// rest of the frame for input, UI, and rendering. At least one step runs
-/// however long it takes.
-const MAX_SPEED_FRAME_SHARE: f64 = 0.5;
-
-/// Bounds on a max-speed frame's stepping time: at least enough for a step of
-/// a busy board to be worth the frame, at most what a 60 Hz display leaves.
-const MAX_SPEED_BUDGET_MIN: Duration = Duration::from_millis(2);
-const MAX_SPEED_BUDGET_MAX: Duration = Duration::from_millis(8);
-
-/// Assumed where the display does not say, as in the browser.
-const DEFAULT_REFRESH_MILLIHERTZ: u32 = 60_000;
+/// Stepping time a max-speed frame may spend, leaving the rest of a 60 Hz frame
+/// for input, UI, and rendering. At least one step runs however long it takes.
+/// It does not shrink on faster displays: on a 120 Hz display, half its frame
+/// halved the generations per second of a busy 1024 × 1024 board, while this
+/// still drew about 110 frames a second there.
+const MAX_SPEED_FRAME_BUDGET: Duration = Duration::from_millis(8);
 
 /// Bounds max speed on boards that step almost for free, such as empty or
 /// settled ones, so that a frame does not spin through its whole budget.
@@ -51,35 +41,12 @@ fn advance_simulation(
     time: Res<Time>,
     mut sim: ResMut<Simulation>,
     mut feedback: ResMut<EditFeedback>,
-    window: Query<&OnMonitor, With<PrimaryWindow>>,
-    monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
 ) {
-    // The monitor the window is on, or else the primary one.
-    let refresh = window
-        .single()
-        .ok()
-        .and_then(|on| monitors.get(on.0).ok())
-        .or_else(|| monitors.iter().find(|(_, primary)| *primary))
-        .and_then(|(monitor, _)| monitor.refresh_rate_millihertz);
-    let budget = max_speed_budget(refresh);
-    let steps = run_due_steps(&mut sim, time.delta(), budget);
+    let steps = run_due_steps(&mut sim, time.delta(), MAX_SPEED_FRAME_BUDGET);
     sim.rate.record(steps, time.delta());
     if let Some(settled) = sim.app.take_auto_paused() {
         feedback.show(format!("Paused · {settled}"));
     }
-}
-
-/// Stepping time for a max-speed frame on a display refreshing at
-/// `refresh_millihertz`: a share of its frame, so a 120 Hz display keeps its
-/// frame rate rather than dropping to 60 Hz under a fixed 60 Hz budget.
-fn max_speed_budget(refresh_millihertz: Option<u32>) -> Duration {
-    let refresh = refresh_millihertz
-        .filter(|&refresh| refresh > 0)
-        .unwrap_or(DEFAULT_REFRESH_MILLIHERTZ);
-    let frame = Duration::from_secs_f64(1000.0 / f64::from(refresh));
-    frame
-        .mul_f64(MAX_SPEED_FRAME_SHARE)
-        .clamp(MAX_SPEED_BUDGET_MIN, MAX_SPEED_BUDGET_MAX)
 }
 
 /// Returns how many generations ran.
@@ -271,19 +238,5 @@ mod tests {
         let steps = run(&mut sim, Duration::ZERO, Duration::from_secs(60));
         assert_eq!(steps, MAX_SPEED_STEPS_PER_FRAME);
         assert_eq!(sim.app.epoch, 1 + MAX_SPEED_STEPS_PER_FRAME as usize);
-    }
-
-    #[test]
-    fn max_speed_takes_half_of_the_displays_frame_within_bounds() {
-        use super::max_speed_budget;
-        let ms = |budget: Duration| budget.as_secs_f64() * 1000.0;
-        // 60 Hz, or a display that doesn't say, keeps the old 8 ms.
-        assert_eq!(max_speed_budget(None), Duration::from_millis(8));
-        assert_eq!(max_speed_budget(Some(0)), Duration::from_millis(8));
-        assert_eq!(max_speed_budget(Some(60_000)), Duration::from_millis(8));
-        // 120 Hz gets half of its 8.3 ms frame.
-        assert!((ms(max_speed_budget(Some(120_000))) - 25.0 / 6.0).abs() < 0.01);
-        // Very fast displays still give a step room to be worth it.
-        assert_eq!(max_speed_budget(Some(500_000)), Duration::from_millis(2));
     }
 }

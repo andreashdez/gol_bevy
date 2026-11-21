@@ -44,7 +44,7 @@ Speed is shown in generations per second in the toolbar's speed field, for examp
 
 ### Max speed
 
-At ∞, each frame runs as many generations as fit in about half of the display's frame, up to 1024: 8 ms at 60 Hz, about 4 ms at 120 Hz. It leaves the rest of the frame for drawing and input, so a fast display keeps its frame rate. While it runs, the field shows the rate actually achieved instead of ∞, which depends on the board size and how busy it is; paused, it shows ∞ again. Editing the field starts from ∞ either way.
+At ∞, each frame runs as many generations as fit in about 8 ms, up to 1024, and leaves the rest of the frame for drawing and input. While it runs, the field shows the rate actually achieved instead of ∞, which depends on the board size and how busy it is; paused, it shows ∞ again. Editing the field starts from ∞ either way.
 
 ### Catching up after a stall
 

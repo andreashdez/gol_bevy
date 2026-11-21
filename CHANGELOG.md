@@ -30,8 +30,6 @@ Add a line under Unreleased in the same pull request as the change; see
   edge: the board stays large enough to hold them, and the view zooms out.
 - The stamp preview is drawn as one image, so a large pasted stamp no longer slows every
   frame.
-- At ∞, a frame steps for half of the display's refresh interval, so 120 Hz and faster
-  displays keep their frame rate; 60 Hz displays and the browser keep 8 ms.
 - Saving and opening workspaces and RLE files no longer freeze the window: the file work
   runs in the background, with "Saving…" or "Opening…" shown meanwhile.
 - The board is drawn in 256 × 256 tiles, and a frame sends the GPU only the tiles whose

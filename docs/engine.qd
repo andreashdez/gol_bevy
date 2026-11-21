@@ -83,7 +83,7 @@ The grid overlay draws only lines that cross the viewport, and none at all below
 
 ## Frame budget
 
-At a fixed speed, a frame runs at most 8 generations to catch up, then drops any remaining backlog, so one slow frame cannot snowball into a frozen app. At [Max speed](simulation.qd#max-speed), a frame steps for up to half of the display's refresh interval, between 2 and 8 ms (8 ms at 60 Hz, about 4 ms at 120 Hz, and 8 ms where the display doesn't report a rate, as in the browser), capped at 1024 generations so a near-empty board does not spin through the whole budget. It always runs at least one generation, however long that takes.
+At a fixed speed, a frame runs at most 8 generations to catch up, then drops any remaining backlog, so one slow frame cannot snowball into a frozen app. At [Max speed](simulation.qd#max-speed), a frame steps for up to 8 ms, capped at 1024 generations so a near-empty board does not spin through the whole budget. It always runs at least one generation, however long that takes. The budget stays at 8 ms on faster displays: on a 120 Hz display, stepping for half of each frame instead halved the generations per second, while 8 ms still drew about 110 frames a second.
 
 ## Tests
 
