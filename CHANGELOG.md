@@ -14,6 +14,7 @@ Add a line under Unreleased in the same pull request as the change; see
 - Release downloads include the fonts' licence (`OFL.txt`) and the licences of every crate
   compiled in (`THIRD-PARTY-LICENSES.html`), and each release lists the archives'
   checksums in `SHA256SUMS`.
+- **Die Easy**, a 23 × 23 built-in pattern.
 
 ### Changed
 
