@@ -2,6 +2,14 @@
 name = "gol-bevy"
 version = "0.2.0"
 edition = "2024"
+description = "Conway's Game of Life as a desktop app, built on Bevy"
+license = "MIT"
+repository = "https://github.com/andreashdez/gol_bevy"
+homepage = "https://andreashdez.github.io/gol_bevy/"
+# Matches rust-toolchain.toml, for anyone building with another toolchain.
+rust-version = "1.100"
+# An app, not a library: nothing to publish to crates.io.
+publish = false
 
 [dependencies]
 accesskit = "0.24"
