@@ -6,7 +6,7 @@
 ```shell
 cargo run --release
 cargo test --all-targets --all-features --locked
-cargo bench --bench board_step --locked
+cargo bench --locked
 ```
 
 Profile release builds only. Dev builds optimize this crate lightly, so their timings mislead.
@@ -18,7 +18,7 @@ Benchmarks use [Criterion](https://bheisler.github.io/criterion.rs/book/) and li
 ### board_step
 
 ```shell
-cargo bench --bench board_step     # or: just bench
+cargo bench --bench board_step     # or: just bench, which runs both benchmarks
 ```
 
 Times a step together with taking the cells that changed, which is what each frame does:
@@ -28,6 +28,16 @@ Times a step together with taking the cells that changed, which is what each fra
 - **dense:** a freshly seeded 512, 1024, and 2048 board on every iteration, so every row is evaluated every time
 - **sparse board:** the glider and the fresh 30% noise on `SparseBoard`, with its dirty chunks extracted, to compare the two boards directly
 - **debris:** one generation of a board settled for 2000 generations, from the same state each time
+
+### frame_loop
+
+```shell
+cargo bench --bench frame_loop
+```
+
+Times generations at ∞ the way the app's frames run them, on a 1024 × 1024 board with 25% noise, randomized again every 2000 generations, with cell age off and on. Each frame steps for the max-speed budget and paints the board's tiles, through the same systems the app uses (`render_plugin::frame_loop` builds them without a window). A frame then waits for the next refresh of a 120 Hz display if it finished early, as frames on a variable-refresh display do. Criterion reports the time per generation, waits included, so it is the inverse of generations per second at ∞.
+
+`board_step` catches a slower step; this catches fewer steps per frame, from a smaller frame budget or slower painting, which no step benchmark sees. Run it before and after any change to `simulation_plugin.rs`, the max-speed budget, or how the board is drawn. It leaves out the window, UI, and GPU upload, so the app's real frames are a little longer and its rate a little lower.
 
 ## CPU profiling
 

@@ -17,6 +17,7 @@ test:
 
 bench:
 	cargo bench --bench board_step --locked
+	cargo bench --bench frame_loop --locked
 
 readme-check:
 	cargo test readme_lists_every_shortcut --locked

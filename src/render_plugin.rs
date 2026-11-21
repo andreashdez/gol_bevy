@@ -19,6 +19,10 @@ use bevy::{
     window::PrimaryWindow,
 };
 
+/// The app's frame without a window, for the frame-loop benchmark.
+#[doc(hidden)]
+pub mod frame_loop;
+
 pub struct RenderPlugin;
 
 /// The board cell under the pointer, or the keyboard's cell cursor while it
