@@ -10,6 +10,11 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
       - main.rs
       - lib.rs
       - app.rs
+      - app
+        - history.rs
+        - stamp.rs
+        - selection.rs
+        - playback.rs
       - board.rs
       - sparse_board.rs
       - universe.rs
@@ -62,6 +67,15 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
 | `input_plugin`          | Keyboard shortcuts, mouse editing, and camera zoom and pan                    |
 | `simulation_plugin`     | Advancing generations on time, requesting redraws, and quitting               |
 | `native_ui_plugin`      | Toolbar, palette, status bar, and dialogs, in Bevy UI                         |
+
+`app.rs` holds the `App` struct, its constructor, and the board editing at its core. Each concern adds its own `impl App` block in a module of `app`:
+
+| Module                  | Responsibility                                                                |
+|-------------------------|-------------------------------------------------------------------------------|
+| `history`               | Undo and redo, edit strokes, and the board before a run that reset returns to |
+| `stamp`                 | The pattern library, pasting, and turning, flipping, and placing the stamp    |
+| `selection`             | The Select tool's rectangle, and copying it or the board as RLE               |
+| `playback`              | Running, speed, settling and pausing by itself, and the population history    |
 
 `native_ui_plugin` builds the interface and keeps it in step with the app. Its parts are modules of their own:
 
