@@ -1,4 +1,6 @@
-use super::files::{FileShortcut, file_shortcut, finish_file_request};
+use super::files::{
+    FileShortcut, FileWork, file_shortcut, finish_file_request, finish_file_work, request_save,
+};
 use super::import_preview::import_summary;
 use super::widgets::DensitySlider;
 use super::*;
@@ -349,6 +351,21 @@ fn choose(world: &mut World, request: FileRequest, path: Option<&Path>) {
             finish_file_request(&mut state, request, path.clone());
         })
         .unwrap();
+    finish_work(world);
+}
+
+/// Waits for the file task `choose` started and applies its result.
+fn finish_work(world: &mut World) {
+    let Some(FileWork::Working(path, task)) = world.resource_mut::<FileDialog>().0.take() else {
+        return;
+    };
+    let mut outcome = Some((path, bevy::tasks::block_on(task)));
+    world
+        .run_system_once(move |mut state: DialogState| {
+            let (path, outcome) = outcome.take().expect("the system runs once");
+            finish_file_work(&mut state, path, outcome);
+        })
+        .unwrap();
 }
 
 /// A save request as the Save button captures it from the current app.
@@ -632,6 +649,34 @@ fn a_save_from_the_board_reports_as_a_notice() {
         world.resource::<crate::shared::EditFeedback>().remaining,
         0.0
     );
+    assert!(
+        world
+            .resource::<Drafts>()
+            .feedback
+            .starts_with("Workspace saved to")
+    );
+}
+
+#[test]
+fn a_second_save_is_refused_while_the_first_is_still_writing() {
+    let directory = crate::test_support::TestDirectory::new();
+    let path = directory.0.join("workspace.golw");
+    let mut world = test_world(DialogKind::Import);
+    world.resource_mut::<NativeUi>().dialog = None;
+    let mut request = Some(save_request(&world));
+    world
+        .run_system_once(move |mut state: DialogState| {
+            let request = request.take().expect("the system runs once");
+            finish_file_request(&mut state, request, Some(path.clone()));
+            assert_eq!(state.drafts.feedback, "Saving…");
+            request_save(&mut state);
+        })
+        .unwrap();
+    assert_eq!(
+        world.resource::<crate::shared::EditFeedback>().message,
+        "Still working on the last file."
+    );
+    finish_work(&mut world);
     assert!(
         world
             .resource::<Drafts>()

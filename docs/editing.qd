@@ -97,7 +97,7 @@ Resizing the board keeps the undo and redo history. Undoing past a resize keeps 
 
 ## Save and reopen workspaces
 
-.keybinding {Mod+S} saves and .keybinding {Mod+O} opens, from the board or with **Import**, **Export**, or **Settings** open; results show in the dialog, or as a brief notice over the board.
+.keybinding {Mod+S} saves and .keybinding {Mod+O} opens, from the board or with **Import**, **Export**, or **Settings** open; results show in the dialog, or as a brief notice over the board. Reading and writing happen in the background, so the board keeps running while a large workspace saves or loads; until it finishes, another save or open is refused with a notice.
 
 To save, open **Export** and click **Save workspace…**. It opens the
 system file dialog in your Documents folder, or wherever you last saved or opened a

@@ -1,9 +1,7 @@
 //! Native file dialogs for workspaces and `.rle` files, and their shortcuts.
 use super::*;
-use crate::workspace::Workspace;
-#[cfg(not(target_arch = "wasm32"))]
-use bevy::tasks::IoTaskPool;
-use bevy::tasks::{Task, futures::check_ready};
+use crate::workspace::{DecodedWorkspace, Workspace};
+use bevy::tasks::{IoTaskPool, Task, TaskPool, futures::check_ready};
 use std::path::Path;
 
 pub(super) enum FileRequest {
@@ -15,10 +13,24 @@ pub(super) enum FileRequest {
     OpenRle,
 }
 
-/// The native file dialog in progress, if any. It runs off the main thread so
-/// the app keeps drawing while the user browses.
+/// The native file dialog in progress, if any, then the reading or writing of
+/// the chosen file. Both run off the main thread so the app keeps drawing while
+/// the user browses and while a large workspace is saved or decoded.
 #[derive(Resource, Default)]
-pub(in crate::native_ui_plugin) struct FileDialog(Option<(FileRequest, Task<Option<PathBuf>>)>);
+pub(in crate::native_ui_plugin) struct FileDialog(pub(super) Option<FileWork>);
+
+pub(super) enum FileWork {
+    Picking(FileRequest, Task<Option<PathBuf>>),
+    Working(PathBuf, Task<FileOutcome>),
+}
+
+/// What the file task produced, applied to the app back on the main thread.
+pub(super) enum FileOutcome {
+    Saved(Result<(), String>),
+    /// Validated in full, so only a usable workspace asks to replace yours.
+    Opened(Result<Box<DecodedWorkspace>, String>),
+    Rle(Result<String, String>),
+}
 
 pub(super) fn request_save(state: &mut DialogState) {
     if file_dialog_busy(state) {
@@ -43,11 +55,13 @@ pub(super) fn request_open(state: &mut DialogState) {
 /// Whether a file dialog is already open, which Cmd/Ctrl+S or O from the board
 /// must say over the board, as no dialog is there to show it.
 pub(super) fn file_dialog_busy(state: &mut DialogState) -> bool {
-    let busy = state.file_dialog.0.is_some();
-    if busy {
-        report(state, false, "A file dialog is already open.".into());
-    }
-    busy
+    let notice = match state.file_dialog.0 {
+        None => return false,
+        Some(FileWork::Picking(..)) => "A file dialog is already open.",
+        Some(FileWork::Working(..)) => "Still working on the last file.",
+    };
+    report(state, false, notice.into());
+    true
 }
 
 pub(super) fn request_file(state: &mut DialogState, request: FileRequest) {
@@ -66,7 +80,7 @@ pub(super) fn request_file(state: &mut DialogState, request: FileRequest) {
         FileRequest::OpenRle => "Choose an RLE pattern file.",
     }
     .into();
-    state.file_dialog.0 = Some((request, task));
+    state.file_dialog.0 = Some(FileWork::Picking(request, task));
 }
 
 /// Opens the system file dialog off the main thread, starting where the last
@@ -109,18 +123,31 @@ fn spawn_file_dialog(_: &FileRequest, _: Option<&Path>) -> Option<Task<Option<Pa
 }
 
 pub(in crate::native_ui_plugin) fn poll_file_dialog(mut state: DialogState) {
-    let Some((_, task)) = state.file_dialog.0.as_mut() else {
-        return;
-    };
-    let Some(chosen) = check_ready(task) else {
-        return;
-    };
-    let Some((request, _)) = state.file_dialog.0.take() else {
-        return;
-    };
-    finish_file_request(&mut state, request, chosen);
+    match state.file_dialog.0.as_mut() {
+        Some(FileWork::Picking(_, task)) => {
+            let Some(chosen) = check_ready(task) else {
+                return;
+            };
+            let Some(FileWork::Picking(request, _)) = state.file_dialog.0.take() else {
+                return;
+            };
+            finish_file_request(&mut state, request, chosen);
+        }
+        Some(FileWork::Working(_, task)) => {
+            let Some(outcome) = check_ready(task) else {
+                return;
+            };
+            let Some(FileWork::Working(path, _)) = state.file_dialog.0.take() else {
+                return;
+            };
+            finish_file_work(&mut state, path, outcome);
+        }
+        None => {}
+    }
 }
 
+/// Starts reading or writing the chosen file on the IO pool: serializing and
+/// writing a save, reading and decoding a workspace, or reading an `.rle` file.
 pub(super) fn finish_file_request(
     state: &mut DialogState,
     request: FileRequest,
@@ -130,22 +157,48 @@ pub(super) fn finish_file_request(
         report(state, false, "No file was chosen.".into());
         return;
     };
-    let workspace_file = !matches!(request, FileRequest::OpenRle);
-    let result = match request {
-        FileRequest::Save(workspace) => workspace
-            .write(&path)
-            .map(|()| format!("Workspace saved to {}.", path.display()))
-            .map_err(|error| format!("Could not save {}: {error}", path.display())),
-        // Validate the whole file first, so only a usable workspace asks to replace yours.
-        FileRequest::Open => Workspace::read(&path)
-            .and_then(Workspace::decode)
-            .map(|decoded| {
-                state.drafts.pending_open = Some((path.clone(), decoded));
-                state.mode.dialog = Some(DialogKind::ConfirmOpen);
-                String::new()
-            })
-            .map_err(|error| format!("Could not open {}: {error}", path.display())),
-        FileRequest::OpenRle => load_rle(state, &path),
+    let feedback = match request {
+        FileRequest::Save(_) => "Saving…",
+        FileRequest::Open | FileRequest::OpenRle => "Opening…",
+    };
+    report(state, false, feedback.into());
+    let target = path.clone();
+    let work = async move {
+        let shown = target.display();
+        match request {
+            FileRequest::Save(workspace) => FileOutcome::Saved(
+                workspace
+                    .write(&target)
+                    .map_err(|error| format!("Could not save {shown}: {error}")),
+            ),
+            FileRequest::Open => FileOutcome::Opened(
+                Workspace::read(&target)
+                    .and_then(Workspace::decode)
+                    .map(Box::new)
+                    .map_err(|error| format!("Could not open {shown}: {error}")),
+            ),
+            FileRequest::OpenRle => FileOutcome::Rle(
+                read_rle(&target).map_err(|error| format!("Could not open {shown}: {error}")),
+            ),
+        }
+    };
+    let task = IoTaskPool::get_or_init(TaskPool::default).spawn(work);
+    state.file_dialog.0 = Some(FileWork::Working(path, task));
+}
+
+/// Applies a finished file task and reports its result.
+pub(super) fn finish_file_work(state: &mut DialogState, path: PathBuf, outcome: FileOutcome) {
+    let workspace_file = !matches!(outcome, FileOutcome::Rle(_));
+    let result = match outcome {
+        FileOutcome::Saved(result) => {
+            result.map(|()| format!("Workspace saved to {}.", path.display()))
+        }
+        FileOutcome::Opened(result) => result.map(|decoded| {
+            state.drafts.pending_open = Some((path.clone(), *decoded));
+            state.mode.dialog = Some(DialogKind::ConfirmOpen);
+            String::new()
+        }),
+        FileOutcome::Rle(result) => result.map(|source| load_rle(state, &path, source)),
     };
     match result {
         Ok(feedback) => {
@@ -159,16 +212,18 @@ pub(super) fn finish_file_request(
     }
 }
 
+/// Reads a pattern file, refusing one too large to import before reading it.
+fn read_rle(path: &Path) -> Result<String, String> {
+    let size = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+    if size > crate::patterns::MAX_RLE_BYTES as u64 {
+        return Err("the file is larger than 8 MiB".into());
+    }
+    std::fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
 /// Puts a pattern file's text and name into the import fields, to preview
 /// before importing.
-fn load_rle(state: &mut DialogState, path: &Path) -> Result<String, String> {
-    let fail =
-        |error: &dyn std::fmt::Display| format!("Could not open {}: {error}", path.display());
-    let size = std::fs::metadata(path).map_err(|e| fail(&e))?.len();
-    if size > crate::patterns::MAX_RLE_BYTES as u64 {
-        return Err(fail(&"the file is larger than 8 MiB"));
-    }
-    let source = std::fs::read_to_string(path).map_err(|e| fail(&e))?;
+fn load_rle(state: &mut DialogState, path: &Path, source: String) -> String {
     let stem = path
         .file_stem()
         .map_or_else(|| "Imported pattern".into(), |stem| stem.to_string_lossy());
@@ -178,10 +233,10 @@ fn load_rle(state: &mut DialogState, path: &Path) -> Result<String, String> {
     state.drafts.source = source;
     state.drafts.rebuild = true;
     state.mode.dialog = Some(DialogKind::Import);
-    Ok(format!(
+    format!(
         "Loaded {}. Check the preview, then import it.",
         path.display()
-    ))
+    )
 }
 
 /// Shows a result in the open dialog, or as a notice over the board when no
