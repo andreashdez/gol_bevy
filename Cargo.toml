@@ -13,7 +13,35 @@ publish = false
 
 [dependencies]
 accesskit = "0.24"
-bevy = { version = "0.20", default-features = false, features = ["2d", "ui", "system_clipboard"] }
+# Bevy's `2d`/`ui` collections also bring gamepads (gilrs, which needs libudev
+# on Linux), scenes, animation, picking backends and image decoders this app
+# never uses, so it lists only the parts it does.
+bevy = { version = "0.20", default-features = false, features = [
+    # App runtime: multithreaded schedules, the task pools and logging.
+    "async_executor",
+    "multi_threaded",
+    "bevy_log",
+    # `Assets<Image>`/`Assets<Font>`; textures are built in code and the font is
+    # embedded, so no image decoders are needed.
+    "bevy_asset",
+    # Windowing (with the accesskit adapter) on X11 and Wayland.
+    "bevy_winit",
+    "x11",
+    "wayland",
+    # Rendering: the 2D camera, the board and stamp sprites, and gizmo overlays.
+    "bevy_core_pipeline",
+    "bevy_sprite_render",
+    "bevy_gizmos_render",
+    # The UI: nodes and text, sliders and scrollbars, tab focus, and pointer
+    # input on UI nodes.
+    "bevy_ui_render",
+    "bevy_ui_widgets",
+    "ui_picking",
+    # Text inputs that set no font fall back to Bevy's built-in one.
+    "default_font",
+    # Copy and paste in the text inputs, through the OS clipboard.
+    "system_clipboard",
+] }
 dirs = "7"
 fastrand = "2.5"
 serde = { version = "1.0", features = ["derive"] }
@@ -24,10 +52,10 @@ serde_json = "1.0"
 rfd = "0.18"
 
 # The web build, for the demo on the docs site. `web` gives Bevy browser clocks
-# and task executors, and `js` seeds random boards from the browser instead of
-# a fixed seed.
+# and task executors, `webgl2` renders through WebGL2, and `js` seeds random
+# boards from the browser instead of a fixed seed.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-bevy = { version = "0.20", default-features = false, features = ["web"] }
+bevy = { version = "0.20", default-features = false, features = ["web", "webgl2"] }
 fastrand = { version = "2.5", features = ["js"] }
 
 [dev-dependencies]

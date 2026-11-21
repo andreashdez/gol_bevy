@@ -18,8 +18,8 @@ The crate uses the Rust 2024 edition.
 Bevy builds and links against a few system libraries. On Debian and Ubuntu:
 
 ```shell
-sudo apt-get install pkg-config libwayland-dev libxkbcommon-dev libudev-dev \
-  libasound2-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
+sudo apt-get install pkg-config libwayland-dev libxkbcommon-dev libx11-dev \
+  libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
 ```
 
 macOS and Windows need nothing beyond the Rust toolchain.
