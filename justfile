@@ -40,6 +40,15 @@ web-serve: web
 release-check tag:
 	scripts/check-release-version.sh "{{tag}}"
 
+# Tags HEAD for a release, once release-check passes. The message is
+# "gol-bevy <tag>" and the version's notes from CHANGELOG.md; verbatim keeps
+# the notes' `###` headings, which git would otherwise strip as comments. The
+# tag is signed if git's tag.gpgSign is set. Push it yourself afterwards.
+[doc("Tags HEAD for a release, with the version's notes from CHANGELOG.md as its message.")]
+release-tag tag: (release-check tag)
+	tag="{{tag}}"; { printf 'gol-bevy %s\n\n' "$tag"; scripts/release-notes.sh "${tag#v}"; } | git tag -a "$tag" --cleanup=verbatim -F -
+	@echo "Tagged {{tag}}. Check it with: git show {{tag}}; then push it with: git push origin {{tag}}"
+
 # Universal (Apple silicon + Intel) macOS binary in dist/. CI runs this for
 # tagged releases; run it locally to test a release build. Needs a Mac.
 [doc("Builds a universal macOS release binary into dist/. Needs a Mac.")]

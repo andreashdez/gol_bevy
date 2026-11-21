@@ -30,9 +30,24 @@ This runs `scripts/check-release-version.sh`, which passes only if the tag is `v
 
 ## Tag the release
 
+Push `main` first, so the tag points at a commit that is already on GitHub, then tag it:
+
 ```shell
-git tag v0.2.0 && git push origin v0.2.0
+git push origin main
+just release-tag v0.2.0
+git push origin v0.2.0
 ```
+
+`just release-tag` runs `just release-check` first, then makes an annotated tag on `HEAD`. Its message is `gol-bevy v0.2.0`, a blank line, and the notes `scripts/release-notes.sh` prints for the version. The tag is signed if git's `tag.gpgSign` is set; check it with `git show v0.2.0` or `git tag -v v0.2.0` before pushing.
+
+To tag by hand instead, keep the `--cleanup=verbatim`: without it, git drops every line that starts with `#` from a tag message, which takes the `### Added`, `### Changed`, and other headings out of the notes.
+
+```shell
+{ printf 'gol-bevy %s\n\n' v0.2.0; scripts/release-notes.sh 0.2.0; } \
+  | git tag -a v0.2.0 --cleanup=verbatim -F -
+```
+
+If a release job fails, delete the tag on GitHub and locally (`git push origin :v0.2.0` and `git tag -d v0.2.0`), fix the problem, and tag again.
 
 On a tag, CI runs the usual lint and test jobs, then, once all of them pass:
 
