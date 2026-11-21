@@ -56,13 +56,24 @@ Edit the notes on the release page afterwards to add anything more, and fix the 
 
 ## Building for macOS locally
 
-`release-macos` runs the same recipe CI uses. On a Mac, run it to try a release build:
+`release-macos` runs the same recipe CI uses. On a Mac with `cargo-about` installed (see [Licence notices](#licence-notices)), run it to try a release build:
 
 ```shell
 just release-macos v0.2.0
 ```
 
 This adds both Apple targets, builds for Apple silicon and Intel, joins them into a universal binary with `lipo`, and writes `dist/gol-bevy-v0.2.0-universal-macos.tar.gz`. Without a version, it uses `git describe --tags --always`.
+
+## Licence notices
+
+Every archive and the web version carry `THIRD-PARTY-LICENSES.html`, the licences of every crate compiled in, on every platform gol-bevy is built for. `scripts/third-party-licenses.sh` writes it with [cargo-about](https://github.com/EmbarkStudios/cargo-about), from `about.toml` and the `about.hbs` template:
+
+```shell
+cargo install cargo-about --locked --features cli
+scripts/third-party-licenses.sh    # writes dist/THIRD-PARTY-LICENSES.html
+```
+
+`about.toml` lists the licences dependencies may use. A dependency under any other licence fails the release build; check that its licence allows shipping it in a binary under MIT, then add it to the list.
 
 ## Archive layout
 
@@ -72,7 +83,7 @@ This adds both Apple targets, builds for Apple silicon and Intel, joins them int
 scripts/package-release.sh <archive name> <binary> [tar.gz|zip]
 ```
 
-It copies the binary, `README.md`, `CHANGELOG.md`, and `LICENSE` into a folder named after the archive, packs it into `dist/`, and prints the archive path.
+It copies the binary, `README.md`, `CHANGELOG.md`, `LICENSE`, and the font's `assets/fonts/OFL.txt` into a folder named after the archive, writes `THIRD-PARTY-LICENSES.html` beside them, packs it into `dist/`, and prints the archive path.
 
 .filetree
     - dist
@@ -82,3 +93,5 @@ It copies the binary, `README.md`, `CHANGELOG.md`, and `LICENSE` into a folder n
           - README.md
           - CHANGELOG.md
           - LICENSE
+          - OFL.txt
+          - THIRD-PARTY-LICENSES.html

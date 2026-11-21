@@ -25,3 +25,7 @@ The web version has the full simulation, drawing tools, stamps, rules, undo, and
 - **Browser shortcuts.** A few shortcuts the browser keeps for itself, such as closing the tab, can't be used by the app.
 
 For everything else, [install the desktop app](install.qd).
+
+## Licences
+
+The web version is under the same [MIT licence](https://github.com/andreashdez/gol_bevy/blob/main/LICENSE) as the desktop app. Its font is under the [SIL Open Font License](../demo/OFL.txt), and the Rust crates compiled into it are under the licences listed in [THIRD-PARTY-LICENSES.html](../demo/THIRD-PARTY-LICENSES.html).

@@ -47,6 +47,7 @@ The docs site hosts a [web version](try-online.qd) of the app, built from the sa
 
 - `wasm-bindgen-cli` at the same version as the `wasm-bindgen` crate in `Cargo.lock`. The build script names the version to install if it does not match.
 - `wasm-opt` from [binaryen](https://github.com/WebAssembly/binaryen), which shrinks the module. It is optional for local builds.
+- `cargo-about`, which writes the licence notices of the crates compiled in (see [Releasing](releasing.qd#licence-notices)). It is optional for local builds too.
 
 ```shell
 cargo install wasm-bindgen-cli --version <version> --locked
@@ -54,7 +55,7 @@ just web         # builds dist/web
 just web-serve   # builds it and serves it at http://localhost:8000
 ```
 
-`scripts/build-web.sh` builds with the `web-release` profile, which optimizes Bevy for size and this crate for speed, then copies in `web/index.html`. The docs workflow runs the same script and publishes the result under `demo/`.
+`scripts/build-web.sh` builds with the `web-release` profile, which optimizes Bevy for size and this crate for speed, then copies in `web/index.html`, the font's `OFL.txt`, and `THIRD-PARTY-LICENSES.html`. The docs workflow runs the same script and publishes the result under `demo/`.
 
 The browser has no file system and no app to quit, so the web build leaves those out. `WEB_BUILD` in `src/shared.rs` hides the file dialogs, file shortcuts, and **Quit**, and skips loading and saving settings; only the native file dialog code is behind `#[cfg(target_arch = "wasm32")]`. Use `bevy::platform::time::Instant` rather than `std::time::Instant`, which panics in the browser.
 

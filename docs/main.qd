@@ -37,4 +37,4 @@
 
 ## License
 
-gol-bevy is distributed under the MIT License. The bundled IBM Plex Sans font is distributed under the SIL Open Font License 1.1; see `assets/fonts/` in the repository.
+gol-bevy is distributed under the MIT License. Its fonts, IBM Plex Sans and Bevy's built-in Fira Mono, are distributed under the SIL Open Font License 1.1; see `assets/fonts/` in the repository. Release downloads list the licences of every crate compiled in, in `THIRD-PARTY-LICENSES.html`.
