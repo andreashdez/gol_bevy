@@ -1,6 +1,17 @@
 //! Everyday controls, shortcut hints, and first-use guidance.
 use super::*;
-use crate::{coords::CAMERA_ZOOM_MIN, shared::MainCamera};
+use crate::{
+    coords::CAMERA_ZOOM_MIN,
+    keybindings::{
+        BINDING_CLEAR, BINDING_ERASE_SELECTION, BINDING_FLIP_STAMP, BINDING_RANDOMIZE,
+        BINDING_RESET_CAMERA, BINDING_RESET_TO_START, BINDING_ROTATE_STAMP, BINDING_RUN_PAUSE,
+        BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_DIAGNOSTICS,
+        BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, BINDING_TOGGLE_PALETTE, BINDING_TOOL_DRAW,
+        BINDING_TOOL_ERASE, BINDING_TOOL_SELECT, BINDING_TOOL_STAMP, CAPS_COPY, CAPS_OPEN,
+        CAPS_REDO, CAPS_SAVE, CAPS_UNDO, KeyBinding, shortcut_label,
+    },
+    shared::MainCamera,
+};
 use bevy::{
     a11y::AccessibilityNode,
     text::{FontFeatureTag, Justify},
@@ -42,93 +53,133 @@ pub(super) fn pattern_hint(name: &str) -> String {
     format!("Select {name} · click the board to place")
 }
 
-pub(super) fn hint(action: Action) -> &'static str {
+/// The tooltip for a control: what it does, and its shortcut as Help names it.
+pub(super) fn hint(action: Action) -> String {
+    let key = |binding: KeyBinding| shortcut_label(binding.caps);
+    let undo = shortcut_label(CAPS_UNDO);
     match action {
-        Action::Play => "Play / pause · Space",
-        Action::ResetToStart => "Back to the board this run started from · B · undo with U",
-        Action::Step => "Step one generation · J",
-        Action::Undo => "Undo the last edit · U",
-        Action::Redo => {
-            if cfg!(target_os = "macos") {
-                "Redo the last edit · Cmd+Shift+Z"
-            } else {
-                "Redo the last edit · Ctrl+Shift+Z"
-            }
+        Action::Play => format!("Play / pause · {}", key(BINDING_RUN_PAUSE)),
+        Action::ResetToStart => format!(
+            "Back to the board this run started from · {} · undo with {undo}",
+            key(BINDING_RESET_TO_START)
+        ),
+        Action::Step => format!("Step one generation · {}", key(BINDING_STEP)),
+        Action::Undo => format!("Undo the last edit · {undo}"),
+        Action::Redo => format!("Redo the last edit · {}", shortcut_label(CAPS_REDO)),
+        Action::Grid => format!("Show / hide the grid · {}", key(BINDING_TOGGLE_GRID)),
+        Action::CellAge => {
+            "Brighten newborn cells, deepen old ones, and fade where cells died".into()
         }
-        Action::Grid => "Show / hide the grid · T",
-        Action::CellAge => "Brighten newborn cells, deepen old ones, and fade where cells died",
-        Action::FitBoard => "Fit the whole board in the canvas · V",
-        Action::ZoomIn => "Zoom in · or scroll over the canvas · middle-drag to pan",
-        Action::ZoomOut => "Zoom out · or scroll over the canvas · middle-drag to pan",
-        Action::SpeedAdjust(step) if step < 0 => "Decrease speed by 1 gen/s · ∞ steps back to 40",
-        Action::SpeedAdjust(_) => "Increase speed by 1 gen/s, up to 40",
-        Action::MaxSpeed => "∞ · run as fast as possible · click again to return to the set speed",
-        Action::Help => "Controls and tips · /",
-        Action::Diagnostics => "Simulation diagnostics · F3",
-        Action::Rotate => "Rotate stamp 90° clockwise · Z",
-        Action::Flip => "Flip stamp horizontally · F",
-        Action::Randomize => "Randomize using the density and seed in Settings · R",
-        Action::Clear => "Clear the board · X · undo with U",
-        Action::Edges(crate::board::BoundaryMode::Wrap) => {
-            "Cells leaving one edge come back on the opposite edge · M switches"
+        Action::FitBoard => format!(
+            "Fit the whole board in the canvas · {}",
+            key(BINDING_RESET_CAMERA)
+        ),
+        Action::ZoomIn => "Zoom in · or scroll over the canvas · middle-drag to pan".into(),
+        Action::ZoomOut => "Zoom out · or scroll over the canvas · middle-drag to pan".into(),
+        Action::SpeedAdjust(step) if step < 0 => {
+            "Decrease speed by 1 gen/s · ∞ steps back to 40".into()
         }
-        Action::Edges(crate::board::BoundaryMode::Fixed) => {
-            "Cells beyond the edges count as dead · M switches"
+        Action::SpeedAdjust(_) => "Increase speed by 1 gen/s, up to 40".into(),
+        Action::MaxSpeed => {
+            "∞ · run as fast as possible · click again to return to the set speed".into()
         }
-        Action::Unbounded => "No edges: the board grows as far as the pattern does · M switches",
-        Action::Tool(EditTool::Draw) => "Draw · 1 · paint cells with the left mouse button",
-        Action::Tool(EditTool::Erase) => "Erase · 2 · clear cells; right-drag also erases",
-        Action::Tool(EditTool::Stamp) => {
-            "Stamp · 3 · pick a pattern and place it on the board · H hides the palette"
-        }
-        Action::Tool(EditTool::Select) => {
-            if cfg!(target_os = "macos") {
-                "Select · 4 · drag a rectangle · Delete clears it, Cmd+C copies it as RLE"
-            } else {
-                "Select · 4 · drag a rectangle · Delete clears it, Ctrl+C copies it as RLE"
-            }
-        }
+        Action::Help => format!("Controls and tips · {}", key(BINDING_TOGGLE_HELP)),
+        Action::Diagnostics => format!(
+            "Simulation diagnostics · {}",
+            key(BINDING_TOGGLE_DIAGNOSTICS)
+        ),
+        Action::Rotate => format!("Rotate stamp 90° clockwise · {}", key(BINDING_ROTATE_STAMP)),
+        Action::Flip => format!("Flip stamp horizontally · {}", key(BINDING_FLIP_STAMP)),
+        Action::Randomize => format!(
+            "Randomize using the density and seed in Settings · {}",
+            key(BINDING_RANDOMIZE)
+        ),
+        Action::Clear => format!(
+            "Clear the board · {} · undo with {undo}",
+            key(BINDING_CLEAR)
+        ),
+        Action::Edges(crate::board::BoundaryMode::Wrap) => format!(
+            "Cells leaving one edge come back on the opposite edge · {} switches",
+            key(BINDING_TOGGLE_BOUNDARY_MODE)
+        ),
+        Action::Edges(crate::board::BoundaryMode::Fixed) => format!(
+            "Cells beyond the edges count as dead · {} switches",
+            key(BINDING_TOGGLE_BOUNDARY_MODE)
+        ),
+        Action::Unbounded => format!(
+            "No edges: the board grows as far as the pattern does · {} switches",
+            key(BINDING_TOGGLE_BOUNDARY_MODE)
+        ),
+        Action::Tool(EditTool::Draw) => format!(
+            "Draw · {} · paint cells with the left mouse button",
+            key(BINDING_TOOL_DRAW)
+        ),
+        Action::Tool(EditTool::Erase) => format!(
+            "Erase · {} · clear cells; right-drag also erases",
+            key(BINDING_TOOL_ERASE)
+        ),
+        Action::Tool(EditTool::Stamp) => format!(
+            "Stamp · {} · pick a pattern and place it on the board · {} hides the palette",
+            key(BINDING_TOOL_STAMP),
+            key(BINDING_TOGGLE_PALETTE)
+        ),
+        Action::Tool(EditTool::Select) => format!(
+            "Select · {} · drag a rectangle · {} clears it, {} copies it as RLE",
+            key(BINDING_TOOL_SELECT),
+            key(BINDING_ERASE_SELECTION),
+            shortcut_label(CAPS_COPY)
+        ),
         // The web build has no workspace files.
-        Action::Import if crate::shared::WEB_BUILD => "Add an RLE pattern to your library",
-        Action::Import => "Add an RLE pattern to your library, or open a workspace file",
-        Action::Export if crate::shared::WEB_BUILD => "Copy the board as RLE",
-        Action::Export => "Copy the board as RLE, or save a workspace file",
-        Action::Settings => "Board size, rule, randomization, theme, grid, cell age, and edges",
-        Action::More => "Grid, cell age, import, export, settings, and help",
-        Action::ApplyRandomize => "Use this density and optional seed for future randomizations",
-        Action::RandomizeNow => "Apply the density and seed, then replace the board · undo with U",
-        Action::FillCanvas => "Size the board to fill the canvas, and follow the window's size",
+        Action::Import if crate::shared::WEB_BUILD => "Add an RLE pattern to your library".into(),
+        Action::Import => "Add an RLE pattern to your library, or open a workspace file".into(),
+        Action::Export if crate::shared::WEB_BUILD => "Copy the board as RLE".into(),
+        Action::Export => "Copy the board as RLE, or save a workspace file".into(),
+        Action::Settings => {
+            "Board size, rule, randomization, theme, grid, cell age, and edges".into()
+        }
+        Action::More => "Grid, cell age, import, export, settings, and help".into(),
+        Action::ApplyRandomize => {
+            "Use this density and optional seed for future randomizations".into()
+        }
+        Action::RandomizeNow => {
+            format!("Apply the density and seed, then replace the board · undo with {undo}")
+        }
+        Action::FillCanvas => {
+            "Size the board to fill the canvas, and follow the window's size".into()
+        }
         Action::PauseWhenSettled => {
             "Pause when the board stops changing, or starts repeating with a period up to 128"
+                .into()
         }
-        Action::RulePreset(_) => "Switch the board to this rule · undo with U",
+        Action::RulePreset(_) => format!("Switch the board to this rule · undo with {undo}"),
         Action::Theme(_) if crate::shared::WEB_BUILD => {
-            "Switch the colours of the board and interface"
+            "Switch the colours of the board and interface".into()
         }
-        Action::Theme(_) => "Switch the colours of the board and interface · saved automatically",
-        Action::ApplyRule => "Use the rulestring above, written in B/S notation",
-        Action::EditRule => "The board's rule · click to change it in Settings",
-        Action::ToggleEdges => "Switch between wrapping, fixed, and unbounded edges · M",
-        Action::ExportRle => "Copy the live cells to the clipboard as RLE",
-        Action::SaveWorkspace => {
-            if cfg!(target_os = "macos") {
-                "Save the board, generation, rule, edges, speed, and imported patterns · Cmd+S"
-            } else {
-                "Save the board, generation, rule, edges, speed, and imported patterns · Ctrl+S"
-            }
+        Action::Theme(_) => {
+            "Switch the colours of the board and interface · saved automatically".into()
         }
-        Action::OpenWorkspace => {
-            if cfg!(target_os = "macos") {
-                "Choose a workspace file to replace this one · asks first · Cmd+O"
-            } else {
-                "Choose a workspace file to replace this one · asks first · Ctrl+O"
-            }
+        Action::ApplyRule => "Use the rulestring above, written in B/S notation".into(),
+        Action::EditRule => "The board's rule · click to change it in Settings".into(),
+        Action::ToggleEdges => format!(
+            "Switch between wrapping, fixed, and unbounded edges · {}",
+            key(BINDING_TOGGLE_BOUNDARY_MODE)
+        ),
+        Action::ExportRle => "Copy the live cells to the clipboard as RLE".into(),
+        Action::SaveWorkspace => format!(
+            "Save the board, generation, rule, edges, speed, and imported patterns · {}",
+            shortcut_label(CAPS_SAVE)
+        ),
+        Action::OpenWorkspace => format!(
+            "Choose a workspace file to replace this one · asks first · {}",
+            shortcut_label(CAPS_OPEN)
+        ),
+        Action::OpenRle => "Load an .rle file into the fields above, to preview and import".into(),
+        Action::ConfirmOpenWorkspace => {
+            "Replace this workspace with the chosen file · clears undo".into()
         }
-        Action::OpenRle => "Load an .rle file into the fields above, to preview and import",
-        Action::ConfirmOpenWorkspace => "Replace this workspace with the chosen file · clears undo",
-        Action::CancelOpenWorkspace => "Keep the current workspace · Escape also cancels",
-        Action::CloseDialog => "Close this dialog · Escape",
-        _ => "",
+        Action::CancelOpenWorkspace => "Keep the current workspace · Escape also cancels".into(),
+        Action::CloseDialog => "Close this dialog · Escape".into(),
+        _ => String::new(),
     }
 }
 
