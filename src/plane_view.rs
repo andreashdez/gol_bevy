@@ -68,23 +68,35 @@ fn is_set(chunk: &Chunk, index: usize) -> bool {
     chunk[index / size] >> (index % size) & 1 != 0
 }
 
+/// Whether the chunk at `key` is between the corners of a [`BlockGrid::chunk_span`].
+fn in_span((first, last): (ChunkKey, ChunkKey), key: ChunkKey) -> bool {
+    (first.0..=last.0).contains(&key.0) && (first.1..=last.1).contains(&key.1)
+}
+
 impl PlaneAges {
-    /// Brings the ages up to date with `steps` generations and the cells in `dirty`.
-    fn update(&mut self, plane: &SparseBoard, grid: BlockGrid, dirty: DirtyChunks, steps: u8) {
+    /// Brings the ages up to date with `steps` generations and the cells in
+    /// `dirty`, and tells whether any cell in view grew older.
+    fn update(
+        &mut self,
+        plane: &SparseBoard,
+        grid: BlockGrid,
+        dirty: DirtyChunks,
+        steps: u8,
+    ) -> bool {
         if dirty == DirtyChunks::Full {
             self.chunks.clear();
         }
 
         let mut in_view = Vec::new();
         plane.for_each_chunk_in(grid, |key, _| in_view.push(key));
-        let (first, last) = grid.chunk_span();
-        self.chunks.retain(|key, _| {
-            (first.0..=last.0).contains(&key.0) && (first.1..=last.1).contains(&key.1)
-        });
+        let span = grid.chunk_span();
+        self.chunks.retain(|&key, _| in_span(span, key));
+        let mut aged = false;
         if steps > 0 {
             for ages in self.chunks.values_mut() {
                 for age in ages.iter_mut().filter(|age| **age < SETTLED_AGE) {
                     *age = age.saturating_add(steps);
+                    aged = true;
                 }
             }
         }
@@ -95,11 +107,11 @@ impl PlaneAges {
         }
 
         let DirtyChunks::Chunks(dirty) = dirty else {
-            return;
+            return aged;
         };
         let size = CHUNK_SIZE as usize;
         for (key, flipped) in dirty {
-            if !(first.0..=last.0).contains(&key.0) || !(first.1..=last.1).contains(&key.1) {
+            if !in_span(span, key) {
                 continue;
             }
             let cells = plane.chunk(key).unwrap_or(&EMPTY_CHUNK);
@@ -119,6 +131,7 @@ impl PlaneAges {
                 }
             }
         }
+        aged
     }
 }
 
@@ -342,6 +355,15 @@ fn sync_plane(
     };
     let dirty = plane.take_dirty_chunks();
     let plane = &*plane;
+    // Cells that changed outside the view leave it looking the same.
+    let changed_in_view = match &dirty {
+        DirtyChunks::None => false,
+        DirtyChunks::Full => true,
+        DirtyChunks::Chunks(chunks) => {
+            let span = grid.chunk_span();
+            chunks.keys().any(|&key| in_span(span, key))
+        }
+    };
 
     let canvas = &mut *canvas;
     // Undo and resetting the counter move it backwards; neither is a generation.
@@ -353,10 +375,13 @@ fn sync_plane(
     if style.cell_age.is_changed() || !ages {
         canvas.ages.chunks.clear();
     }
-    if ages {
-        canvas.ages.update(plane, grid, dirty, steps);
+    let aged = ages && canvas.ages.update(plane, grid, dirty, steps);
+    let moved = canvas.grid.replace(grid) != Some(grid);
+    // A redraw that changes nothing in view, such as turning the stamp, leaves
+    // the texture alone rather than painting it and sending it to the GPU again.
+    if !(recolor || moved || changed_in_view || aged) {
+        return;
     }
-    canvas.grid = Some(grid);
 
     let size = Extent3d {
         width: grid.width as u32,
@@ -640,12 +665,17 @@ mod tests {
     /// A world with an unbounded board and a 400 × 200 camera at `scale`,
     /// ready for [`sync_plane`].
     fn plane_world(scale: f32) -> World {
+        let mut world = World::new();
+        fill_plane_world(&mut world, scale);
+        world
+    }
+
+    fn fill_plane_world(world: &mut World, scale: f32) {
         use bevy::camera::{ComputedCameraValues, RenderTargetInfo};
         let mut app = crate::app::App::new(16, 16);
         app.set_unbounded().unwrap();
         let mut sim = Simulation::new(app);
         sim.plane_origin = (1000, -1000);
-        let mut world = World::new();
         world.insert_resource(sim);
         world.init_resource::<RedrawRequested>();
         world.init_resource::<Theme>();
@@ -677,7 +707,49 @@ mod tests {
                 ..OrthographicProjection::default_2d()
             }),
         ));
-        world
+    }
+
+    #[test]
+    fn only_a_redraw_that_changes_the_view_sends_the_texture_to_the_gpu() {
+        use bevy::{
+            app::TaskPoolPlugin, asset::AssetPlugin, ecs::message::Messages,
+            ecs::system::RunSystemOnce,
+        };
+        let mut app = App::new();
+        app.add_plugins((
+            TaskPoolPlugin::default(),
+            AssetPlugin {
+                watch_for_changes_override: Some(false),
+                use_asset_processor_override: Some(false),
+                ..default()
+            },
+        ))
+        .init_asset::<Image>()
+        .add_systems(Update, sync_plane);
+        fill_plane_world(app.world_mut(), CELL_SIZE);
+        app.world_mut().run_system_once(spawn_plane_sprite).unwrap();
+        // Whether a frame with a redraw, after drawing a cell at `edit`,
+        // modified the texture.
+        let mut redraw = |edit: Option<(i64, i64)>| {
+            let world = app.world_mut();
+            if let Some((x, y)) = edit {
+                world.resource_mut::<Simulation>().app.board.populate(x, y);
+            }
+            world.resource_mut::<RedrawRequested>().0 = true;
+            app.update();
+            let texture = app.world().resource::<PlaneCanvas>().handle.id();
+            let mut events = app
+                .world_mut()
+                .resource_mut::<Messages<AssetEvent<Image>>>();
+            events.drain().any(|event| event.is_modified(texture))
+        };
+
+        assert!(redraw(None), "the first view is painted");
+        assert!(!redraw(None), "nothing changed");
+        // The view takes in 800..1200 across and -1100..-900 up.
+        assert!(redraw(Some((1000, -1000))), "a cell in view");
+        assert!(!redraw(Some((1_000_000, 0))), "a cell far out of view");
+        assert!(!redraw(None), "nothing changed again");
     }
 
     #[test]
