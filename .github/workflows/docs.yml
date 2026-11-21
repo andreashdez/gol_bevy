@@ -3,10 +3,15 @@ name: Docs
 # Builds the Quarkdown site in docs/, with the web version of the app under
 # demo/, and publishes it to GitHub Pages.
 on:
-  push:
+  # Publishes once CI has passed on main, from the commit CI tested, so the demo
+  # is never built from code that failed its tests.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    # The demo is built from the same commit as the docs, so app changes
-    # redeploy the site too.
+  # Builds without publishing, so a change that breaks the site or the web build
+  # fails its pull request rather than the next deployment.
+  pull_request:
     paths:
       - docs/**
       - src/**
@@ -15,54 +20,87 @@ on:
       - build.rs
       - Cargo.toml
       - Cargo.lock
+      - about.toml
+      - about.hbs
       - rust-toolchain.toml
       - scripts/build-web.sh
+      - scripts/third-party-licenses.sh
       - .github/workflows/docs.yml
   workflow_dispatch:
 
+# Only the deploy job may write to Pages.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-# One deployment at a time; a newer push supersedes a queued one, but a
-# deployment already running is allowed to finish.
+# One deployment at a time; a newer one waits for one already running to finish.
+# A pull request's newer push cancels its older build.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('docs-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  BINARYEN: version_133
+  # From the release's binaryen-version_133-x86_64-linux.tar.gz.sha256.
+  BINARYEN_SHA256: 2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489
+
+# Actions are pinned to a commit, with the release it is in as a comment. The
+# site is built from scratch, without a cache, as it is published.
 jobs:
   build:
+    # A CI run counts only if it passed on a push to this repository's main: a
+    # pull request from a fork's own `main` branch also matches `branches`.
+    if: >-
+      github.event_name != 'workflow_run' || (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: quarkdown-labs/setup-quarkdown@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # For a CI run, the commit it tested rather than main's latest.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - uses: quarkdown-labs/setup-quarkdown@7f1c7a66fd944e1717778356590e57469a525ca4 # v1.4.0
+        with:
+          quarkdown-version: 2.7.0
       - run: quarkdown c main.qd --strict --clean -o "$RUNNER_TEMP/site"
         working-directory: docs
       # Installs the version pinned in rust-toolchain.toml.
       - run: rustup toolchain install
       # The CLI must match the wasm-bindgen crate in Cargo.lock.
-      - run: echo "WASM_BINDGEN=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')" >> "$GITHUB_ENV"
-      - uses: taiki-e/install-action@v2
+      - id: wasm-bindgen
+        run: echo "version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')" >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
-          tool: wasm-bindgen@${{ env.WASM_BINDGEN }}
+          tool: wasm-bindgen@${{ steps.wasm-bindgen.outputs.version }},cargo-about
       - name: Install wasm-opt
-        run: |
-          curl -sSfL https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz | tar -xz -C "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/binaryen-version_133/bin" >> "$GITHUB_PATH"
-      - uses: Swatinem/rust-cache@v2
+        working-directory: ${{ runner.temp }}
+        # The path added is fixed, and the archive is checked against its hash.
+        run: | # zizmor: ignore[github-env]
+          archive="binaryen-$BINARYEN-x86_64-linux.tar.gz"
+          curl -sSfLO "https://github.com/WebAssembly/binaryen/releases/download/$BINARYEN/$archive"
+          echo "$BINARYEN_SHA256  $archive" | sha256sum -c -
+          tar -xzf "$archive"
+          echo "$RUNNER_TEMP/binaryen-$BINARYEN/bin" >> "$GITHUB_PATH"
       - run: scripts/build-web.sh "$RUNNER_TEMP/site/gol-bevy/demo"
-      - uses: actions/configure-pages@v6
-      - uses: actions/upload-pages-artifact@v5
+      - if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: ${{ runner.temp }}/site/gol-bevy
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

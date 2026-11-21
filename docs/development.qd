@@ -9,7 +9,7 @@ The Rust version is pinned in `rust-toolchain.toml` (currently **1.100.0**, with
 rustup toolchain install
 ```
 
-CI uses the matching `rust:1.100.0-trixie` image, so a new Rust release cannot change what CI accepts. To move to a newer Rust, change the version in `rust-toolchain.toml` and `.github/workflows/ci.yml` together.
+CI uses the matching `rust:1.100.0-bookworm` image, so a new Rust release cannot change what CI accepts. To move to a newer Rust, change the version in `rust-toolchain.toml` and `.github/workflows/ci.yml` together.
 
 The crate uses the Rust 2024 edition.
 
@@ -80,15 +80,20 @@ Run `just ci-local` before pushing.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs three jobs on every push and pull request:
+`.github/workflows/ci.yml` runs on every pull request, every push to `main`, and every release tag. Pushes to other branches run through their pull request, so nothing runs twice, and a newer push cancels the older run.
 
-| Job      | Command                                                    |
-|----------|------------------------------------------------------------|
-| `fmt`    | `cargo fmt --all -- --check`                               |
-| `clippy` | `cargo clippy --all-targets --all-features --locked -- -D warnings` |
-| `test`   | `cargo test --all-targets --all-features --locked`         |
+| Job              | Runs on        | Command                                                    |
+|------------------|----------------|------------------------------------------------------------|
+| `fmt`            | Linux          | `cargo fmt --all -- --check`                               |
+| `clippy`         | Linux          | `cargo clippy --all-targets --all-features --locked -- -D warnings` |
+| `clippy-web`     | Linux          | Clippy for `wasm32-unknown-unknown`, as `just clippy-web`  |
+| `clippy-windows` | Linux          | Clippy for `x86_64-pc-windows-gnu`, so Windows-only code is checked before a release |
+| `test`           | Linux          | `cargo test --all-targets --all-features --locked`         |
+| `test-macos`     | macOS          | The same tests on macOS                                    |
 
-Tags add the release build and release jobs; see [Releasing](releasing.qd).
+Tags add the release build and release jobs, which wait for all of these; see [Releasing](releasing.qd).
+
+The workflows only read the repository, except the release job, which creates the GitHub release, and the Pages deployment. Every action is pinned to a commit, with its release in a comment; to update one, look up the new release's commit and change both. Lint and test jobs cache their builds, saved only from `main`, as caches saved on other branches can't be restored there. Release builds and the docs site don't use a cache, so nothing a cache holds can reach a published build.
 
 ## This documentation
 
@@ -102,6 +107,6 @@ quarkdown c main.qd -p -w        # live preview while you edit
 
 `_setup.qd` holds the shared theme, header, and helpers such as `.keys` and `.card`, and `_nav.qd` the sidebar. A new page needs a `.docname` and `.include {docs}` at the top, and a link from `_nav.qd` or another page, since Quarkdown only compiles pages that are linked.
 
-`.github/workflows/docs.yml` publishes the site to [GitHub Pages](https://andreashdez.github.io/gol_bevy/) on every push to `main` that changes `docs/`. It builds with `--strict`, so a Quarkdown error fails the deployment, and installs the latest Quarkdown release, so keep your local copy up to date. The pages need Quarkdown 2.7 or newer.
+`.github/workflows/docs.yml` publishes the site to [GitHub Pages](https://andreashdez.github.io/gol_bevy/) once CI passes on a push to `main`, built from the commit CI tested. Pull requests that touch the docs, the app, or the web build build the site too, without publishing it. It builds with `--strict`, so a Quarkdown error fails the build, and uses Quarkdown 2.7.0, pinned in the workflow; use the same version locally, and update both together. It also checks the binaryen download for `wasm-opt` against a pinned hash, so a new binaryen release needs its hash from the release's `.sha256` file.
 
 > Warning: Without `--strict`, a Quarkdown error is only logged and the build still succeeds. A dot directly before a letter starts a function call, even in plain text, so write `\.rle` outside code spans.

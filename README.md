@@ -31,7 +31,7 @@ installing anything.
 Each tagged release on the [GitHub Releases page](https://github.com/andreashdez/gol_bevy/releases)
 has ready-to-run builds, so no Rust toolchain is needed: unpack the archive for your platform and run `gol-bevy`.
 
-- **Linux (x86_64):** needs glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40, or
+- **Linux (x86_64):** needs glibc 2.36 or newer (Debian 12, Ubuntu 24.04, Fedora 37, or
   later) and a Wayland or X11 desktop. The file dialogs need an xdg-desktop-portal
   backend, such as xdg-desktop-portal-gtk or -kde.
 - **Windows (x86_64):** unzip and run `gol-bevy.exe`.
@@ -137,7 +137,7 @@ The same list is in the app: press `/` or click **Help**.
 ## Development
 
 ```bash
-just ci-local   # format check, clippy, and tests, as CI runs them
+just ci-local   # format check, clippy (native and web), and tests, as CI runs them
 ```
 
 | To | Read |
