@@ -562,12 +562,11 @@ pub(super) fn sync_status(
                     crate::settle::Settled::label,
                 )
             }
-            // Counted downwards, like RLE and other Life tools.
             Readout::Pointer => hovered
                 .0
-                .map(|(col, row)| match size {
-                    Some((_, rows)) => format!("({col}, {})", rows as i64 - 1 - row),
-                    None => format!("({col}, {})", -row),
+                .map(|cell| {
+                    let (col, row) = crate::coords::shown_cell(cell, size);
+                    format!("({col}, {row})")
                 })
                 .unwrap_or_default(),
             // The edges button says the board is unbounded, and there's no size to add.

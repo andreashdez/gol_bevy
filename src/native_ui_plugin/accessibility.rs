@@ -1,5 +1,6 @@
 //! AccessKit metadata, actions, and keyboard navigation for the native interface.
 use super::*;
+use crate::{coords::shown_cell, input_plugin::BoardCursor};
 use accesskit::{Action as AccessibleAction, ActionData, Live, Node as AccessibleNode, Role};
 use bevy::{
     a11y::{AccessibilityNode, AccessibilitySystems, ActionRequest},
@@ -15,7 +16,7 @@ impl Plugin for NativeAccessibilityPlugin {
         app.add_systems(Update, handle_actions.before(super::NativeLayout))
             .add_systems(
                 PostUpdate,
-                sync_accessibility
+                (sync_accessibility, sync_board_value)
                     .after(UiSystems::PostLayout)
                     .before(AccessibilitySystems::Update),
             )
@@ -162,6 +163,50 @@ fn sync_accessibility(
         {
             node.set_label(text.0.as_str());
         }
+    }
+}
+
+/// What the board's value says: the cell cursor's cell and whether it is
+/// alive, the generation, and the population.
+type BoardReading = (Option<((i64, i64), bool)>, usize, usize);
+
+/// The board reads as the cell cursor's cell and whether it is alive, then the
+/// generation and population. While the board runs, the value changes at most
+/// once a second unless the cursor moves, so a screen reader is not flooded.
+fn sync_board_value(
+    sim: Res<Simulation>,
+    cursor: Res<BoardCursor>,
+    time: Res<Time>,
+    mut written: Local<Option<(BoardReading, f64)>>,
+    mut boards: Query<&mut AccessibilityNode, With<BoardFocus>>,
+) {
+    let board = &sim.app.board;
+    let reading = (
+        cursor
+            .cell()
+            .map(|(col, row)| ((col, row), board.is_alive(col, row))),
+        sim.app.epoch,
+        board.live_cells_count(),
+    );
+    let now = time.elapsed_secs_f64();
+    let cell = |reading: &BoardReading| reading.0.map(|(cell, _)| cell);
+    if written.is_some_and(|(last, at)| {
+        last == reading || (sim.app.is_running() && cell(&last) == cell(&reading) && now - at < 1.0)
+    }) {
+        return;
+    }
+    *written = Some((reading, now));
+    let counts = format!("Generation {}, population {}", reading.1, reading.2);
+    let value = match reading.0 {
+        Some((cell, alive)) => {
+            let (col, row) = shown_cell(cell, board.size());
+            let state = if alive { "alive" } else { "dead" };
+            format!("Cell {col}, {row}, {state}. {counts}")
+        }
+        None => counts,
+    };
+    for mut node in &mut boards {
+        node.set_value(value.as_str());
     }
 }
 
@@ -523,5 +568,52 @@ mod tests {
                 .iter()
                 .any(|edit| matches!(edit, TextEdit::Left(true)))
         );
+    }
+
+    #[test]
+    fn the_board_reads_out_the_cursor_cell_and_counts_without_flooding() {
+        let mut world = World::new();
+        let mut app = GolApp::new(8, 8);
+        app.set_pause_when_settled(false);
+        for col in 1..4 {
+            app.populate_board(col, 5);
+        }
+        world.insert_resource(Simulation::new(app));
+        world.insert_resource(BoardCursor::at((1, 5)));
+        world.init_resource::<Time>();
+        let board = world
+            .spawn((BoardFocus, named_node(Role::Canvas, "Board")))
+            .id();
+        let sync = world.register_system(sync_board_value);
+        let value = |world: &World| {
+            world
+                .get::<AccessibilityNode>(board)
+                .unwrap()
+                .value()
+                .map(str::to_owned)
+        };
+        // Rows count down from the top, as in the status bar.
+        world.run_system(sync).unwrap();
+        let first = "Cell 1, 2, alive. Generation 0, population 3";
+        assert_eq!(value(&world).as_deref(), Some(first));
+
+        // While the board runs, a new generation waits up to a second.
+        world.resource_mut::<Simulation>().app.toggle_running();
+        world.resource_mut::<Simulation>().app.increment_epoch();
+        world.run_system(sync).unwrap();
+        assert_eq!(value(&world).as_deref(), Some(first));
+        world
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(1));
+        world.run_system(sync).unwrap();
+        assert_eq!(
+            value(&world).as_deref(),
+            Some("Cell 1, 2, dead. Generation 1, population 3")
+        );
+
+        // Without visible keyboard focus there is no cursor to read.
+        world.insert_resource(BoardCursor::default());
+        world.run_system(sync).unwrap();
+        assert_eq!(value(&world).as_deref(), Some("Generation 1, population 3"));
     }
 }

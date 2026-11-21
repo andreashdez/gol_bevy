@@ -5,7 +5,7 @@ Every keyboard and mouse control in one place. Shortcuts with a command modifier
 
 Board shortcuts work while the board has keyboard focus. They are disabled while a dialog is open, or while a text field or the speed slider is focused; press .keybinding {Esc} or click the board to get them back. In-app, press .keybinding {/} for the same list.
 
-> Tip: When you move through the controls with .keybinding {Tab}, the board is the last stop, and it gets a bright outline when it has focus. While the board is outlined, .keybinding {Space} and the other board shortcuts apply to it again. .keybinding {Shift+Tab} from the first toolbar button jumps straight back to it.
+> Tip: When you move through the controls with .keybinding {Tab}, the board is the last stop, and it gets a bright outline when it has focus. While the board is outlined, .keybinding {Space} and the other board shortcuts apply to it again, and the arrow keys move a [cell cursor](accessibility.qd#editing-the-board-from-the-keyboard) instead of panning. .keybinding {Shift+Tab} from the first toolbar button jumps straight back to it.
 
 ## Simulation
 
@@ -32,6 +32,8 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 | Left drag                                    | Draw, erase, or select with the tool        |
 | Left click, with a stamp selected            | Place the pattern                           |
 | Right drag                                   | Erase                                       |
+| Arrow keys, with the board outlined          | Move the cell cursor                        |
+| .keybinding {Enter}, with the board outlined | Draw, erase, stamp, or select at the cursor |
 | .keybinding {U} or .keybinding {Mod+Z}       | Undo the last edit and pause                |
 | .keybinding {Mod+Shift+Z}                    | Redo the last undone edit                   |
 
@@ -52,6 +54,7 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 | .keybinding {Mod+X}                              | Cut the selection as RLE        |
 | .keybinding {Mod+V}                              | Paste RLE as the stamp          |
 | .keybinding {Delete} or .keybinding {Backspace}  | Clear the selected cells        |
+| .keybinding {Shift} + arrow keys, with the board outlined | Extend the selection from the cursor |
 | .keybinding {Esc}                                | Deselect                        |
 
 ## View
@@ -60,7 +63,7 @@ Board shortcuts work while the board has keyboard focus. They are disabled while
 |------------------------------------------------|---------------------------------|
 | Mouse wheel over the board, or **− / +** in the status bar | Zoom                    |
 | Middle-button drag over the board             | Pan without editing cells       |
-| .keys {W, A, S, D} or arrow keys               | Pan                             |
+| .keys {W, A, S, D}, or arrow keys unless the board is outlined | Pan                |
 | .keybinding {V}, or **Fit board** in the status bar | Fit the whole board in view |
 | .keybinding {T}                                | Toggle the grid                 |
 | .keybinding {H}                                | Hide or show the pattern palette while stamping |

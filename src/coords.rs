@@ -64,6 +64,16 @@ impl CellMap {
     }
 }
 
+/// A cell's coordinates as the status bar and screen readers give them: rows
+/// are counted downwards, like RLE and other Life tools, from a finite board's
+/// top row or from the plane's row 0.
+pub fn shown_cell((col, row): (i64, i64), size: Option<(usize, usize)>) -> (i64, i64) {
+    match size {
+        Some((_, rows)) => (col, rows as i64 - 1 - row),
+        None => (col, -row),
+    }
+}
+
 /// How much more than the board a fitted view shows: just enough to keep the
 /// fixed-edge walls, which sit outside the board, on screen.
 const FIT_MARGIN: f32 = 1.02;

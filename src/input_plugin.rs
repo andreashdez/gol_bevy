@@ -1,23 +1,29 @@
 use crate::{
     app::EditTool,
     canvas_view::{CanvasView, cursor_world},
-    coords::{CAMERA_PAN_SPEED, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP},
+    coords::{CAMERA_PAN_SPEED, CAMERA_ZOOM_MIN, CAMERA_ZOOM_STEP, CELL_SIZE},
     feedback::EditFeedback,
     keybindings::{
-        BINDING_CLEAR, BINDING_CLEAR_STAMP, BINDING_DESELECT, BINDING_ERASE_SELECTION,
-        BINDING_FLIP_STAMP, BINDING_PAN_DOWN, BINDING_PAN_LEFT, BINDING_PAN_RIGHT, BINDING_PAN_UP,
-        BINDING_QUIT, BINDING_RANDOMIZE, BINDING_RESET_CAMERA, BINDING_RESET_EPOCH,
-        BINDING_RESET_TO_START, BINDING_ROTATE_STAMP, BINDING_RUN_PAUSE, BINDING_SLOW_DOWN,
-        BINDING_SPEED_UP, BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_DIAGNOSTICS,
-        BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, BINDING_TOGGLE_PALETTE, TOOL_SHORTCUTS,
-        TypedKeys, collect_typed_keys,
+        BINDING_APPLY_AT_CURSOR, BINDING_CLEAR, BINDING_CLEAR_STAMP, BINDING_DESELECT,
+        BINDING_ERASE_SELECTION, BINDING_EXTEND_SELECTION, BINDING_FLIP_STAMP, BINDING_MOVE_CURSOR,
+        BINDING_PAN_DOWN, BINDING_PAN_LEFT, BINDING_PAN_RIGHT, BINDING_PAN_UP, BINDING_QUIT,
+        BINDING_RANDOMIZE, BINDING_RESET_CAMERA, BINDING_RESET_EPOCH, BINDING_RESET_TO_START,
+        BINDING_ROTATE_STAMP, BINDING_RUN_PAUSE, BINDING_SLOW_DOWN, BINDING_SPEED_UP, BINDING_STEP,
+        BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_DIAGNOSTICS, BINDING_TOGGLE_GRID,
+        BINDING_TOGGLE_HELP, BINDING_TOGGLE_PALETTE, KeyBinding, TOOL_SHORTCUTS, TypedKeys,
+        collect_typed_keys,
     },
     shared::{DiagnosticsOverlay, GridOverlay, MainCamera, Simulation, UpdateSet, WEB_BUILD},
-    ui_input::{UiInputCapture, canvas_keyboard_available},
+    sparse_board::CellRect,
+    ui_input::{BoardFocusVisible, UiInputCapture, canvas_keyboard_available},
 };
 use bevy::{
     clipboard::Clipboard,
-    input::mouse::{MouseScrollPixelsPerLine, MouseScrollUnit, MouseWheel},
+    input::{
+        ButtonState,
+        keyboard::KeyboardInput,
+        mouse::{MouseScrollPixelsPerLine, MouseScrollUnit, MouseWheel},
+    },
     prelude::*,
     window::PrimaryWindow,
 };
@@ -52,6 +58,10 @@ impl Plugin for InputPlugin {
         )
         .add_systems(Update, handle_camera_zoom.in_set(UpdateSet::Camera))
         .add_systems(Update, handle_camera_drag.in_set(UpdateSet::Camera))
+        .init_resource::<BoardCursor>()
+        // Not gated on `canvas_keyboard_available`: it drains its key events
+        // while it may not use them, so none arrive late.
+        .add_systems(Update, handle_board_cursor.in_set(UpdateSet::Camera))
         .add_systems(
             Update,
             handle_camera_pan
@@ -325,6 +335,229 @@ fn handle_mouse(
     }
 }
 
+/// The keyboard's cell cursor, for editing the board without a pointer. It is
+/// active while the board has visible keyboard focus: the arrow keys move it,
+/// and Enter applies the tool at it.
+#[derive(Resource, Default)]
+pub struct BoardCursor {
+    /// Kept while the cursor is inactive, so it comes back where it was.
+    cell: Option<(i64, i64)>,
+    active: bool,
+    /// Whether the hover outline and the stamp ghost mark the cursor rather
+    /// than the pointer. Moving the mouse hands them back until the next key.
+    shown: bool,
+    selection: Option<KeyboardSelection>,
+}
+
+/// A selection made from the keyboard, as the keyboard last left it.
+#[derive(Clone, Copy)]
+struct KeyboardSelection {
+    area: CellRect,
+    /// The selection's moving corner, where the cursor was.
+    corner: (i64, i64),
+    /// Started with Enter: every move extends it until Enter again. Otherwise
+    /// only Shift+arrows extend it.
+    anchored: bool,
+}
+
+impl BoardCursor {
+    /// The cell the hover outline and the stamp ghost mark instead of the
+    /// pointer's.
+    pub fn shown(&self) -> Option<(i64, i64)> {
+        self.cell.filter(|_| self.active && self.shown)
+    }
+
+    /// The cursor's cell while the board has visible keyboard focus.
+    pub fn cell(&self) -> Option<(i64, i64)> {
+        self.cell.filter(|_| self.active)
+    }
+
+    /// A cursor showing on `cell`, as after Tab.
+    #[cfg(test)]
+    pub(crate) fn at(cell: (i64, i64)) -> Self {
+        Self {
+            cell: Some(cell),
+            active: true,
+            shown: true,
+            selection: None,
+        }
+    }
+
+    /// The selection the keyboard is making, while the board still has it as
+    /// the keyboard left it and the cursor is on its moving corner. A drag,
+    /// Esc, or another tool lets go of it.
+    fn keyboard_selection(&mut self, app: &crate::app::App) -> Option<&mut KeyboardSelection> {
+        let cell = self.cell;
+        if let Some(made) = self.selection
+            && (app.selection() != Some(made.area) || cell != Some(made.corner))
+        {
+            self.selection = None;
+        }
+        self.selection.as_mut()
+    }
+}
+
+#[derive(bevy::ecs::system::SystemParam)]
+struct CursorKeys<'w, 's> {
+    events: MessageReader<'w, 's, KeyboardInput>,
+    keys: Res<'w, ButtonInput<KeyCode>>,
+    typed: Res<'w, TypedKeys>,
+    capture: Res<'w, UiInputCapture>,
+    board_focus: BoardFocusVisible<'w, 's>,
+}
+
+/// Moves the cell cursor with the arrow keys, again on each key repeat, and
+/// applies the tool at it with Enter. The view pans to keep the cursor in it.
+fn handle_board_cursor(
+    mut input: CursorKeys,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut cameras: Query<(&Camera, &mut Transform, &Projection), With<MainCamera>>,
+    mut sim: ResMut<Simulation>,
+    mut feedback: ResMut<EditFeedback>,
+    mut cursor: ResMut<BoardCursor>,
+    mut pointer: Local<Option<Vec2>>,
+) {
+    let position = windows.single().ok().and_then(Window::cursor_position);
+    if position.is_some() && position != *pointer {
+        cursor.shown = false;
+    }
+    *pointer = position;
+    if input.capture.keyboard || !input.board_focus.get() {
+        input.events.clear();
+        cursor.active = false;
+        return;
+    }
+    let Ok((camera, mut transform, projection)) = cameras.single_mut() else {
+        input.events.clear();
+        return;
+    };
+    let map = sim.cell_map();
+    let scale = match projection {
+        Projection::Orthographic(ortho) => ortho.scale,
+        _ => 1.0,
+    };
+    let seen = camera
+        .logical_viewport_size()
+        .map(|size| Rect::from_center_size(transform.translation.truncate(), size * scale));
+    if !cursor.active {
+        // Back where it was while that is still on the board and in view, or
+        // else in the middle of the view.
+        let kept = cursor.cell.filter(|&(col, row)| {
+            sim.app.board.contains(col, row)
+                && seen.is_none_or(|seen| seen.contains(map.cell_to_world(col, row).truncate()))
+        });
+        cursor.cell =
+            Some(kept.unwrap_or_else(|| map.nearest_cell(transform.translation.truncate())));
+        cursor.active = true;
+        cursor.shown = true;
+    }
+    // The board may have shrunk under it.
+    let start = clamp_to_board(&sim, cursor.cell.unwrap_or_default());
+    cursor.cell = Some(start);
+
+    // Cmd/Ctrl+arrows are left to the platform.
+    let command = input.keys.any_pressed(COMMAND_KEYS);
+    let extend =
+        BINDING_EXTEND_SELECTION.pressed(&input.keys) && sim.app.tool() == EditTool::Select;
+    for event in input.events.read() {
+        let Some((cols, rows)) =
+            cursor_step(event.key_code).filter(|_| event.state == ButtonState::Pressed && !command)
+        else {
+            continue;
+        };
+        let from = cursor.cell.unwrap_or(start);
+        if extend && cursor.keyboard_selection(&sim.app).is_none() {
+            sim.app.clear_selection();
+            sim.app.begin_selection(from.0, from.1);
+            cursor.selection = sim.app.selection().map(|area| KeyboardSelection {
+                area,
+                corner: from,
+                anchored: false,
+            });
+        }
+        let to = clamp_to_board(
+            &sim,
+            (from.0.saturating_add(cols), from.1.saturating_add(rows)),
+        );
+        let made = cursor.keyboard_selection(&sim.app).copied();
+        cursor.cell = Some(to);
+        cursor.shown = true;
+        if let Some(made) = made
+            && (extend || made.anchored)
+        {
+            sim.app.extend_selection(to.0, to.1);
+            cursor.selection = sim.app.selection().map(|area| KeyboardSelection {
+                area,
+                corner: to,
+                ..made
+            });
+        }
+    }
+    let cell = cursor.cell.unwrap_or(start);
+    if cell != start
+        && let Some(seen) = seen
+    {
+        // Keep a cell's width between the cursor and the edge of the view,
+        // where the view has room for it.
+        let room = (seen.half_size() - Vec2::splat(CELL_SIZE)).max(Vec2::ZERO);
+        let offset = map.cell_to_world(cell.0, cell.1).truncate() - seen.center();
+        transform.translation += (offset - offset.clamp(-room, room)).extend(0.0);
+    }
+
+    if !BINDING_APPLY_AT_CURSOR.just_pressed(&input.keys, &input.typed) || command {
+        return;
+    }
+    cursor.shown = true;
+    feedback.remaining = 0.0;
+    let (col, row) = cell;
+    match sim.app.tool() {
+        EditTool::Select => match cursor.keyboard_selection(&sim.app) {
+            // A second Enter ends the selection, keeping it.
+            Some(made) if made.anchored => made.anchored = false,
+            _ => {
+                sim.app.clear_selection();
+                sim.app.begin_selection(col, row);
+                cursor.selection = sim.app.selection().map(|area| KeyboardSelection {
+                    area,
+                    corner: cell,
+                    anchored: true,
+                });
+            }
+        },
+        _ if sim.app.has_selected_pattern() => sim.app.place_selected_pattern_at(col, row),
+        tool => {
+            // One key press, one undo step.
+            sim.app.begin_stroke();
+            if tool == EditTool::Erase {
+                sim.app.depopulate_board(col, row);
+            } else {
+                sim.app.populate_board(col, row);
+            }
+            sim.app.end_stroke();
+        }
+    }
+}
+
+/// Which way an arrow key moves the cell cursor, in columns and rows; rows
+/// count up from the bottom.
+fn cursor_step(key: KeyCode) -> Option<(i64, i64)> {
+    match key {
+        KeyCode::ArrowLeft => Some((-1, 0)),
+        KeyCode::ArrowRight => Some((1, 0)),
+        KeyCode::ArrowUp => Some((0, 1)),
+        KeyCode::ArrowDown => Some((0, -1)),
+        _ => None,
+    }
+}
+
+/// The nearest cell on a finite board; the plane has every cell.
+fn clamp_to_board(sim: &Simulation, (col, row): (i64, i64)) -> (i64, i64) {
+    match sim.app.board.size() {
+        Some((cols, rows)) => (col.clamp(0, cols as i64 - 1), row.clamp(0, rows as i64 - 1)),
+        None => (col, row),
+    }
+}
+
 fn handle_camera_zoom(
     mut wheel_events: MessageReader<MouseWheel>,
     mut camera_q: Query<&mut Projection, With<MainCamera>>,
@@ -375,6 +608,7 @@ fn zoom_factor(lines: f32) -> f32 {
 fn handle_camera_pan(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    board_focus: BoardFocusVisible,
     mut camera_q: Query<(&mut Transform, &Projection), With<MainCamera>>,
 ) {
     let Ok((mut camera_transform, projection)) = camera_q.single_mut() else {
@@ -385,17 +619,25 @@ fn handle_camera_pan(
         return;
     }
 
+    // While the board has visible keyboard focus, the arrow keys move the cell
+    // cursor instead.
+    let cursor_keys = board_focus.get();
+    let held = |binding: KeyBinding| {
+        binding.keys.iter().any(|key| {
+            keys.pressed(*key) && !(cursor_keys && BINDING_MOVE_CURSOR.keys.contains(key))
+        })
+    };
     let mut direction = Vec3::ZERO;
-    if BINDING_PAN_LEFT.pressed(&keys) {
+    if held(BINDING_PAN_LEFT) {
         direction.x -= 1.0;
     }
-    if BINDING_PAN_RIGHT.pressed(&keys) {
+    if held(BINDING_PAN_RIGHT) {
         direction.x += 1.0;
     }
-    if BINDING_PAN_UP.pressed(&keys) {
+    if held(BINDING_PAN_UP) {
         direction.y += 1.0;
     }
-    if BINDING_PAN_DOWN.pressed(&keys) {
+    if held(BINDING_PAN_DOWN) {
         direction.y -= 1.0;
     }
     if direction == Vec3::ZERO {
@@ -929,5 +1171,261 @@ mod tests {
             .map(|_| zoom_factor(scroll_lines(&wheel(MouseScrollUnit::Pixel, 5.0), per_line)))
             .product();
         assert!((gesture - notch).abs() < 1e-4, "{gesture} vs {notch}");
+    }
+
+    /// An 8 × 8 board with visible keyboard focus, as after Tab, filling an
+    /// 800 × 600 canvas one world unit to a pixel, and the cursor system, run
+    /// once to put the cursor on the board.
+    fn cursor_world(app: crate::app::App) -> (World, bevy::ecs::system::SystemId) {
+        use bevy::{
+            camera::{ComputedCameraValues, RenderTargetInfo},
+            input_focus::{InputFocus, InputFocusVisible},
+        };
+        let mut world = World::new();
+        world.init_resource::<ButtonInput<KeyCode>>();
+        world.init_resource::<Messages<KeyboardInput>>();
+        world.init_resource::<TypedKeys>();
+        world.init_resource::<UiInputCapture>();
+        world.init_resource::<crate::ui_input::UiInputRegions>();
+        world.init_resource::<InputFocus>();
+        world.insert_resource(InputFocusVisible(true));
+        world.init_resource::<EditFeedback>();
+        world.init_resource::<BoardCursor>();
+        world.insert_resource(Simulation::new(app));
+        world.spawn((Window::default(), PrimaryWindow));
+        world.spawn((
+            Camera2d,
+            MainCamera,
+            Camera {
+                computed: ComputedCameraValues {
+                    target_info: Some(RenderTargetInfo {
+                        physical_size: UVec2::new(800, 600),
+                        scale_factor: 1.0,
+                    }),
+                    ..default()
+                },
+                ..default()
+            },
+        ));
+        let system = world.register_system(handle_board_cursor);
+        world.run_system(system).unwrap();
+        (world, system)
+    }
+
+    /// One frame in which `keys` go down in order, a key named again arriving
+    /// as a key repeat, then all come up.
+    fn press(world: &mut World, system: bevy::ecs::system::SystemId, keys: &[KeyCode]) {
+        use bevy::input::keyboard::{Key, NativeKey};
+        let window = world
+            .query_filtered::<Entity, With<PrimaryWindow>>()
+            .single(world)
+            .unwrap();
+        for (index, &key_code) in keys.iter().enumerate() {
+            world.resource_mut::<ButtonInput<KeyCode>>().press(key_code);
+            world.write_message(KeyboardInput {
+                key_code,
+                logical_key: Key::Unidentified(NativeKey::Unidentified),
+                state: ButtonState::Pressed,
+                text: None,
+                repeat: keys[..index].contains(&key_code),
+                window,
+            });
+        }
+        world.run_system(system).unwrap();
+        let mut input = world.resource_mut::<ButtonInput<KeyCode>>();
+        for &key in keys {
+            input.release(key);
+        }
+        input.clear();
+    }
+
+    fn cursor(world: &World) -> Option<(i64, i64)> {
+        world.resource::<BoardCursor>().cell()
+    }
+
+    fn camera_at(world: &mut World) -> Vec2 {
+        world
+            .query_filtered::<&Transform, With<MainCamera>>()
+            .single(world)
+            .unwrap()
+            .translation
+            .truncate()
+    }
+
+    #[test]
+    fn arrows_move_the_cell_cursor_and_stop_at_the_board_edge() {
+        let (mut world, system) = cursor_world(crate::app::App::new(8, 8));
+        // It starts in the middle of the view, outlined in place of the pointer.
+        assert_eq!(cursor(&world), Some((4, 4)));
+        assert_eq!(world.resource::<BoardCursor>().shown(), Some((4, 4)));
+        press(&mut world, system, &[KeyCode::ArrowRight]);
+        press(&mut world, system, &[KeyCode::ArrowUp]);
+        assert_eq!(cursor(&world), Some((5, 5)));
+
+        // Held keys repeat, and the board's edges stop the cursor.
+        press(&mut world, system, &[KeyCode::ArrowLeft; 7]);
+        press(&mut world, system, &[KeyCode::ArrowDown; 7]);
+        assert_eq!(cursor(&world), Some((0, 0)));
+        // The whole board is in view, so the view stays put.
+        assert_eq!(camera_at(&mut world), Vec2::ZERO);
+
+        // Moving the mouse gives the outline back to the pointer, until the
+        // next arrow key.
+        let mut windows = world.query_filtered::<&mut Window, With<PrimaryWindow>>();
+        windows
+            .single_mut(&mut world)
+            .unwrap()
+            .set_cursor_position(Some(Vec2::new(100.0, 100.0)));
+        press(&mut world, system, &[]);
+        assert_eq!(world.resource::<BoardCursor>().shown(), None);
+        assert_eq!(cursor(&world), Some((0, 0)));
+        press(&mut world, system, &[KeyCode::ArrowUp]);
+        assert_eq!(world.resource::<BoardCursor>().shown(), Some((0, 1)));
+    }
+
+    #[test]
+    fn the_view_follows_the_cell_cursor_across_the_plane() {
+        let mut app = crate::app::App::new(8, 8);
+        app.set_unbounded().unwrap();
+        let (mut world, system) = cursor_world(app);
+        assert_eq!(cursor(&world), Some((0, 0)));
+        press(&mut world, system, &[KeyCode::ArrowLeft; 40]);
+        assert_eq!(cursor(&world), Some((-40, 0)));
+        // Just far enough to keep a cell between the cursor and the view's
+        // edge: the cell's middle is 474 to the left, the edge 400.
+        assert_eq!(camera_at(&mut world), Vec2::new(-86.0, 0.0));
+    }
+
+    #[test]
+    fn enter_draws_or_erases_at_the_cursor_one_undo_step_at_a_time() {
+        let (mut world, system) = cursor_world(crate::app::App::new(8, 8));
+        press(&mut world, system, &[KeyCode::ArrowRight]);
+        press(&mut world, system, &[KeyCode::Enter]);
+        press(&mut world, system, &[KeyCode::ArrowRight]);
+        press(&mut world, system, &[KeyCode::NumpadEnter]);
+        {
+            let app = &mut world.resource_mut::<Simulation>().into_inner().app;
+            assert!(app.board.is_alive(5, 4) && app.board.is_alive(6, 4));
+            assert_eq!(app.board.live_cells_count(), 2);
+            assert!(app.undo());
+            assert!(app.board.is_alive(5, 4) && !app.board.is_alive(6, 4));
+            assert!(app.undo());
+            assert_eq!(app.board.live_cells_count(), 0);
+            assert!(!app.can_undo());
+            assert!(app.redo() && app.redo());
+            app.set_tool(EditTool::Erase);
+        }
+        press(&mut world, system, &[KeyCode::Enter]);
+        let app = &world.resource::<Simulation>().app;
+        assert!(app.board.is_alive(5, 4) && !app.board.is_alive(6, 4));
+    }
+
+    #[test]
+    fn enter_places_the_stamp_where_a_click_on_the_cursor_would() {
+        let stamping = || {
+            let mut app = crate::app::App::new(8, 8);
+            app.select_pattern(crate::app::PatternKind::Glider);
+            app
+        };
+        let mut clicked = stamping();
+        clicked.place_selected_pattern_at(4, 4);
+        let (mut world, system) = cursor_world(stamping());
+        press(&mut world, system, &[KeyCode::Enter]);
+        let app = &mut world.resource_mut::<Simulation>().into_inner().app;
+        assert_eq!(app.board.live_cells_count(), 5);
+        for (col, row) in (0..8).flat_map(|col| (0..8).map(move |row| (col, row))) {
+            assert_eq!(
+                app.board.is_alive(col, row),
+                clicked.board.is_alive(col, row),
+                "({col}, {row})"
+            );
+        }
+        assert!(app.undo());
+        assert_eq!(app.board.live_cells_count(), 0);
+    }
+
+    #[test]
+    fn shift_arrows_and_enter_select_from_the_cursor() {
+        let mut app = crate::app::App::new(8, 8);
+        app.set_tool(EditTool::Select);
+        let (mut world, system) = cursor_world(app);
+        let selection = |world: &World| world.resource::<Simulation>().app.selection();
+        let area = |left, bottom, width, height| {
+            Some(CellRect {
+                left,
+                bottom,
+                width,
+                height,
+            })
+        };
+
+        // Shift+arrows start a selection on the cursor's cell and stretch it.
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ShiftLeft);
+        press(
+            &mut world,
+            system,
+            &[KeyCode::ArrowRight, KeyCode::ArrowRight, KeyCode::ArrowDown],
+        );
+        assert_eq!(selection(&world), area(4, 3, 3, 2));
+        // Without Shift, the cursor moves on and the selection stays.
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::ShiftLeft);
+        press(&mut world, system, &[KeyCode::ArrowLeft]);
+        assert_eq!(selection(&world), area(4, 3, 3, 2));
+        assert_eq!(cursor(&world), Some((5, 3)));
+
+        // Enter anchors a new selection, arrows stretch it, and Enter ends it.
+        press(&mut world, system, &[KeyCode::Enter]);
+        assert_eq!(selection(&world), area(5, 3, 1, 1));
+        press(&mut world, system, &[KeyCode::ArrowLeft]);
+        assert_eq!(selection(&world), area(4, 3, 2, 1));
+        press(&mut world, system, &[KeyCode::Enter]);
+        press(&mut world, system, &[KeyCode::ArrowUp]);
+        assert_eq!(selection(&world), area(4, 3, 2, 1));
+        assert_eq!(cursor(&world), Some((4, 4)));
+        assert_eq!(
+            world.resource::<Simulation>().app.board.live_cells_count(),
+            0,
+            "selecting draws nothing"
+        );
+    }
+
+    #[test]
+    fn arrows_pan_unless_the_board_has_visible_keyboard_focus() {
+        use bevy::input_focus::InputFocusVisible;
+        let (mut world, system) = cursor_world(crate::app::App::new(8, 8));
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(100));
+        world.insert_resource(time);
+        let pan = world.register_system(handle_camera_pan);
+        let panned_to =
+            |world: &mut World, x: f32| camera_at(world).abs_diff_eq(Vec2::new(x, 0.0), 1e-3);
+
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowLeft);
+        world.run_system(pan).unwrap();
+        assert!(panned_to(&mut world, 0.0), "the arrows move the cursor");
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyA);
+        world.run_system(pan).unwrap();
+        assert!(panned_to(&mut world, -70.0), "WASD still pans");
+
+        // A click hides keyboard focus: the arrows pan again, and the cursor
+        // goes away.
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::KeyA);
+        world.resource_mut::<InputFocusVisible>().0 = false;
+        world.run_system(pan).unwrap();
+        assert!(panned_to(&mut world, -140.0));
+        press(&mut world, system, &[KeyCode::ArrowRight]);
+        assert_eq!(cursor(&world), None);
+        assert_eq!(world.resource::<BoardCursor>().shown(), None);
+        assert!(panned_to(&mut world, -140.0));
     }
 }
