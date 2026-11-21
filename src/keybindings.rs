@@ -205,6 +205,33 @@ pub const BINDING_DESELECT: KeyBinding = KeyBinding {
     action: "Deselect",
 };
 
+// The cell cursor: the arrow keys take it over from panning while the board
+// has visible keyboard focus, reached with Tab.
+pub const BINDING_MOVE_CURSOR: KeyBinding = KeyBinding {
+    chars: &[],
+    keys: &[
+        KeyCode::ArrowLeft,
+        KeyCode::ArrowRight,
+        KeyCode::ArrowUp,
+        KeyCode::ArrowDown,
+    ],
+    caps: &["Arrow keys"],
+    action: "Move the cell cursor (board focused with Tab)",
+};
+pub const BINDING_APPLY_AT_CURSOR: KeyBinding = KeyBinding {
+    chars: &[],
+    keys: &[KeyCode::Enter, KeyCode::NumpadEnter],
+    caps: &["Enter"],
+    action: "Draw, erase, stamp, or select at the cursor",
+};
+/// Its keys are the modifier, held while an arrow key moves the cursor.
+pub const BINDING_EXTEND_SELECTION: KeyBinding = KeyBinding {
+    chars: &[],
+    keys: &[KeyCode::ShiftLeft, KeyCode::ShiftRight],
+    caps: &["Shift+arrow keys"],
+    action: "Extend the selection from the cursor",
+};
+
 pub const BINDING_ROTATE_STAMP: KeyBinding = KeyBinding {
     chars: &["z"],
     keys: &[],
@@ -361,6 +388,8 @@ pub fn help_sections() -> [HelpSection; 6] {
                 BINDING_TOOL_SELECT.into(),
                 entry(&["Left drag"], "Draw, erase, or select with the tool"),
                 entry(&["Right drag"], "Erase"),
+                BINDING_MOVE_CURSOR.into(),
+                BINDING_APPLY_AT_CURSOR.into(),
                 BINDING_RANDOMIZE.into(),
                 BINDING_CLEAR.into(),
                 entry(CAPS_UNDO, "Undo and pause"),
@@ -384,6 +413,7 @@ pub fn help_sections() -> [HelpSection; 6] {
                 entry(&["Mod+X"], "Cut the selection as RLE"),
                 entry(&["Mod+V"], "Paste RLE as the stamp"),
                 BINDING_ERASE_SELECTION.into(),
+                BINDING_EXTEND_SELECTION.into(),
                 BINDING_DESELECT.into(),
             ],
         },

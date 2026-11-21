@@ -9,6 +9,8 @@ With **Draw** selected, drag with the left mouse button to bring cells to life. 
 
 Cells you drag across are changed one at a time, but the whole drag counts as a single edit for [undo](#undo-and-redo).
 
+You can also edit without a mouse: press .keybinding {Tab} until the board is outlined, move the cell cursor with the arrow keys, and press .keybinding {Enter} to draw, erase, stamp, or select at it. Each press is a single edit. See [Editing the board from the keyboard](accessibility.qd#editing-the-board-from-the-keyboard).
+
 ## Stamps
 
 A stamp places a whole pattern with one click.

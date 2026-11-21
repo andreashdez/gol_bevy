@@ -25,7 +25,7 @@ use crate::{
     app::{App as GolApp, EditTool},
     feedback::EditFeedback,
     shared::{CellAge, GridOverlay, Simulation, StartupSet, Theme, UpdateSet},
-    ui_input::{BoardFocus, KeyboardFocus, UiInputRegions, UiInputSet},
+    ui_input::{BoardFocus, BoardFocusVisible, UiInputRegions, UiInputSet},
 };
 use bevy::{
     asset::RenderAssetUsages,
@@ -518,9 +518,7 @@ fn release_palette_focus(
 /// Outlines the canvas while keyboard navigation leaves the keyboard on the board.
 fn sync_board_focus(
     windows: Query<&Window, With<PrimaryWindow>>,
-    keyboard: KeyboardFocus,
-    focus_visible: Res<InputFocusVisible>,
-    regions: Res<UiInputRegions>,
+    board_focus: BoardFocusVisible,
     mut areas: Query<&mut Node, With<BoardArea>>,
     mut rings: Query<&mut Visibility, With<BoardFocusRing>>,
 ) {
@@ -534,7 +532,7 @@ fn sync_board_focus(
         set_if_neq!(node.width, px(rect.width()));
         set_if_neq!(node.height, px(rect.height()));
     }
-    let ring = if focus_visible.0 && keyboard.on_board() && !regions.modal {
+    let ring = if board_focus.get() {
         Visibility::Inherited
     } else {
         Visibility::Hidden

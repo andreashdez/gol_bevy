@@ -21,7 +21,8 @@ use bevy::{
 
 pub struct RenderPlugin;
 
-/// The board cell under the pointer, as `(col, row)` with row 0 at the bottom.
+/// The board cell under the pointer, or the keyboard's cell cursor while it
+/// shows, as `(col, row)` with row 0 at the bottom.
 #[derive(Resource, Default)]
 pub struct HoveredCell(pub Option<(i64, i64)>);
 
@@ -1011,9 +1012,11 @@ fn update_hovered_cell(
     sim: Res<Simulation>,
     mut hovered: ResMut<HoveredCell>,
     pointer_capture: Res<UiInputCapture>,
+    cursor: Res<crate::input_plugin::BoardCursor>,
 ) {
-    hovered.0 = None;
-    if pointer_capture.pointer {
+    // The keyboard's cell cursor stands in for the pointer while it shows.
+    hovered.0 = cursor.shown();
+    if hovered.0.is_some() || pointer_capture.pointer {
         return;
     }
     let Ok(window) = window_q.single() else {

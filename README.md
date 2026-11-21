@@ -23,7 +23,8 @@ installing anything.
 - **RLE import and export**, compatible with other Life tools such as Golly, and
   workspace files that keep the board and imported patterns between runs.
 - **Keyboard and screen reader friendly**: Tab navigation and accessible names on every
-  control, with dark, light, and high-contrast themes.
+  control, a cell cursor for editing the board from the keyboard, and dark, light, and
+  high-contrast themes.
 - **Settings that persist**: board size, rule, edges, speed, grid, cell age, and theme.
 
 ## Download
@@ -74,6 +75,8 @@ builds. On Linux, Bevy needs a few system libraries first; see
 | `4` | Select tool |
 | `Left drag` | Draw, erase, or select with the tool |
 | `Right drag` | Erase |
+| `Arrow keys` | Move the cell cursor (board focused with Tab) |
+| `Enter` | Draw, erase, stamp, or select at the cursor |
 | `R` | Randomize the board or view |
 | `X` | Clear the board |
 | `U` or `Cmd/Ctrl+Z` | Undo and pause |
@@ -97,6 +100,7 @@ builds. On Linux, Bevy needs a few system libraries first; see
 | `Cmd/Ctrl+X` | Cut the selection as RLE |
 | `Cmd/Ctrl+V` | Paste RLE as the stamp |
 | `Delete` or `Backspace` | Clear the selected cells |
+| `Shift+arrow keys` | Extend the selection from the cursor |
 | `Esc` | Deselect |
 
 ### Camera

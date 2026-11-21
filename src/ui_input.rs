@@ -3,7 +3,7 @@
 use crate::shared::UpdateSet;
 use bevy::{
     input::ButtonState,
-    input_focus::InputFocus,
+    input_focus::{InputFocus, InputFocusVisible},
     prelude::*,
     text::EditableText,
     ui_widgets::Slider,
@@ -137,6 +137,22 @@ impl KeyboardFocus<'_, '_> {
     /// Bevy focuses the window at startup; that is the board, not a control.
     pub fn on_board(&self) -> bool {
         self.focus.get().is_none_or(|e| self.boards.contains(e))
+    }
+}
+
+/// Whether the board has keyboard focus that the user can see: reached with
+/// the keyboard, outlined, and with no dialog open. Only then do the arrow keys
+/// move the cell cursor rather than pan.
+#[derive(SystemParam)]
+pub struct BoardFocusVisible<'w, 's> {
+    keyboard: KeyboardFocus<'w, 's>,
+    visible: Res<'w, InputFocusVisible>,
+    regions: Res<'w, UiInputRegions>,
+}
+
+impl BoardFocusVisible<'_, '_> {
+    pub fn get(&self) -> bool {
+        self.visible.0 && self.keyboard.on_board() && !self.regions.modal
     }
 }
 
