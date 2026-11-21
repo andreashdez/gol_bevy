@@ -537,6 +537,18 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_patterns_page_lists_every_builtin() {
+        let page = include_str!("../docs/patterns.qd");
+        for pattern in Pattern::builtins() {
+            assert!(
+                page.contains(&format!("| {} ", pattern.name)),
+                "add {} to the built-in patterns table in docs/patterns.qd",
+                pattern.name
+            );
+        }
+    }
+
     /// Live cells after `generations`, moved so the bounding box starts at the
     /// origin, together with how far that box moved.
     fn evolve(pattern: &Pattern, generations: usize) -> (Vec<(usize, usize)>, (isize, isize)) {
