@@ -85,6 +85,7 @@ impl App {
         self.run_start = None;
         self.settle.reset();
         self.population_history.clear();
+        self.last_step = None;
     }
 
     pub(super) fn save_edit(&mut self) {

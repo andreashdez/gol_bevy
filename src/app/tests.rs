@@ -1108,6 +1108,11 @@ fn population_change_describes_the_latest_generation_until_an_edit() {
     }
     app.increment_epoch();
     assert_eq!(app.population_change(), Some(0));
+    // A rule change keeps the population, but the change no longer follows.
+    assert!(app.set_rule(Rule::parse("B36/S23").unwrap()));
+    assert_eq!(app.population_change(), None);
+    app.increment_epoch();
+    assert_eq!(app.population_change(), Some(0));
     app.populate_board(6, 6);
     assert_eq!(app.population_change(), None, "an edit is not a generation");
     app.increment_epoch();
