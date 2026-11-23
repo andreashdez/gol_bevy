@@ -338,6 +338,169 @@ pub(super) fn sync_preview(
     }
 }
 
+pub(super) fn sync_palette(
+    mut commands: Commands,
+    sim: Res<Simulation>,
+    theme: Res<Theme>,
+    palette: Query<Entity, With<Palette>>,
+    mut images: ResMut<Assets<Image>>,
+    mut revision: Local<Option<u64>>,
+) {
+    // Thumbnails are drawn in board colours, so a new theme redraws the library.
+    if *revision == Some(sim.app.library_revision()) && !theme.is_changed() {
+        return;
+    }
+    let Ok(entity) = palette.single() else {
+        return;
+    };
+    commands
+        .entity(entity)
+        .despawn_children()
+        .with_children(|p| {
+            let builtin_count = crate::patterns::Pattern::builtin_count();
+            for index in 0..sim.app.pattern_count() {
+                if index == 0 || index == builtin_count {
+                    p.spawn((
+                        palette::PatternGroup(index >= builtin_count),
+                        label(
+                            if index == 0 { "Built-in" } else { "Imported" },
+                            11.0,
+                            Token::Muted,
+                        ),
+                    ));
+                }
+                let Some(pattern) = sim.app.pattern_at(index) else {
+                    continue;
+                };
+                let preview = images.add(thumbnail_sized(
+                    &pattern.cells,
+                    pattern.width,
+                    pattern.height,
+                    theme.board(),
+                    ROW_THUMBNAIL_TEXELS,
+                    4.0,
+                    14.0,
+                ));
+                p.spawn((
+                    WidgetButton,
+                    Action::Pattern(index),
+                    controls::Tooltip(controls::pattern_hint(&pattern.name)),
+                    Hovered::default(),
+                    TabIndex(0),
+                    Name::new(pattern.name.clone()),
+                    ThemedBackground(Token::Surface),
+                    ThemedBorder(Token::Line),
+                    Node {
+                        width: percent(100),
+                        padding: UiRect::axes(px(8), px(6)),
+                        column_gap: px(10),
+                        align_items: AlignItems::Center,
+                        border: UiRect::all(px(1)),
+                        border_radius: BorderRadius::all(px(8)),
+                        flex_shrink: 0.0,
+                        ..default()
+                    },
+                ))
+                .with_children(|p| {
+                    p.spawn((
+                        ImageNode::new(preview),
+                        Node {
+                            width: px(ROW_THUMBNAIL.x),
+                            height: px(ROW_THUMBNAIL.y),
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                        Pickable::IGNORE,
+                    ));
+                    p.spawn((
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(3),
+                            min_width: px(0),
+                            ..default()
+                        },
+                        Pickable::IGNORE,
+                    ))
+                    .with_children(|p| {
+                        p.spawn(label(&pattern.name, 14.0, Token::Ink));
+                        p.spawn(label(
+                            format!(
+                                "{} × {} · {} cells",
+                                pattern.width,
+                                pattern.height,
+                                pattern.cells.len()
+                            ),
+                            11.0,
+                            Token::Muted,
+                        ));
+                    });
+                });
+            }
+        });
+    *revision = Some(sim.app.library_revision());
+}
+
+/// A bounded thumbnail keeps large imported patterns from spawning thousands of UI entities.
+pub(super) fn thumbnail(
+    cells: &[(usize, usize)],
+    width: usize,
+    height: usize,
+    colors: &crate::shared::BoardColors,
+) -> Image {
+    thumbnail_sized(cells, width, height, colors, UVec2::splat(64), 6.0, 10.0)
+}
+
+/// Draws the pattern centred in a `canvas`-sized texture, at least `margin`
+/// texels from its edges, with cells at most `max_cell` texels across.
+pub(super) fn thumbnail_sized(
+    cells: &[(usize, usize)],
+    width: usize,
+    height: usize,
+    colors: &crate::shared::BoardColors,
+    canvas: UVec2,
+    margin: f32,
+    max_cell: f32,
+) -> Image {
+    let live = crate::render_plugin::color_to_texel(colors.live);
+    let (canvas_width, canvas_height) = (canvas.x as usize, canvas.y as usize);
+    let mut image = Image::new_fill(
+        Extent3d {
+            width: canvas.x,
+            height: canvas.y,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &crate::render_plugin::color_to_texel(colors.dead),
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::nearest();
+    let scale = ((canvas.x as f32 - 2.0 * margin) / width.max(1) as f32)
+        .min((canvas.y as f32 - 2.0 * margin) / height.max(1) as f32)
+        .min(max_cell);
+    // Leave a one-pixel gap between cells only where cells are big enough to spare it.
+    let cell = if scale >= 3.0 {
+        (scale - 1.0) as usize
+    } else {
+        scale.ceil() as usize
+    };
+    let x_pad = (canvas.x as f32 - width as f32 * scale) / 2.0;
+    let y_pad = (canvas.y as f32 - height as f32 * scale) / 2.0;
+    if let Some(data) = &mut image.data {
+        for &(x, y) in cells {
+            let left = (x_pad + x as f32 * scale) as usize;
+            let top = (y_pad + height.saturating_sub(y + 1) as f32 * scale) as usize;
+            for py in top..(top + cell).min(canvas_height) {
+                for px in left..(left + cell).min(canvas_width) {
+                    let offset = (py * canvas_width + px) * 4;
+                    data[offset..offset + 4].copy_from_slice(&live);
+                }
+            }
+        }
+    }
+    image
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

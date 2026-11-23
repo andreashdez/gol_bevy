@@ -31,11 +31,24 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
       - ui_input.rs
       - canvas_view.rs
       - render_plugin.rs
+      - render_plugin
+        - board_texture.rs
+        - finite_view.rs
+        - preview.rs
+        - frame_loop.rs
       - plane_view.rs
       - input_plugin.rs
+      - input_plugin
+        - shortcuts.rs
+        - pointer.rs
+        - cursor.rs
+        - camera.rs
       - simulation_plugin.rs
       - native_ui_plugin.rs
       - native_ui_plugin
+        - layout.rs
+        - actions.rs
+        - sync.rs
         - accessibility.rs
         - controls.rs
         - dialogs.rs
@@ -85,14 +98,30 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
 | `selection`             | The Select tool's rectangle, and copying it or the board as RLE               |
 | `playback`              | Running, speed, settling and pausing by itself, and the population history    |
 
+`render_plugin` and `input_plugin` keep their plugin wiring in the parent file, and their systems in modules of their own:
+
+| Module                  | Responsibility                                                                |
+|-------------------------|-------------------------------------------------------------------------------|
+| `board_texture`         | The board's tiles, the cell ages they show, and painting the cells that changed |
+| `finite_view`           | The grid, the edge walls and their pulse, and resizing the board to its settings |
+| `preview`               | The stamp under the pointer, the hovered cell, and the selection rectangle    |
+| `frame_loop`            | A headless copy of the frame, for the frame-loop benchmark                    |
+| `shortcuts`             | Keyboard shortcuts, and finishing a paste                                     |
+| `pointer`               | Drawing, erasing, stamping, and selecting with the mouse                      |
+| `cursor`                | The keyboard's cell cursor                                                    |
+| `camera`                | Zooming, panning, and fitting the view                                        |
+
 `native_ui_plugin` builds the interface and keeps it in step with the app. Its parts are modules of their own:
 
 | Module                  | Responsibility                                                                |
 |-------------------------|-------------------------------------------------------------------------------|
+| `layout`                | Spawning the interface, the canvas and panel rectangles, and where the UI takes the pointer |
+| `actions`               | What each button does, shared by clicks and assistive technology              |
+| `sync`                  | Keeping buttons, labels, and the status bar in step with the app each frame   |
 | `toolbar`               | The single toolbar row, and the menu that takes the workspace controls in narrow windows |
 | `controls`              | Everyday controls, shortcut hints, and first-use guidance                     |
 | `speed`                 | The speed field: scrubbing, direct entry, step buttons, and the ∞ toggle      |
-| `palette`               | Pattern search, library groups, and the stamp preview                         |
+| `palette`               | Pattern search, library groups and their thumbnails, and the stamp preview    |
 | `dialogs`               | The import, export, settings, help, and diagnostics dialogs, and their drafts |
 | `minimap`               | The map of the whole board shown while part of it is out of view              |
 | `sparkline`             | The line of recent population in the status bar                               |
