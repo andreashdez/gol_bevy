@@ -51,6 +51,24 @@ struct SettingsPersistence {
     last_saved: Option<PersistedSettings>,
     /// The latest observed state and when it is eligible for saving (or retry).
     pending: Option<(PersistedSettings, Duration)>,
+    /// The file at `path` holds the settings as loaded, so their first snapshot
+    /// is already saved and launching doesn't rewrite the file.
+    saved_as_loaded: bool,
+    /// Lines of the file the app doesn't write itself, such as comments or keys
+    /// of a newer version, written back as they were.
+    kept_lines: Vec<String>,
+}
+
+impl SettingsPersistence {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            last_saved: None,
+            pending: None,
+            saved_as_loaded: false,
+            kept_lines: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -141,6 +159,14 @@ struct ParsedSettings {
     grid: Option<bool>,
     cell_age: Option<bool>,
     theme: Option<Theme>,
+    kept_lines: Vec<String>,
+}
+
+/// What loading leaves for later: the settings that wait for the simulation,
+/// and the lines to keep, if a file was read.
+struct LoadedSettings {
+    simulation: SimulationSettings,
+    kept_lines: Option<Vec<String>>,
 }
 
 fn setup_settings_persistence(
@@ -164,7 +190,7 @@ fn setup_settings_persistence(
         );
     }
 
-    let simulation = load_settings(
+    let loaded = load_settings(
         &source,
         &mut board_settings,
         &mut grid,
@@ -172,11 +198,13 @@ fn setup_settings_persistence(
         &mut theme,
     );
 
-    commands.insert_resource(simulation);
+    commands.insert_resource(loaded.simulation);
+    let read = loaded.kept_lines.is_some();
     commands.insert_resource(SettingsPersistence {
-        path,
-        last_saved: None,
-        pending: None,
+        // Settings read from an older file are saved to the new one.
+        saved_as_loaded: read && source == path,
+        kept_lines: loaded.kept_lines.unwrap_or_default(),
+        ..SettingsPersistence::new(path)
     });
 }
 
@@ -188,14 +216,14 @@ fn apply_simulation_settings(settings: Res<SimulationSettings>, sim: Option<ResM
 }
 
 /// Applies what can be applied before the world is built, and returns the
-/// settings that have to wait for the simulation.
+/// settings that have to wait for the simulation, with the lines to keep.
 fn load_settings(
     path: &std::path::Path,
     board_settings: &mut BoardSettings,
     grid: &mut GridOverlay,
     cell_age: &mut CellAge,
     theme: &mut Theme,
-) -> SimulationSettings {
+) -> LoadedSettings {
     match std::fs::read_to_string(path) {
         Ok(contents) => {
             let settings = parse_settings_from_toml(&contents);
@@ -217,7 +245,10 @@ fn load_settings(
             if let Some(saved) = settings.theme {
                 *theme = saved;
             }
-            settings.simulation
+            LoadedSettings {
+                simulation: settings.simulation,
+                kept_lines: Some(settings.kept_lines),
+            }
         }
         Err(err) => {
             if err.kind() != std::io::ErrorKind::NotFound {
@@ -227,7 +258,10 @@ fn load_settings(
                     err
                 );
             }
-            SimulationSettings::default()
+            LoadedSettings {
+                simulation: SimulationSettings::default(),
+                kept_lines: None,
+            }
         }
     }
 }
@@ -270,6 +304,9 @@ fn persist_settings(
     let Some(current) = state.snapshot() else {
         return;
     };
+    if std::mem::take(&mut persistence.saved_as_loaded) {
+        persistence.last_saved = Some(current);
+    }
     if persistence.last_saved == Some(current) {
         persistence.pending = None;
         return;
@@ -336,6 +373,10 @@ fn persist_settings(
     if let Some(seed) = simulation.random_seed {
         contents.push_str(&format!("random_seed = {seed}\n"));
     }
+    for line in &persistence.kept_lines {
+        contents.push_str(line);
+        contents.push('\n');
+    }
     if let Err(err) = crate::atomic_file::write(&persistence.path, contents.as_bytes()) {
         warn!(
             "Failed to persist settings to {}: {}",
@@ -349,18 +390,20 @@ fn persist_settings(
     persistence.pending = None;
 }
 
-/// Minimal key/value reader for the handful of scalars this app persists.
+/// Minimal key/value reader for the handful of scalars this app persists. Lines
+/// it doesn't write itself are kept, so a save doesn't lose them.
 fn parse_settings_from_toml(contents: &str) -> ParsedSettings {
     let mut parsed = ParsedSettings::default();
     let mut cols = None;
     let mut rows = None;
 
-    for line in contents.lines() {
-        let line = line.split('#').next().unwrap_or("").trim();
-        if line.is_empty() {
-            continue;
-        }
+    for raw in contents.lines() {
+        let keep = |parsed: &mut ParsedSettings| parsed.kept_lines.push(raw.trim_end().to_owned());
+        let line = raw.split('#').next().unwrap_or("").trim();
         let Some((key, raw_value)) = line.split_once('=') else {
+            if !raw.trim().is_empty() {
+                keep(&mut parsed);
+            }
             continue;
         };
         let value = unquote(raw_value.trim());
@@ -384,7 +427,9 @@ fn parse_settings_from_toml(contents: &str) -> ParsedSettings {
                     value.parse::<u8>().ok().filter(|&density| density <= 100)
             }
             "random_seed" => parsed.simulation.random_seed = value.parse::<u64>().ok(),
-            _ => {}
+            // Settings of earlier versions, which nothing reads any more.
+            "palette" | "layout_preset" => {}
+            _ => keep(&mut parsed),
         }
     }
 
@@ -512,11 +557,7 @@ mod persistence_tests {
         world.init_resource::<CellAge>();
         world.init_resource::<Theme>();
         world.insert_resource(Simulation::new(crate::app::App::new(16, 16)));
-        world.insert_resource(SettingsPersistence {
-            path,
-            last_saved: None,
-            pending: None,
-        });
+        world.insert_resource(SettingsPersistence::new(path));
         world.init_resource::<Time<Real>>();
         world.init_resource::<Messages<AppExit>>();
     }
@@ -526,6 +567,47 @@ mod persistence_tests {
             .resource_mut::<Time<Real>>()
             .advance_by(Duration::from_millis(milliseconds));
         world.run_system_once(persist_settings).unwrap();
+    }
+
+    #[test]
+    fn launching_leaves_a_file_that_holds_the_loaded_settings_alone() {
+        let directory = crate::test_support::TestDirectory::new();
+        let path = directory.0.join("settings.toml");
+        std::fs::write(&path, "marker").unwrap();
+        let mut world = persistence_world(path.clone());
+        world.resource_mut::<SettingsPersistence>().saved_as_loaded = true;
+        advance(&mut world, 0);
+        advance(&mut world, 1000);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "marker");
+
+        // A change is saved as usual.
+        world.resource_mut::<GridOverlay>().enabled = true;
+        advance(&mut world, 0);
+        advance(&mut world, 500);
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(parse_settings_from_toml(&saved).grid, Some(true));
+    }
+
+    #[test]
+    fn a_save_keeps_comments_and_keys_it_does_not_know() {
+        let directory = crate::test_support::TestDirectory::new();
+        let path = directory.0.join("settings.toml");
+        let parsed = parse_settings_from_toml(
+            "# my settings\ngrid = false\nfuture_option = \"on\"\nlayout_preset = \"minimal\"\n",
+        );
+        let kept = vec![
+            "# my settings".to_owned(),
+            "future_option = \"on\"".to_owned(),
+        ];
+        assert_eq!(parsed.kept_lines, kept);
+
+        let mut world = persistence_world(path.clone());
+        world.resource_mut::<SettingsPersistence>().kept_lines = parsed.kept_lines;
+        advance(&mut world, 0);
+        advance(&mut world, 500);
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(parse_settings_from_toml(&saved).kept_lines, kept);
+        assert!(!saved.contains("layout_preset"));
     }
 
     #[test]
@@ -665,6 +747,7 @@ mod persistence_tests {
         let mut theme = Theme::default();
         // A file from before the simulation settings were saved leaves them alone.
         let legacy = load_settings(&path, &mut board, &mut grid, &mut cell_age, &mut theme);
+        let legacy = legacy.simulation;
         assert_eq!((board.cols, board.rows), (512, 256));
         assert!(!board.fill_canvas);
         assert_eq!(legacy, SimulationSettings::default());
@@ -688,11 +771,7 @@ mod persistence_tests {
         world.insert_resource(CellAge { enabled: false });
         world.insert_resource(Theme::HighContrast);
         world.insert_resource(Simulation::new(app));
-        world.insert_resource(SettingsPersistence {
-            path: path.clone(),
-            last_saved: None,
-            pending: None,
-        });
+        world.insert_resource(SettingsPersistence::new(path.clone()));
         world.init_resource::<Time<Real>>();
         world.init_resource::<Messages<AppExit>>();
         world.run_system_once(persist_settings).unwrap();
@@ -709,7 +788,8 @@ mod persistence_tests {
             &mut loaded_grid,
             &mut loaded_cell_age,
             &mut loaded_theme,
-        );
+        )
+        .simulation;
         assert_eq!((loaded_board.cols, loaded_board.rows), (128, 64));
         assert!(loaded_board.fill_canvas);
         assert!(loaded_grid.enabled);

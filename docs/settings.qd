@@ -70,10 +70,11 @@ The board's cells, undo history, and imported patterns are not stored in the set
 file. Use [workspace files](editing.qd#save-and-reopen-workspaces) to save your board
 and imported library explicitly.
 
-Settings save after 500 ms without further changes. Normal app exit, including window
-close, saves pending changes immediately. The app writes a temporary file beside the
-settings file and replaces the destination only after flushing the complete contents.
-Failed writes retain the previous settings file and retry after a delay.
+Settings save after 500 ms without further changes, and only once something has changed:
+launching the app doesn't rewrite the file. Normal app exit, including window close, saves
+pending changes immediately. The app writes a temporary file beside the settings file and
+replaces the destination only after flushing the complete contents. Failed writes retain the
+previous settings file and retry after a delay.
 
 ## The settings file
 
@@ -118,10 +119,10 @@ random_density_percent = 25
 | `random_density_percent` | Whole number from 0–100; 25 if missing or invalid |
 | `random_seed` | Whole number from 0–18446744073709551615; omit for a fresh seed |
 
-You can edit the file while the app is closed. Entries that are missing or can't be read keep their defaults, so a damaged file never stops the app from starting. Without a saved board size, the board is sized to fill the window.
+You can edit the file while the app is closed. Entries that are missing or can't be read keep their defaults, so a damaged file never stops the app from starting. Without a saved board size, the board is sized to fill the window. Comments, and lines the app doesn't recognise, such as settings from a newer version, are kept at the end of the file when it saves; a comment on the same line as a setting is not.
 
 ### Moving from earlier versions
 
 Earlier versions saved settings as `ui_layout.toml`, and before that in `~/.config/gol-bevy` on every platform. If `settings.toml` doesn't exist yet, gol-bevy reads `ui_layout.toml` from the same folder, or else from `~/.config/gol-bevy`, and the first save writes `settings.toml`. Old files are left alone, so you can delete them afterwards.
 
-Old files may also hold `palette` or `layout_preset`. These are ignored now, since the palette follows the Stamp tool.
+Old files may also hold `palette` or `layout_preset`. These are ignored now, since the palette follows the Stamp tool, and the next save leaves them out.
