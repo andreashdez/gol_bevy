@@ -10,8 +10,11 @@ Add a line under Unreleased in the same pull request as the change; see
 
 - The app stops updating while nothing on screen changes: a paused, untouched window no
   longer redraws every frame, so it uses next to no CPU or GPU. It updates on input, and
-  every frame while the board runs, a notice shows, a file loads or saves, or a screen
-  reader is connected.
+  every frame while the board runs at max speed, a notice shows, a file loads or saves, or
+  a screen reader is connected.
+- A run at a set speed draws two frames a generation rather than one every display
+  refresh, so it uses far less CPU: at 10 generations a second, about a quarter of what it
+  did.
 - Launching no longer rewrites an unchanged `settings.toml`, and saving keeps comments and
   lines the app doesn't recognise, such as settings from a newer version.
 

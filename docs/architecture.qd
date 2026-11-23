@@ -179,9 +179,10 @@ Keyboard shortcuts and mouse editing run later, in the `Input` set of `PostUpdat
 
 ## Idle frames
 
-Bevy updates and draws every frame by default, which keeps a paused window busy. `FramePacingPlugin` switches Bevy's `WinitSettings` between two modes at the end of each frame:
+Bevy updates and draws every frame by default, which keeps a paused window busy. `FramePacingPlugin` switches Bevy's `WinitSettings` between three modes at the end of each frame:
 
-- **Busy**: every frame, as Bevy's default does, while the board runs, a notice or a pulse fades, a key or button is held, a text field has focus, a file is being read or written, or Diagnostics is on, and for `SETTLE` (one second) after any of those or any input. Edits made from input are drawn a frame later, and a tooltip, the minimap, and saving settings each follow input after a short delay of their own. Each of those delays checks at compile time that it fits in `SETTLE`.
+- **Busy**: every frame, as Bevy's default does, while the board runs at max speed, a notice or a pulse fades, a key or button is held, a text field has focus, a file is being read or written, or Diagnostics is on, and for `SETTLE` (one second) after any of those or any input. Edits made from input are drawn a frame later, and a tooltip, the minimap, and saving settings each follow input after a short delay of their own. Each of those delays checks at compile time that it fits in `SETTLE`.
+- **Paced**: while a run at a set speed is all that changes, two updates a generation, and at least ten a second. Two rather than one, so every generation is shown however the frames fall. A profile of a small board running at 40 generations a second put 4% of the busy CPU time in the app's own systems and the rest in Bevy's per-frame work and rendering, so the number of frames is what costs: at 10 generations a second this took the app from about 98% of a CPU core to 22%.
 - **Idle**: an update only when input arrives, or every 5 seconds as a backstop (60 seconds while another window has focus).
 
 Anything that changes on screen without input, such as a background task finishing, writes a `StayAwake` message on every frame it is busy. With a screen reader connected the app stays busy, as its requests reach the app without waking it.

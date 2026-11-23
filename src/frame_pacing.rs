@@ -1,5 +1,6 @@
-//! How often the app updates: every frame while anything on screen moves, and
-//! otherwise only when input arrives, so an idle window costs no CPU or GPU.
+//! How often the app updates: every frame while anything on screen moves,
+//! twice a generation while only a run at a set speed does, and otherwise only
+//! when input arrives, so an idle window costs no CPU or GPU.
 use crate::{
     feedback::EditFeedback,
     shared::{DiagnosticsOverlay, Simulation},
@@ -51,6 +52,24 @@ fn idle() -> WinitSettings {
     }
 }
 
+/// The longest wait between paced frames, so a slow run still updates often
+/// enough for the minimap and the measured rate. It stays under the most a
+/// frame's virtual clock may advance (250 ms by default), or slow runs would
+/// lose time.
+const PACED_FRAME_MAX: Duration = Duration::from_millis(100);
+
+/// While a run at a set speed is all that changes: two frames a generation, so
+/// every generation shows however the frames fall, rather than one a display
+/// refresh. The frame work of Bevy and the GPU, not the board, is most of what
+/// a frame costs, so on a small board this is most of the saving.
+fn paced(generation: Duration) -> WinitSettings {
+    let frame = (generation / 2).min(PACED_FRAME_MAX);
+    WinitSettings {
+        focused_mode: UpdateMode::reactive_low_power(frame),
+        unfocused_mode: UpdateMode::reactive_low_power(frame),
+    }
+}
+
 /// What changes on screen without input, read where it is kept.
 #[derive(bevy::ecs::system::SystemParam)]
 struct Activity<'w, 's> {
@@ -65,7 +84,8 @@ struct Activity<'w, 's> {
 
 impl Activity<'_, '_> {
     fn any(&self) -> bool {
-        self.sim.app.is_running()
+        // Max speed steps for as long as each frame allows.
+        (self.sim.app.is_running() && self.sim.app.is_max_speed())
             // A notice counts down, and a paste may still be on its way.
             || self.feedback.is_active()
             // The diagnostics show the frame rate.
@@ -78,6 +98,12 @@ impl Activity<'_, '_> {
                 .focus
                 .get()
                 .is_some_and(|entity| self.text_fields.contains(entity))
+    }
+
+    /// The time between generations of a run at a set speed.
+    fn generation_interval(&self) -> Option<Duration> {
+        let app = &self.sim.app;
+        (app.is_running() && !app.is_max_speed()).then(|| Duration::from_millis(app.tick_rate_ms()))
     }
 }
 
@@ -113,6 +139,8 @@ fn pace_frames(
     }
     let wanted = if now < *settle_until || accessibility.get() {
         busy()
+    } else if let Some(generation) = activity.generation_interval() {
+        paced(generation)
     } else {
         idle()
     };
@@ -176,17 +204,38 @@ mod tests {
     }
 
     #[test]
-    fn a_running_board_keeps_frames_coming_but_its_own_redraw_requests_do_not() {
+    fn a_run_paces_frames_to_its_speed_but_its_own_redraw_requests_do_not_count() {
         let mut world = world();
         let pace = world.register_system(pace_frames);
-        world.resource_mut::<Simulation>().app.toggle_running();
-        world.run_system(pace).unwrap();
-        assert!(updates_continuously(&world));
+        let mode = |world: &World| world.resource::<WinitSettings>().focused_mode;
+        let run = |world: &mut World, change: &dyn Fn(&mut GolApp)| {
+            change(&mut world.resource_mut::<Simulation>().app);
+            world.run_system(pace).unwrap();
+        };
 
-        world.resource_mut::<Simulation>().app.toggle_running();
+        // Two frames a generation, and at least ten a second.
+        run(&mut world, &|app| {
+            app.set_tick_rate_ms(100);
+            app.toggle_running();
+        });
+        let frame = |ms| UpdateMode::reactive_low_power(Duration::from_millis(ms));
+        assert_eq!(mode(&world), frame(50));
+        run(&mut world, &|app| {
+            app.set_tick_rate_ms(1000);
+        });
+        assert_eq!(mode(&world), frame(100));
+
+        // Max speed steps every frame it gets.
+        run(&mut world, &|app| {
+            app.set_max_speed();
+        });
+        assert!(updates_continuously(&world));
+        assert!(PACED_FRAME_MAX < Time::<Virtual>::default().max_delta());
+
+        run(&mut world, &|app| app.toggle_running());
         world.resource_mut::<Time<Real>>().advance_by(SETTLE);
         world.write_message(WindowEvent::RequestRedraw(bevy::window::RequestRedraw));
-        world.run_system(pace).unwrap();
-        assert!(!updates_continuously(&world), "paused and settled");
+        run(&mut world, &|_| {});
+        assert_eq!(mode(&world), idle().focused_mode, "paused and settled");
     }
 }
