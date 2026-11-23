@@ -6,6 +6,20 @@ Add a line under Unreleased in the same pull request as the change; see
 
 ## [Unreleased]
 
+### Changed
+
+- The app stops updating while nothing on screen changes: a paused, untouched window no
+  longer redraws every frame, so it uses next to no CPU or GPU. It updates on input, and
+  every frame while the board runs, a notice shows, a file loads or saves, or a screen
+  reader is connected.
+
+### Fixed
+
+- A fast drag with Draw or Erase draws a continuous line, instead of a cell where the
+  pointer was each frame.
+- Copying or clearing a selection on an unbounded board no longer holds every selected
+  cell in memory at once, which could run out of memory on a large pattern.
+
 ## [0.3.0] - 2026-11-21
 
 ### Added
