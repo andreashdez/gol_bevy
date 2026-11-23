@@ -268,13 +268,23 @@ fn scattered_app(chunks: i64) -> App {
     app
 }
 
+/// A blinker standing on the east edge of a chunk, whose next generation reaches
+/// into the chunk beside it.
+fn blinker_on_a_chunk_edge(app: &mut App) {
+    for y in 1..=3 {
+        app.populate_board(63, y);
+    }
+}
+
 #[test]
-fn a_full_unbounded_board_stops_the_run_until_something_frees_chunks() {
-    let mut app = scattered_app(3);
-    app.chunk_budget = 3;
+fn a_generation_past_the_budget_stops_the_run_until_something_frees_chunks() {
+    let mut app = unbounded_app();
+    blinker_on_a_chunk_edge(&mut app);
+    app.chunk_budget = 1;
     app.toggle_running();
     app.increment_epoch();
     assert_eq!(app.epoch, 0, "no generation ran");
+    assert!(app.board.is_alive(63, 1) && !app.board.is_alive(64, 2));
     assert!(!app.is_running());
     assert_eq!(app.take_auto_paused(), Some(AutoPause::BoardFull));
     assert_eq!(app.take_auto_paused(), None);
@@ -291,7 +301,8 @@ fn a_full_unbounded_board_stops_the_run_until_something_frees_chunks() {
     assert_eq!(app.epoch, 0);
     assert_eq!(app.take_auto_paused(), Some(AutoPause::BoardFull));
 
-    app.depopulate_board(0, 0);
+    // What is left dies out within its chunk.
+    app.depopulate_board(63, 1);
     app.increment_epoch();
     assert_eq!(app.epoch, 1);
     assert_eq!(app.take_auto_paused(), None);
@@ -883,7 +894,7 @@ fn undo_restores_clear_and_generation_then_simulation_can_continue() {
     app.increment_epoch();
     let expected = app.board.snapshot_cells();
     let mut next = app.board.clone();
-    next.step();
+    next.step_within(usize::MAX).unwrap();
     app.clear_board();
     app.toggle_running();
     app.increment_epoch();

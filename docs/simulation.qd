@@ -95,4 +95,4 @@ All three are saved between runs. Unlike the rule, switching between **Wrap** an
 
 Moving to or from **Unbounded** is an edit, because leaving keeps only the cells that fit the board. Undo brings the rest back, with the board you left.
 
-Memory still runs out on an unbounded board, so a run pauses with a notice once the board reaches 1,048,576 chunks of 64 × 64 cells, which is about half a gigabyte of them. Clearing, undoing, or erasing enough to free chunks lets it carry on. Anything that sends out gliders never repeats, so **Pause when settled** won't trigger.
+Memory still runs out on an unbounded board, so a run pauses with a notice, and the board stays as it was, when the next generation would take it past 1,048,576 chunks of 64 × 64 cells, which is about half a gigabyte of them. Clearing, undoing, or erasing enough to free chunks lets it carry on. Anything that sends out gliders never repeats, so **Pause when settled** won't trigger.

@@ -2,7 +2,7 @@
 //! board that settled or filled up, and the population of the run so far.
 
 use super::App;
-use crate::{settle::Settled, universe::Universe};
+use crate::settle::Settled;
 use std::{collections::VecDeque, fmt};
 
 /// Generations of population kept for the status bar's line.
@@ -115,26 +115,23 @@ impl App {
         self.chunk_budget = chunks;
     }
 
-    /// Whether the unbounded board has outgrown what a run may use. Anything that
-    /// frees chunks lets playback go on.
-    fn board_is_full(&self) -> bool {
-        matches!(&self.board, Universe::Unbounded(plane) if plane.chunk_count() >= self.chunk_budget)
-    }
-
+    /// Runs a generation, unless it would take the unbounded board past what a
+    /// run may use: then playback pauses and the board stays as it was, until an
+    /// edit makes room.
     pub fn increment_epoch(&mut self) {
-        if self.board_is_full() {
-            self.running = false;
-            self.auto_paused = Some(AutoPause::BoardFull);
-            return;
-        }
         if let Some(res) = self.epoch.checked_add(1) {
-            if self.run_start.is_none() {
-                self.run_start = Some(self.current_snapshot());
-            }
-            self.epoch = res;
+            let start = self.run_start.is_none().then(|| self.current_snapshot());
             let before = self.board.live_cells_count();
             let fingerprint = self.board.fingerprint();
-            self.board.step();
+            if self.board.step_within(self.chunk_budget).is_err() {
+                self.running = false;
+                self.auto_paused = Some(AutoPause::BoardFull);
+                return;
+            }
+            if start.is_some() {
+                self.run_start = start;
+            }
+            self.epoch = res;
             self.last_step = Some((res, before, self.board.live_cells_count()));
             if self.population_history.is_empty() {
                 self.population_history.push_back(before);

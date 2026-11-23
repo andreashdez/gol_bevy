@@ -95,7 +95,7 @@ pub struct App {
 
     /// The size the board has, or has to return to from the unbounded board.
     finite_size: (usize, usize),
-    /// Chunks of the unbounded board that stop a run.
+    /// Chunks a generation may not take the unbounded board past.
     chunk_budget: usize,
     /// The part of the unbounded board on screen.
     view_cells: Option<CellRect>,

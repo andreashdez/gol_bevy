@@ -5,7 +5,7 @@ use crate::{
     board::{Board, BoundaryMode, PackedCells, Rule},
     patterns::{PatternParseError, RleWriter, read_rle_runs},
     sparse_board::{
-        CellRect, PLANE_CHUNKS_MAX, PLANE_EXPORT_CELLS_MAX, SparseBoard, SparseSnapshot,
+        CellRect, PLANE_CHUNKS_MAX, PLANE_EXPORT_CELLS_MAX, PlaneFull, SparseBoard, SparseSnapshot,
         UnboundedRuleError,
     },
 };
@@ -140,10 +140,12 @@ impl Universe {
         }
     }
 
-    pub fn step(&mut self) -> bool {
+    /// Steps unless an unbounded board would end up with more than `max_chunks`
+    /// chunks, in which case it is left as it was.
+    pub fn step_within(&mut self, max_chunks: usize) -> Result<bool, PlaneFull> {
         match self {
-            Self::Finite(board) => board.step(),
-            Self::Unbounded(plane) => plane.step(),
+            Self::Finite(board) => Ok(board.step()),
+            Self::Unbounded(plane) => plane.step_within(max_chunks),
         }
     }
 
@@ -390,13 +392,18 @@ fn plane_within(
     let mut cells = 0usize;
     let (_, _, rule) = read_rle_runs(source, |x, y, length| {
         cells = cells.saturating_add(length);
-        if cells > cells_max || plane.chunk_count() >= chunks_max {
+        if cells > cells_max {
             return Err(PatternParseError::PlaneTooLarge);
         }
         if !within_reach(origin.0, x + length) || !within_reach(origin.1, y + 1) {
             return Err(PatternParseError::PlaneOutOfReach);
         }
-        plane.populate_run(origin.0 + x as i64, origin.1 + y as i64, length);
+        let (x, y) = (origin.0 + x as i64, origin.1 + y as i64);
+        // Counted before it is written, as one run can cross many chunks.
+        if plane.chunk_count() + plane.chunks_added_by_run(x, y, length) > chunks_max {
+            return Err(PatternParseError::PlaneTooLarge);
+        }
+        plane.populate_run(x, y, length);
         Ok(())
     })?;
     Ok((plane, rule))
@@ -467,6 +474,11 @@ mod tests {
         let spread = "x = 201, y = 1\no99bo99bo!";
         assert!(plane_within(spread, (0, 0), 8, 3).is_ok());
         assert!(too_long(plane_within(spread, (0, 0), 8, 2)));
+
+        // One run across three chunks is counted before any of it is written.
+        let wide = "x = 129, y = 1\n129o!";
+        assert!(plane_within(wide, (0, 0), 200, 3).is_ok());
+        assert!(too_long(plane_within(wide, (0, 0), 200, 2)));
     }
 
     #[test]

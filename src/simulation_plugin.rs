@@ -149,7 +149,10 @@ mod tests {
 
         let mut sim = running_simulation();
         sim.app.set_unbounded().unwrap();
-        sim.app.populate_board(3, 3);
+        // A blinker on a chunk's east edge reaches into the next chunk.
+        for y in 1..=3 {
+            sim.app.populate_board(63, y);
+        }
         sim.app.set_chunk_budget(1);
         sim.app.set_max_speed();
         let mut world = World::new();

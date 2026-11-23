@@ -44,13 +44,19 @@ const DIRTY_CHUNKS_MAX: usize = 1 << 14;
 /// cut down once the pattern calms, rather than holding its peak for good.
 const CHANGE_SCRATCH_KEPT: usize = 1 << 10;
 
-/// Chunks a run may reach before it pauses. A chunk's cells take 512 bytes, so
-/// this is half a gigabyte of them, with its bookkeeping and history on top.
+/// Chunks a run may reach: a generation that would leave more doesn't run. A
+/// chunk's cells take 512 bytes, so this is half a gigabyte of them, with its
+/// bookkeeping and history on top.
 pub const PLANE_CHUNKS_MAX: usize = 1 << 20;
 
 /// Live cells that can be written out, as RLE or to a workspace file. Far more
 /// than fit a workspace unless most of them are in long runs.
 pub const PLANE_EXPORT_CELLS_MAX: usize = 1 << 26;
+
+/// Returned by a step that would have taken the plane past its chunk budget,
+/// which leaves the plane as it was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlaneFull;
 
 /// Returned for rules that would light every cell of the plane in one generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -317,6 +323,19 @@ impl SparseBoard {
         }
     }
 
+    /// How many chunks [`populate_run`](Self::populate_run) would add for the
+    /// same run, so a caller can refuse it first.
+    pub fn chunks_added_by_run(&self, x: i64, y: i64, len: usize) -> usize {
+        if len == 0 {
+            return 0;
+        }
+        let row = y >> CHUNK_BITS;
+        let (first, last) = (x >> CHUNK_BITS, (x + (len - 1) as i64) >> CHUNK_BITS);
+        (first..=last)
+            .filter(|&col| !self.chunks.contains_key(&(col, row)))
+            .count()
+    }
+
     pub fn clear(&mut self) -> bool {
         if self.chunks.is_empty() {
             return false;
@@ -378,18 +397,30 @@ impl SparseBoard {
     }
 
     pub fn step(&mut self) -> bool {
+        self.step_within(usize::MAX)
+            .expect("no plane holds usize::MAX chunks")
+    }
+
+    /// Steps unless the generation would leave more than `max_chunks` chunks,
+    /// in which case nothing changes. Returns whether any cell changed.
+    pub fn step_within(&mut self, max_chunks: usize) -> Result<bool, PlaneFull> {
         let threads = ComputeTaskPool::get_or_init(TaskPool::default).thread_num();
-        self.step_in_bands(|rows| threads.min(rows / MIN_BAND_ROWS))
+        self.step_in_bands(|rows| threads.min(rows / MIN_BAND_ROWS), max_chunks)
     }
 
     /// Evaluates the scheduled rows in as many bands of whole chunks as `bands`
     /// asks for, given the number of rows, each with about as many rows. Bands
     /// run in parallel on the compute task pool when there is more than one, and
     /// only read the chunks and stage their changes, which are applied once all
-    /// have finished, so no band can see another's half of the generation.
-    fn step_in_bands(&mut self, bands: impl FnOnce(usize) -> usize) -> bool {
+    /// have finished, so no band can see another's half of the generation, and
+    /// a generation that would outgrow `max_chunks` can be dropped whole.
+    fn step_in_bands(
+        &mut self,
+        bands: impl FnOnce(usize) -> usize,
+        max_chunks: usize,
+    ) -> Result<bool, PlaneFull> {
         if self.active.is_empty() {
-            return false;
+            return Ok(false);
         }
 
         let mut work = std::mem::take(&mut self.work_scratch);
@@ -421,6 +452,17 @@ impl SparseBoard {
                 })
         };
 
+        if self.outgrows(&changes, max_chunks) {
+            for list in &mut changes {
+                list.clear();
+            }
+            // Scheduled again, so the same generation runs once there is room.
+            self.active.extend(work.iter().copied());
+            self.work_scratch = work;
+            self.change_scratch = changes;
+            return Err(PlaneFull);
+        }
+
         let mut changed = false;
         for list in &mut changes {
             changed |= !list.is_empty();
@@ -437,7 +479,25 @@ impl SparseBoard {
         self.change_scratch = changes;
         self.live_count = self.live_count.saturating_add_signed(live_delta);
         self.fingerprint ^= flips;
-        changed
+        Ok(changed)
+    }
+
+    /// Whether applying `changes` would leave more than `max_chunks` chunks.
+    fn outgrows(&self, changes: &[Vec<ChunkChange>], max_chunks: usize) -> bool {
+        let staged: usize = changes.iter().map(Vec::len).sum();
+        // Each change adds a chunk at most, so most generations need no count.
+        if self.chunks.len().saturating_add(staged) <= max_chunks {
+            return false;
+        }
+        let after = changes
+            .iter()
+            .flatten()
+            .fold(self.chunks.len(), |count, change| {
+                let held = self.chunks.contains_key(&change.key);
+                let kept = change.next != EMPTY_CHUNK;
+                count + usize::from(kept && !held) - usize::from(held && !kept)
+            });
+        after > max_chunks
     }
 
     fn apply(&mut self, change: &ChunkChange) {
@@ -1133,8 +1193,8 @@ mod tests {
         let mut serial = board_with(cells.iter().copied());
         let mut parallel = serial.clone();
         for _ in 0..30 {
-            serial.step_in_bands(|_| 1);
-            parallel.step_in_bands(|_| 4);
+            serial.step_in_bands(|_| 1, usize::MAX).unwrap();
+            parallel.step_in_bands(|_| 4, usize::MAX).unwrap();
         }
         assert_eq!(live_cells(&parallel), live_cells(&serial));
         assert_eq!(parallel.live_cells_count(), serial.live_cells_count());
@@ -1699,11 +1759,11 @@ mod tests {
         let mut board = board_with((0..busy_chunks).flat_map(blinker));
         let calm = board_with(blinker(0)).snapshot();
 
-        board.step_in_bands(|_| 1);
+        board.step_in_bands(|_| 1, usize::MAX).unwrap();
         assert!(scratch(&board) >= busy_chunks as usize);
 
         board.restore(calm);
-        board.step_in_bands(|_| 1);
+        board.step_in_bands(|_| 1, usize::MAX).unwrap();
         assert!(scratch(&board) < CHANGE_SCRATCH_KEPT);
         assert_eq!(live_cells(&board), sorted((9..12).map(|x| (x, 11))));
 
