@@ -143,6 +143,8 @@ impl Plugin for NativeDialogsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Drafts>()
             .init_resource::<FileDialog>()
+            .add_message::<crate::frame_pacing::StayAwake>()
+            .add_systems(Update, files::keep_awake_while_working)
             .add_observer(dialog_action)
             .add_observer(density_changed);
     }

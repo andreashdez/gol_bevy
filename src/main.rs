@@ -3,6 +3,7 @@
 
 use bevy::{prelude::*, window::WindowResolution};
 use gol_bevy::canvas_view::CanvasViewPlugin;
+use gol_bevy::frame_pacing::FramePacingPlugin;
 use gol_bevy::input_plugin::InputPlugin;
 use gol_bevy::native_ui_plugin::NativeUiPlugin;
 use gol_bevy::plane_view::PlaneViewPlugin;
@@ -66,6 +67,7 @@ fn main() {
             NativeUiPlugin,
             InputPlugin,
             SimulationPlugin,
+            FramePacingPlugin,
         ))
         .run();
 }

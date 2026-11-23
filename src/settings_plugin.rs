@@ -11,7 +11,10 @@ use bevy::{
 };
 use std::{path::PathBuf, time::Duration};
 
+/// Saving waits for changes to stop. The save runs within the frames that keep
+/// coming after the change.
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
+const _: () = assert!(SAVE_DEBOUNCE.as_nanos() < crate::frame_pacing::SETTLE.as_nanos());
 
 pub struct SettingsPlugin;
 impl Plugin for SettingsPlugin {

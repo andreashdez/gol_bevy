@@ -4,6 +4,7 @@ use crate::app::{App as GolApp, EditTool};
 use crate::board::{BoundaryMode, DirtyCells, RowCells};
 use crate::canvas_view::cursor_world;
 use crate::coords::{CELL_SIZE, board_size_for_window};
+use crate::frame_pacing::StayAwake;
 use crate::shared::{
     BoardColors, BoardSettings, CellAge, GridOverlay, MainCamera, RedrawRequested, Simulation,
     StartupSet, Theme, UpdateSet,
@@ -461,6 +462,7 @@ impl Plugin for RenderPlugin {
             .init_resource::<Theme>()
             .init_resource::<CellAge>()
             .insert_resource(BoundaryWallPulse::default())
+            .add_message::<StayAwake>()
             .insert_resource(BoardTexture::default())
             .init_resource::<CellAges>()
             .init_resource::<StampGhostImage>()
@@ -472,6 +474,7 @@ impl Plugin for RenderPlugin {
                     sync_cells.in_set(UpdateSet::Render),
                     render_grid.in_set(UpdateSet::Render),
                     sync_boundary_wall_visibility.in_set(UpdateSet::Render),
+                    keep_awake_while_pulsing,
                     update_hovered_cell
                         .in_set(UpdateSet::Render)
                         .before(sync_pattern_preview)
@@ -898,6 +901,13 @@ fn sync_boundary_wall_visibility(
     for (mut wall_visibility, mut wall_sprite) in &mut wall_q {
         *wall_visibility = visibility;
         wall_sprite.color = wall_color;
+    }
+}
+
+/// The pulse fades on its own, long after the input that started it.
+fn keep_awake_while_pulsing(pulse: Res<BoundaryWallPulse>, mut awake: MessageWriter<StayAwake>) {
+    if pulse.active {
+        awake.write(StayAwake);
     }
 }
 

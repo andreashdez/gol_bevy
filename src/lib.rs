@@ -4,6 +4,7 @@ pub mod board;
 pub mod canvas_view;
 pub mod coords;
 pub mod feedback;
+pub mod frame_pacing;
 pub mod input_plugin;
 pub mod keybindings;
 pub mod native_ui_plugin;

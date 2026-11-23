@@ -23,6 +23,11 @@ impl EditFeedback {
         self.remaining = Self::DURATION;
     }
 
+    /// Whether a notice is still showing or a paste is still on its way.
+    pub fn is_active(&self) -> bool {
+        self.remaining > 0.0 || self.pending_paste.is_some()
+    }
+
     pub fn undo(&mut self, app: &mut GolApp) {
         self.show(if app.undo() {
             "Edit undone"

@@ -25,6 +25,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
       - shared.rs
       - keybindings.rs
       - feedback.rs
+      - frame_pacing.rs
       - coords.rs
       - settings_plugin.rs
       - ui_input.rs
@@ -64,6 +65,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
 | `shared`                | App-wide Bevy state: the simulation resource, system sets, overlay toggles, themes, board size settings |
 | `keybindings`           | Key binding constants, typed characters, and the Help and README controls lists built from them |
 | `feedback`              | Short notices shown after edits from the toolbar or the keyboard              |
+| `frame_pacing`          | Updating every frame while anything moves, and only on input once nothing does |
 | `coords`                | Cells in world space, cell size, zoom and pan limits, and fitting the camera to a board or pattern |
 | `settings_plugin`       | Loading and saving `settings.toml`                                            |
 | `ui_input`              | Deciding whether the pointer and keyboard belong to the UI or the board       |
@@ -107,7 +109,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
 .mermaid
     flowchart TD
         main[main.rs] --> DP[DefaultPlugins]
-        main --> PL["Project plugins<br/>RenderPlugin, PlaneViewPlugin, CanvasViewPlugin, SettingsPlugin,<br/>UiInputPlugin, NativeUiPlugin, InputPlugin, SimulationPlugin"]
+        main --> PL["Project plugins<br/>RenderPlugin, PlaneViewPlugin, CanvasViewPlugin, SettingsPlugin,<br/>UiInputPlugin, NativeUiPlugin, InputPlugin, SimulationPlugin, FramePacingPlugin"]
         PL --> S[(Simulation resource)]
         S --> APP[app::App]
         APP --> U[universe::Universe]
@@ -140,6 +142,15 @@ Every **frame**, `Update` runs these sets in order:
 | `Quit`       | Exit if asked                                                        |
 
 Keyboard shortcuts and mouse editing run later, in the `Input` set of `PostUpdate`, after Bevy has updated cameras and transforms. That way a click maps to the cell that was under the cursor in the frame it happened.
+
+## Idle frames
+
+Bevy updates and draws every frame by default, which keeps a paused window busy. `FramePacingPlugin` switches Bevy's `WinitSettings` between two modes at the end of each frame:
+
+- **Busy**: every frame, as Bevy's default does, while the board runs, a notice or a pulse fades, a key or button is held, a text field has focus, a file is being read or written, or Diagnostics is on, and for `SETTLE` (one second) after any of those or any input. Edits made from input are drawn a frame later, and a tooltip, the minimap, and saving settings each follow input after a short delay of their own. Each of those delays checks at compile time that it fits in `SETTLE`.
+- **Idle**: an update only when input arrives, or every 5 seconds as a backstop (60 seconds while another window has focus).
+
+Anything that changes on screen without input, such as a background task finishing, writes a `StayAwake` message on every frame it is busy. With a screen reader connected the app stays busy, as its requests reach the app without waking it.
 
 ## Shared resources
 

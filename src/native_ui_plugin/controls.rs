@@ -46,6 +46,10 @@ pub(super) struct Overlay {
     target: Option<Entity>,
     elapsed: f32,
 }
+/// Seconds the pointer rests on a control before its hint shows. The hint
+/// appears within the frames that keep coming after the pointer stops.
+const HINT_DELAY: f32 = 0.45;
+const _: () = assert!(HINT_DELAY < crate::frame_pacing::SETTLE.as_secs_f32());
 #[derive(Component)]
 pub(super) struct OverlayText;
 
@@ -356,13 +360,16 @@ pub(super) fn sync_overlays(
             continue;
         };
         let next = candidate.as_ref().map(|c| c.0);
+        // The frame a hover starts may follow a long idle wait, which must not
+        // count towards the delay.
         if overlay.target != next {
             overlay.target = next;
             overlay.elapsed = 0.0;
+        } else {
+            overlay.elapsed += time.delta_secs();
         }
-        overlay.elapsed += time.delta_secs();
         let keyboard = view.focus_visible.0 && view.focus.get() == next;
-        let show = candidate.is_some() && (overlay.elapsed >= 0.45 || keyboard);
+        let show = candidate.is_some() && (overlay.elapsed >= HINT_DELAY || keyboard);
         let rect = candidate.as_ref().map_or(Rect::default(), |c| c.2);
         let left = rect
             .min

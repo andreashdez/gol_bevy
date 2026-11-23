@@ -31,8 +31,10 @@ const MAX_PLANE_TEXELS: usize = MAX_TEXELS / 4;
 const PLANE_MAP_MARGIN: i64 = 16;
 /// A smaller frame could not be seen. It stays centred on the view.
 const MIN_FRAME: f32 = 5.0;
-/// Seconds between redraws. Sampling a large board is cheap but not free.
+/// Seconds between redraws. Sampling a large board is cheap but not free. An
+/// edit's redraw follows within the frames that keep coming after it.
 const REFRESH: f32 = 0.2;
+const _: () = assert!(REFRESH < crate::frame_pacing::SETTLE.as_secs_f32());
 /// How opaque a block with any live cell is, so a lone glider stays visible
 /// however many cells share its block.
 const MIN_LIVE_ALPHA: f32 = 0.5;

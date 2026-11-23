@@ -146,6 +146,16 @@ pub(in crate::native_ui_plugin) fn poll_file_dialog(mut state: DialogState) {
     }
 }
 
+/// The work finishes off the main thread, which can't wake the app itself.
+pub(in crate::native_ui_plugin) fn keep_awake_while_working(
+    dialog: Res<FileDialog>,
+    mut awake: MessageWriter<crate::frame_pacing::StayAwake>,
+) {
+    if dialog.0.is_some() {
+        awake.write(crate::frame_pacing::StayAwake);
+    }
+}
+
 /// Starts reading or writing the chosen file on the IO pool: serializing and
 /// writing a save, reading and decoding a workspace, or reading an `.rle` file.
 pub(super) fn finish_file_request(
