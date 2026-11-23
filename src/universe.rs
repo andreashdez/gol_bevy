@@ -5,7 +5,8 @@ use crate::{
     board::{Board, BoundaryMode, PackedCells, Rule},
     patterns::{PatternParseError, RleWriter, read_rle_runs},
     sparse_board::{
-        PLANE_CHUNKS_MAX, PLANE_EXPORT_CELLS_MAX, SparseBoard, SparseSnapshot, UnboundedRuleError,
+        CellRect, PLANE_CHUNKS_MAX, PLANE_EXPORT_CELLS_MAX, SparseBoard, SparseSnapshot,
+        UnboundedRuleError,
     },
 };
 
@@ -102,6 +103,40 @@ impl Universe {
         match self {
             Self::Finite(board) => board.clear(),
             Self::Unbounded(plane) => plane.clear(),
+        }
+    }
+
+    /// Calls `visit` with each run of live cells in `rect` as `(x, y, length)`,
+    /// row by row from the lowest and left to right. A run may come in pieces.
+    /// On the plane this reads only the chunks `rect` touches.
+    pub fn for_each_live_run_in(&self, rect: CellRect, mut visit: impl FnMut(i64, i64, usize)) {
+        match self {
+            Self::Finite(_) => {
+                for y in rect.bottom..rect.bottom + rect.height as i64 {
+                    for x in rect.left..rect.left + rect.width as i64 {
+                        if self.is_alive(x, y) {
+                            visit(x, y, 1);
+                        }
+                    }
+                }
+            }
+            Self::Unbounded(plane) => plane.for_each_live_run_in(rect, visit),
+        }
+    }
+
+    /// Kills every live cell in `rect`, and returns how many there were.
+    pub fn clear_rect(&mut self, rect: CellRect) -> usize {
+        match self {
+            Self::Finite(_) => {
+                let mut killed = 0;
+                for y in rect.bottom..rect.bottom + rect.height as i64 {
+                    for x in rect.left..rect.left + rect.width as i64 {
+                        killed += usize::from(self.depopulate(x, y));
+                    }
+                }
+                killed
+            }
+            Self::Unbounded(plane) => plane.clear_rect(rect),
         }
     }
 

@@ -515,7 +515,11 @@ impl SparseBoard {
     /// particular order. The cost follows whichever is fewer, the chunks in
     /// memory or those under the grid, so a view of empty space is free and so is
     /// one that dwarfs the pattern.
-    pub fn for_each_chunk_in(&self, grid: BlockGrid, mut visit: impl FnMut(ChunkKey, &Chunk)) {
+    pub fn for_each_chunk_in<'a>(
+        &'a self,
+        grid: BlockGrid,
+        mut visit: impl FnMut(ChunkKey, &'a Chunk),
+    ) {
         let ((first_x, first_y), (last_x, last_y)) = grid.chunk_span();
         let span = |first: i64, last: i64| (last - first + 1) as u128;
         if span(first_x, last_x) * span(first_y, last_y) > self.chunks.len() as u128 {
@@ -567,27 +571,41 @@ impl SparseBoard {
     /// Calls `visit` with each run of live cells as `(x, y, length)`, row by row
     /// from the lowest and left to right, the order RLE wants them in. A run
     /// across chunks comes in pieces.
-    pub fn for_each_live_run(&self, mut visit: impl FnMut(i64, i64, usize)) {
-        let mut chunks: Vec<_> = self.chunks.iter().collect();
-        chunks.sort_unstable_by_key(|(key, _)| (key.1, key.0));
-        for band in chunks.chunk_by(|a, b| a.0.1 == b.0.1) {
+    pub fn for_each_live_run(&self, visit: impl FnMut(i64, i64, usize)) {
+        let chunks = self.chunks.iter().map(|(&key, chunk)| (key, &**chunk));
+        visit_runs(chunks.collect(), None, visit);
+    }
+
+    /// The same for the runs inside `rect`, cut off at its sides. Like
+    /// [`for_each_chunk_in`](Self::for_each_chunk_in), it reads only the chunks
+    /// the rectangle touches.
+    pub fn for_each_live_run_in(&self, rect: CellRect, visit: impl FnMut(i64, i64, usize)) {
+        let mut chunks = Vec::new();
+        self.for_each_chunk_in(rect_grid(rect), |key, chunk| chunks.push((key, chunk)));
+        visit_runs(chunks, Some(rect), visit);
+    }
+
+    /// Kills every live cell in `rect` a chunk's row at a time, and returns how
+    /// many there were.
+    pub fn clear_rect(&mut self, rect: CellRect) -> usize {
+        let mut keys = Vec::new();
+        self.for_each_chunk_in(rect_grid(rect), |key, _| keys.push(key));
+        let mut killed = 0;
+        for key in keys {
+            let (left, bottom) = chunk_origin(key);
             for row in 0..CHUNK_SIZE as usize {
-                for (key, chunk) in band {
-                    let (left, bottom) = chunk_origin(**key);
-                    let mut cells = chunk[row];
-                    while cells != 0 {
-                        let start = cells.trailing_zeros();
-                        let length = (cells >> start).trailing_ones();
-                        visit(
-                            left + i64::from(start),
-                            bottom + row as i64,
-                            length as usize,
-                        );
-                        cells &= u64::MAX.checked_shl(start + length).unwrap_or(0);
-                    }
+                let mask = rect_mask(rect, left, bottom + row as i64);
+                if mask == 0 {
+                    continue;
+                }
+                let flipped = self.write_row(key, row, mask, 0);
+                if flipped != 0 {
+                    killed += flipped.count_ones() as usize;
+                    self.mark_dirty(key, row, flipped);
                 }
             }
         }
+        killed
     }
 
     /// Chunks in memory, each of [`CHUNK_SIZE`] squared bits plus some overhead.
@@ -704,6 +722,58 @@ fn locate(x: i64, y: i64) -> (ChunkKey, usize, usize) {
 
 fn chunk_origin((x, y): ChunkKey) -> (i64, i64) {
     (x << CHUNK_BITS, y << CHUNK_BITS)
+}
+
+/// Walks the runs of `chunks` as [`SparseBoard::for_each_live_run`] does, only
+/// inside `clip` if there is one.
+fn visit_runs(
+    mut chunks: Vec<(ChunkKey, &Chunk)>,
+    clip: Option<CellRect>,
+    mut visit: impl FnMut(i64, i64, usize),
+) {
+    chunks.sort_unstable_by_key(|(key, _)| (key.1, key.0));
+    for band in chunks.chunk_by(|a, b| a.0.1 == b.0.1) {
+        for row in 0..CHUNK_SIZE as usize {
+            for &(key, chunk) in band {
+                let (left, bottom) = chunk_origin(key);
+                let y = bottom + row as i64;
+                let mut cells = chunk[row] & clip.map_or(u64::MAX, |rect| rect_mask(rect, left, y));
+                while cells != 0 {
+                    let start = cells.trailing_zeros();
+                    let length = (cells >> start).trailing_ones();
+                    visit(left + i64::from(start), y, length as usize);
+                    cells &= u64::MAX.checked_shl(start + length).unwrap_or(0);
+                }
+            }
+        }
+    }
+}
+
+/// The cells of `rect` as a grid of single-cell blocks, to find its chunks with.
+fn rect_grid(rect: CellRect) -> BlockGrid {
+    BlockGrid {
+        left: rect.left,
+        bottom: rect.bottom,
+        level: 0,
+        width: rect.width,
+        height: rect.height,
+    }
+}
+
+/// Which cells of the chunk row starting at `(left, y)` lie in `rect`.
+fn rect_mask(rect: CellRect, left: i64, y: i64) -> u64 {
+    let y = i128::from(y);
+    let bottom = i128::from(rect.bottom);
+    if y < bottom || y >= bottom + rect.height as i128 {
+        return 0;
+    }
+    let from = i128::from(rect.left) - i128::from(left);
+    let start = from.clamp(0, CHUNK_SIZE.into());
+    let end = (from + rect.width as i128).clamp(0, CHUNK_SIZE.into());
+    if start >= end {
+        return 0;
+    }
+    u64::MAX >> (CHUNK_SIZE as i128 - (end - start)) << start
 }
 
 /// Positions of the set bits, lowest first.
@@ -1781,6 +1851,41 @@ mod tests {
             );
         }
         assert_eq!(SparseBoard::default().live_bounds(), None);
+    }
+
+    #[test]
+    fn runs_in_and_clearing_a_rect_touch_exactly_its_cells() {
+        let mut rng = fastrand::Rng::with_seed(31);
+        for trial in 0..200 {
+            let mut plane = SparseBoard::default();
+            for _ in 0..rng.usize(0..400) {
+                plane.populate(rng.i64(-150..150), rng.i64(-150..150));
+            }
+            let rect = CellRect {
+                left: rng.i64(-200..200),
+                bottom: rng.i64(-200..200),
+                width: rng.usize(1..200),
+                height: rng.usize(1..200),
+            };
+            let inside = |&(x, y): &(i64, i64)| {
+                (rect.left..rect.left + rect.width as i64).contains(&x)
+                    && (rect.bottom..rect.bottom + rect.height as i64).contains(&y)
+            };
+            let mut expected: Vec<_> = plane.live_cells().filter(inside).collect();
+            expected.sort_unstable_by_key(|&(x, y)| (y, x));
+
+            let mut runs = Vec::new();
+            plane.for_each_live_run_in(rect, |x, y, length| {
+                runs.extend((0..length as i64).map(|offset| (x + offset, y)));
+            });
+            assert_eq!(runs, expected, "trial {trial}");
+
+            let outside: HashSet<_> = plane.live_cells().filter(|cell| !inside(cell)).collect();
+            assert_eq!(plane.clear_rect(rect), expected.len(), "trial {trial}");
+            assert_eq!(plane.live_cells().collect::<HashSet<_>>(), outside);
+            assert_eq!(plane.live_cells_count(), outside.len());
+            assert!(plane.chunks.values().all(|chunk| **chunk != [0; 64]));
+        }
     }
 
     #[test]

@@ -3,6 +3,7 @@
 
 use super::{App, EditTool};
 use crate::{
+    patterns::RleWriter,
     sparse_board::{CellRect, PLANE_EXPORT_CELLS_MAX},
     universe::{Universe, plane_to_rle},
 };
@@ -137,48 +138,23 @@ impl App {
         true
     }
 
-    /// The live cells inside `rect`, bottom row first.
-    fn live_cells_in(&self, rect: CellRect) -> Vec<(i64, i64)> {
-        let (right, top) = (
-            rect.left + rect.width as i64,
-            rect.bottom + rect.height as i64,
-        );
-        match &self.board {
-            Universe::Finite(board) => (rect.bottom..top)
-                .flat_map(|y| (rect.left..right).map(move |x| (x, y)))
-                .filter(|&(x, y)| board.is_alive(x as usize, y as usize))
-                .collect(),
-            // The selection can be far larger than what lives in it.
-            Universe::Unbounded(plane) => {
-                let mut cells: Vec<_> = plane
-                    .live_cells()
-                    .filter(|&(x, y)| {
-                        (rect.left..right).contains(&x) && (rect.bottom..top).contains(&y)
-                    })
-                    .collect();
-                cells.sort_unstable_by_key(|&(x, y)| (y, x));
-                cells
-            }
-        }
-    }
-
     /// Kills every live cell in the selection, as one edit, and returns how many
     /// there were. The selection stays.
     pub fn erase_selection(&mut self) -> usize {
         let Some(rect) = self.selection() else {
             return 0;
         };
-        let doomed = self.live_cells_in(rect);
-        if doomed.is_empty() {
+        let mut live = 0usize;
+        self.board
+            .for_each_live_run_in(rect, |_, _, length| live += length);
+        if live == 0 {
             return 0;
         }
         self.end_stroke();
         self.save_edit();
-        for &(x, y) in &doomed {
-            self.board.depopulate(x, y);
-        }
+        let killed = self.board.clear_rect(rect);
         self.needs_redraw = true;
-        doomed.len()
+        killed
     }
 
     /// The selection as RLE with the board rule in the header. It keeps the
@@ -187,30 +163,29 @@ impl App {
         let rect = self
             .selection()
             .ok_or(SelectionExportError::NothingSelected)?;
-        let live = self.live_cells_in(rect);
-        if live.is_empty() {
+        // Written as the runs come, since an unbounded board's selection can
+        // hold more cells than would fit in memory one by one.
+        let mut writer = RleWriter::default();
+        let mut cells = 0usize;
+        self.board.for_each_live_run_in(rect, |x, y, length| {
+            cells = cells.saturating_add(length);
+            if cells <= PLANE_EXPORT_CELLS_MAX {
+                writer.cells((x - rect.left) as usize, (y - rect.bottom) as usize, length);
+            }
+        });
+        if cells == 0 {
             return Err(SelectionExportError::Empty);
         }
-        if live.len() > PLANE_EXPORT_CELLS_MAX {
+        if cells > PLANE_EXPORT_CELLS_MAX {
             return Err(SelectionExportError::TooLarge);
         }
-        let cells: Vec<_> = live
-            .iter()
-            .map(|&(x, y)| ((x - rect.left) as usize, (y - rect.bottom) as usize))
-            .collect();
         let comment = format!(
             "{} × {} cells selected at generation {}",
             rect.width, rect.height, self.epoch
         );
         Ok(BoardExport {
-            rle: crate::patterns::to_rle(
-                &cells,
-                rect.width,
-                rect.height,
-                Some(self.board.rule()),
-                &comment,
-            ),
-            cells: cells.len(),
+            rle: writer.finish(rect.width, rect.height, Some(self.board.rule()), &comment),
+            cells,
             width: rect.width,
             height: rect.height,
         })
