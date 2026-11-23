@@ -248,6 +248,9 @@ struct CanvasDrag {
     right: bool,
     /// The cell a Select drag started on, until the button is released.
     select_anchor: Option<(i64, i64)>,
+    /// The cell a draw or erase stroke last reached, and the pointer's position
+    /// then, until the pointer lifts or leaves the board.
+    last: Option<((i64, i64), Vec2)>,
 }
 
 fn handle_mouse(
@@ -271,6 +274,9 @@ fn handle_mouse(
     if !mouse_buttons.pressed(MouseButton::Right) {
         canvas_drag.right = false;
     }
+    // A stroke that resumes after a trip over the UI or off the board starts
+    // afresh, rather than joining up under a panel or past an edge.
+    let last = canvas_drag.last.take();
     if pointer_capture.pointer {
         return;
     }
@@ -323,16 +329,53 @@ fn handle_mouse(
         sim.app.place_selected_pattern_at(col, row);
     } else if canvas_drag.left && !sim.app.has_selected_pattern() {
         sim.app.begin_stroke();
-        match sim.app.tool() {
-            EditTool::Erase => sim.app.depopulate_board(col, row),
-            _ => sim.app.populate_board(col, row),
+        let erase = sim.app.tool() == EditTool::Erase;
+        for (x, y) in stroke_cells(last, (col, row), cursor_pos) {
+            if erase {
+                sim.app.depopulate_board(x, y);
+            } else {
+                sim.app.populate_board(x, y);
+            }
         }
+        canvas_drag.last = Some(((col, row), cursor_pos));
     }
 
     if canvas_drag.right {
         sim.app.begin_stroke();
-        sim.app.depopulate_board(col, row);
+        for (x, y) in stroke_cells(last, (col, row), cursor_pos) {
+            sim.app.depopulate_board(x, y);
+        }
+        canvas_drag.last = Some(((col, row), cursor_pos));
     }
+}
+
+/// The cells a stroke covers on its way to `to`, under the pointer at `pointer`:
+/// a straight line on from where it last was, so a fast drag leaves no gaps, or
+/// just `to` for a stroke's first cell. When zoomed out past a cell a pixel, the
+/// line takes a cell per pixel the pointer moved, which leaves no gap on screen
+/// however far apart its ends are on the plane.
+fn stroke_cells(
+    last: Option<((i64, i64), Vec2)>,
+    to: (i64, i64),
+    pointer: Vec2,
+) -> impl Iterator<Item = (i64, i64)> {
+    let (from, steps) = match last {
+        Some((from, last_pointer)) => {
+            let (dx, dy) = (
+                i128::from(to.0) - i128::from(from.0),
+                i128::from(to.1) - i128::from(from.1),
+            );
+            let pixels = (pointer - last_pointer).abs().max_element().ceil() as i128;
+            (from, dx.abs().max(dy.abs()).min(pixels).max(1))
+        }
+        None => (to, 1),
+    };
+    // Rounded to the nearest cell, so the line is as straight as cells allow.
+    let along = move |start: i64, end: i64, step: i128| {
+        let span = i128::from(end) - i128::from(start);
+        start + (2 * step * span + steps).div_euclid(2 * steps) as i64
+    };
+    (1..=steps).map(move |step| (along(from.0, to.0, step), along(from.1, to.1, step)))
 }
 
 /// The keyboard's cell cursor, for editing the board without a pointer. It is
@@ -1094,6 +1137,68 @@ mod tests {
             .release(MouseButton::Left);
         world.run_system(mouse).unwrap();
         assert_eq!(selection(&world), None);
+    }
+
+    #[test]
+    fn a_fast_drag_draws_a_line_but_not_across_the_ui() {
+        let (mut world, window) = selection_world();
+        world
+            .resource_mut::<Simulation>()
+            .app
+            .set_tool(EditTool::Draw);
+        let mouse = world.register_system(handle_mouse);
+        let alive = |world: &World, cell: (i64, i64)| {
+            world
+                .resource::<Simulation>()
+                .app
+                .board
+                .is_alive(cell.0, cell.1)
+        };
+
+        point_at(&mut world, window, (1.0, 1.0));
+        world
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        world.run_system(mouse).unwrap();
+        world.resource_mut::<ButtonInput<MouseButton>>().clear();
+        // Five cells right and three up within one frame.
+        point_at(&mut world, window, (6.0, 4.0));
+        world.run_system(mouse).unwrap();
+        let line = [(1, 1), (2, 2), (3, 2), (4, 3), (5, 3), (6, 4)];
+        assert!(line.iter().all(|&cell| alive(&world, cell)));
+        assert_eq!(
+            world.resource::<Simulation>().app.board.live_cells_count(),
+            line.len()
+        );
+
+        // Over a panel and back, the stroke picks up where the pointer is.
+        world.resource_mut::<UiInputCapture>().pointer = true;
+        world.run_system(mouse).unwrap();
+        world.resource_mut::<UiInputCapture>().pointer = false;
+        point_at(&mut world, window, (6.0, 7.0));
+        world.run_system(mouse).unwrap();
+        assert!(alive(&world, (6, 7)));
+        assert!(!alive(&world, (6, 5)) && !alive(&world, (6, 6)));
+    }
+
+    #[test]
+    fn a_stroke_far_zoomed_out_takes_a_cell_per_pixel_moved() {
+        let cells: Vec<_> = stroke_cells(
+            Some(((0, 0), Vec2::ZERO)),
+            (1 << 40, -(1 << 40)),
+            Vec2::new(4.0, 4.0),
+        )
+        .collect();
+        let quarter = 1 << 38;
+        assert_eq!(
+            cells,
+            [
+                (quarter, -quarter),
+                (2 * quarter, -2 * quarter),
+                (3 * quarter, -3 * quarter),
+                (4 * quarter, -4 * quarter)
+            ]
+        );
     }
 
     #[test]
