@@ -72,6 +72,7 @@ The `justfile` wraps the commands CI runs:
 | `just test`        | `cargo test --all-targets --all-features --locked`             |
 | `just bench`       | `cargo bench --bench board_step --locked`                      |
 | `just readme-check`| The test that keeps the README's controls list in sync         |
+| `just audit`       | `cargo deny --locked check advisories`; needs [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) |
 | `just ci-local`    | `fmt-check`, `clippy`, `clippy-web`, and `test`, like CI       |
 
 Run `just ci-local` before pushing.
@@ -90,8 +91,13 @@ Run `just ci-local` before pushing.
 | `clippy-windows` | Linux          | Clippy for `x86_64-pc-windows-gnu`, so Windows-only code is checked before a release |
 | `test`           | Linux          | `cargo test --all-targets --all-features --locked`         |
 | `test-macos`     | macOS          | The same tests on macOS                                    |
+| `test-windows`   | Windows        | The same tests on Windows                                  |
 
 Tags add the release build and release jobs, which wait for all of these; see [Releasing](releasing.qd).
+
+`.gitattributes` checks text files out with LF line endings on every platform, Windows included, since the tests and the patterns `build.rs` embeds expect them.
+
+`.github/workflows/audit.yml` checks the crates in `Cargo.lock` against the [RustSec advisory database](https://rustsec.org) with `cargo deny check advisories`: when `Cargo.lock` changes, and every Monday, as advisories also appear for crates already in use. It runs apart from CI, so an advisory for a crate deep in Bevy doesn't hold back unrelated changes or a release; when it fails, update the crate if a fixed version exists, or judge whether the advisory affects gol-bevy.
 
 The workflows only read the repository, except the release job, which creates the GitHub release, and the Pages deployment. Every action is pinned to a commit, with its release in a comment; to update one, look up the new release's commit and change both. Lint and test jobs cache their builds, saved only from `main`, as caches saved on other branches can't be restored there. Release builds and the docs site don't use a cache, so nothing a cache holds can reach a published build.
 

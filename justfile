@@ -22,6 +22,11 @@ bench:
 readme-check:
 	cargo test readme_lists_every_shortcut --locked
 
+# Checks Cargo.lock against the RustSec advisories, as the Audit workflow does.
+[doc("Checks Cargo.lock against the RustSec advisories. Needs cargo-deny.")]
+audit:
+	cargo deny --locked check advisories
+
 ci-local:
 	just fmt-check
 	just clippy

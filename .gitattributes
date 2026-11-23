@@ -1,0 +1,5 @@
+# Text files check out with LF line endings everywhere, Windows included, as the
+# tests and the patterns build.rs embeds expect.
+* text=auto eol=lf
+# The font licence as its authors ship it.
+assets/fonts/OFL.txt -text
