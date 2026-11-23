@@ -727,7 +727,7 @@ fn sync(
         cell_age,
         board,
         focus,
-        focus_visible: _,
+        focus_visible,
         theme,
     } = view;
     let palette = sim.app.palette_shown();
@@ -874,7 +874,9 @@ fn sync(
                 resting
             },
         ));
-        border.set_if_neq(ThemedBorder(if focus.get() == Some(entity) {
+        // Only keyboard focus is outlined: a click focuses the button for a
+        // frame before `release_pointer_focus` hands the keyboard back.
+        border.set_if_neq(ThemedBorder(if focus_visible.0 && focus.get() == Some(entity) {
             Token::Focus
         } else if *action == Action::MaxSpeed {
             // Its left border divides it from the fixed rates, on or off.
@@ -1358,6 +1360,39 @@ mod tests {
         world.run_system_once(sync).unwrap();
         world.run_system_once(theme::apply).unwrap();
         assert_eq!(ticks(&mut world), before);
+    }
+
+    #[test]
+    fn only_keyboard_focus_outlines_a_button() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Assets<Font>>();
+        world.init_resource::<Assets<Image>>();
+        world.insert_resource(Simulation::new(GolApp::new(8, 8)));
+        world.init_resource::<NativeUi>();
+        world.insert_resource(GridOverlay { enabled: false });
+        world.init_resource::<CellAge>();
+        world.init_resource::<crate::shared::BoardSettings>();
+        world.init_resource::<InputFocus>();
+        world.init_resource::<InputFocusVisible>();
+        world.init_resource::<Theme>();
+        world.run_system_once(setup).unwrap();
+        let step = world
+            .query::<(Entity, &Action)>()
+            .iter(&world)
+            .find_map(|(entity, action)| (*action == Action::Step).then_some(entity))
+            .unwrap();
+        world
+            .resource_mut::<InputFocus>()
+            .set(step, bevy::input_focus::FocusCause::Navigated);
+        let border = |world: &mut World, visible: bool| {
+            world.resource_mut::<InputFocusVisible>().0 = visible;
+            world.run_system_once(sync).unwrap();
+            world.get::<ThemedBorder>(step).unwrap().0
+        };
+        // A click focuses the button for a frame without showing focus.
+        assert_eq!(border(&mut world, false), Token::Line);
+        assert_eq!(border(&mut world, true), Token::Focus);
     }
 
     #[test]
