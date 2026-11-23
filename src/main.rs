@@ -2,19 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use bevy::{prelude::*, window::WindowResolution};
-use gol_bevy::canvas_view::CanvasViewPlugin;
-use gol_bevy::frame_pacing::FramePacingPlugin;
-use gol_bevy::input_plugin::InputPlugin;
-use gol_bevy::native_ui_plugin::NativeUiPlugin;
-use gol_bevy::plane_view::PlaneViewPlugin;
-use gol_bevy::render_plugin::RenderPlugin;
-use gol_bevy::settings_plugin::SettingsPlugin;
-use gol_bevy::shared::{
-    BG_COLOR, BoardSettings, DiagnosticsOverlay, GridOverlay, RedrawRequested, StartupSet,
-    UpdateSet, WEB_BUILD,
-};
-use gol_bevy::simulation_plugin::SimulationPlugin;
-use gol_bevy::ui_input::UiInputPlugin;
+use gol_bevy::gol_plugin::GolPlugin;
+use gol_bevy::shared::WEB_BUILD;
 
 fn main() {
     bevy::prelude::App::new()
@@ -36,38 +25,6 @@ fn main() {
             }),
             ..default()
         }))
-        .insert_resource(ClearColor(BG_COLOR))
-        .insert_resource(RedrawRequested::default())
-        .insert_resource(DiagnosticsOverlay { enabled: false })
-        .insert_resource(GridOverlay { enabled: false })
-        .init_resource::<BoardSettings>()
-        .configure_sets(
-            Startup,
-            (StartupSet::LoadSettings, StartupSet::BuildWorld).chain(),
-        )
-        .configure_sets(
-            Update,
-            (
-                UpdateSet::Input,
-                UpdateSet::Simulation,
-                UpdateSet::Camera,
-                UpdateSet::Resize,
-                UpdateSet::Redraw,
-                UpdateSet::Render,
-                UpdateSet::Quit,
-            )
-                .chain(),
-        )
-        .add_plugins((
-            RenderPlugin,
-            PlaneViewPlugin,
-            CanvasViewPlugin,
-            SettingsPlugin,
-            UiInputPlugin,
-            NativeUiPlugin,
-            InputPlugin,
-            SimulationPlugin,
-            FramePacingPlugin,
-        ))
+        .add_plugins(GolPlugin)
         .run();
 }

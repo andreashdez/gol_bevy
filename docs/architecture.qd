@@ -26,6 +26,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
       - keybindings.rs
       - feedback.rs
       - frame_pacing.rs
+      - gol_plugin.rs
       - coords.rs
       - settings_plugin.rs
       - ui_input.rs
@@ -79,6 +80,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
 | `keybindings`           | Key binding constants, typed characters, and the Help and README controls lists built from them |
 | `feedback`              | Short notices shown after edits from the toolbar or the keyboard              |
 | `frame_pacing`          | Updating every frame while anything moves, and only on input once nothing does |
+| `gol_plugin`            | Everything the app adds to Bevy's default plugins, so `main.rs` and the schedule test build the same app |
 | `coords`                | Cells in world space, cell size, zoom and pan limits, and fitting the camera to a board or pattern |
 | `settings_plugin`       | Loading and saving `settings.toml`                                            |
 | `ui_input`              | Deciding whether the pointer and keyboard belong to the UI or the board       |
@@ -133,12 +135,13 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
 
 ## Plugins
 
-`main.rs` builds the app from Bevy's `DefaultPlugins` (with a 1200 × 800 window and an 800 × 420 minimum) and the project's plugins:
+`main.rs` builds the app from Bevy's `DefaultPlugins` (with a 1200 × 800 window and an 800 × 420 minimum) and `GolPlugin` from `gol_plugin.rs`, which adds the shared resources, orders the system sets, and adds the project's plugins:
 
 .mermaid
     flowchart TD
         main[main.rs] --> DP[DefaultPlugins]
-        main --> PL["Project plugins<br/>RenderPlugin, PlaneViewPlugin, CanvasViewPlugin, SettingsPlugin,<br/>UiInputPlugin, NativeUiPlugin, InputPlugin, SimulationPlugin, FramePacingPlugin"]
+        main --> GP[GolPlugin]
+        GP --> PL["Project plugins<br/>RenderPlugin, PlaneViewPlugin, CanvasViewPlugin, SettingsPlugin,<br/>UiInputPlugin, NativeUiPlugin, InputPlugin, SimulationPlugin, FramePacingPlugin"]
         PL --> S[(Simulation resource)]
         S --> APP[app::App]
         APP --> U[universe::Universe]
@@ -147,6 +150,8 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
         APP --> P[patterns]
 
 All plugins share one `Simulation` resource, which owns the `app::App` and with it the board: a `Universe`, which is either a finite `Board` or the unbounded `SparseBoard`. `RenderPlugin` draws the first and `PlaneViewPlugin` the second. The UI and the keyboard call the same `App` methods, so a button and its shortcut always behave alike, and both go through the same undo history.
+
+`tests/frame_schedule.rs` builds the same app without a window event loop or a GPU and runs it for a few frames. The plugins' systems are tested one at a time in their own modules; this test checks that, in the order `GolPlugin` gives them, a click on the board draws, is redrawn the next frame, and a click on the palette over the board doesn't reach it.
 
 ## Frame order
 

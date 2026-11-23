@@ -5,6 +5,7 @@ pub mod canvas_view;
 pub mod coords;
 pub mod feedback;
 pub mod frame_pacing;
+pub mod gol_plugin;
 pub mod input_plugin;
 pub mod keybindings;
 pub mod native_ui_plugin;
@@ -64,9 +65,9 @@ mod docs_tests {
 
     #[test]
     fn architecture_page_names_every_plugin() {
-        let plugins: Vec<&str> = include_str!("main.rs")
+        let plugins: Vec<&str> = include_str!("gol_plugin.rs")
             .lines()
-            .filter_map(|line| line.strip_prefix("use gol_bevy::")?.strip_suffix("Plugin;"))
+            .filter_map(|line| line.strip_prefix("use crate::")?.strip_suffix("Plugin;"))
             .filter_map(|path| path.rsplit("::").next())
             .collect();
         assert!(plugins.contains(&"Simulation"));
