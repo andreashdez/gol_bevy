@@ -876,18 +876,20 @@ fn sync(
         ));
         // Only keyboard focus is outlined: a click focuses the button for a
         // frame before `release_pointer_focus` hands the keyboard back.
-        border.set_if_neq(ThemedBorder(if focus_visible.0 && focus.get() == Some(entity) {
-            Token::Focus
-        } else if *action == Action::MaxSpeed {
-            // Its left border divides it from the fixed rates, on or off.
-            Token::Line
-        } else if selected && !switch {
-            Token::Accent
-        } else if switch || segment {
-            resting
-        } else {
-            Token::Line
-        }));
+        border.set_if_neq(ThemedBorder(
+            if focus_visible.0 && focus.get() == Some(entity) {
+                Token::Focus
+            } else if *action == Action::MaxSpeed {
+                // Its left border divides it from the fixed rates, on or off.
+                Token::Line
+            } else if selected && !switch {
+                Token::Accent
+            } else if switch || segment {
+                resting
+            } else {
+                Token::Line
+            },
+        ));
         let ink = if disabled {
             Token::Muted
         } else if *action == Action::Play || (*action == Action::MaxSpeed && selected) {
