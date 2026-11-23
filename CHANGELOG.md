@@ -12,6 +12,8 @@ Add a line under Unreleased in the same pull request as the change; see
   longer redraws every frame, so it uses next to no CPU or GPU. It updates on input, and
   every frame while the board runs, a notice shows, a file loads or saves, or a screen
   reader is connected.
+- Launching no longer rewrites an unchanged `settings.toml`, and saving keeps comments and
+  lines the app doesn't recognise, such as settings from a newer version.
 
 ### Fixed
 
@@ -19,6 +21,13 @@ Add a line under Unreleased in the same pull request as the change; see
   pointer was each frame.
 - Copying or clearing a selection on an unbounded board no longer holds every selected
   cell in memory at once, which could run out of memory on a large pattern.
+- An unbounded board stays within its memory limit: a run pauses before the generation
+  that would pass it, rather than after, and a file is refused before a long run of cells
+  takes it past the limit.
+- Importing a pattern whose rule has `B0` onto an unbounded board says it can't, instead
+  of importing it under the board's rule.
+- The status bar no longer shows the last generation's population change after a rule
+  change.
 
 ## [0.3.0] - 2026-11-21
 
