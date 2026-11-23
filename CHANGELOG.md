@@ -28,6 +28,8 @@ Add a line under Unreleased in the same pull request as the change; see
   of importing it under the board's rule.
 - The status bar no longer shows the last generation's population change after a rule
   change.
+- Clicking a toolbar button no longer flashes its keyboard focus outline; the outline
+  shows only for focus from the keyboard.
 
 ## [0.3.0] - 2026-11-21
 
