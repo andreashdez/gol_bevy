@@ -95,6 +95,11 @@ impl App {
         {
             return Err(PatternParseError::LibraryFull);
         }
+        if let Some(rule) = pattern.rule
+            && !self.board.allows_rule(rule)
+        {
+            return Err(PatternParseError::UnboundedRule(rule));
+        }
 
         // Honour a declared rule instead of simulating the pattern as plain Life.
         let applied_rule = pattern.rule.filter(|&rule| self.set_rule(rule));

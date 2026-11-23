@@ -207,6 +207,8 @@ pub enum PatternParseError {
     InvalidRun,
     LibraryFull,
     NameTooLong,
+    /// The pattern's rule has B0, which the unbounded board can't run.
+    UnboundedRule(Rule),
 }
 
 impl fmt::Display for PatternParseError {
@@ -237,6 +239,11 @@ impl fmt::Display for PatternParseError {
                 "the imported library is full (at most 256 patterns and 4,194,304 live cells)"
             ),
             Self::NameTooLong => write!(f, "pattern names may contain at most 1024 bytes"),
+            Self::UnboundedRule(rule) => write!(
+                f,
+                "its rule {rule} has B0, which would fill the unbounded board; \
+                 switch to wrapping or fixed edges to import it"
+            ),
         }
     }
 }

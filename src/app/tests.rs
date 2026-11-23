@@ -1003,6 +1003,20 @@ fn importing_rle_applies_a_declared_rule() {
 }
 
 #[test]
+fn the_unbounded_board_refuses_a_pattern_whose_rule_it_cannot_run() {
+    let mut app = unbounded_app();
+    let patterns = app.pattern_count();
+    let source = "x = 3, y = 1, rule = B0/S8\n3o!";
+    let b0 = Rule::parse("B0/S8").unwrap();
+    assert_eq!(
+        app.import_rle_pattern("Flash", source).unwrap_err(),
+        PatternParseError::UnboundedRule(b0)
+    );
+    assert_eq!(app.pattern_count(), patterns, "nothing was added");
+    assert_eq!(app.rule_label(), "B3/S23");
+}
+
+#[test]
 fn undo_and_redo_carry_the_rule_an_import_changed() {
     let mut app = App::new(12, 12);
     app.populate_board(1, 1);

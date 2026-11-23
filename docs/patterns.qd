@@ -59,7 +59,7 @@ Lines starting with `#` are comments. The first `#N` line gives the pattern its 
 The first non-comment line is the header:
 
 - `x = <width>, y = <height>` are required.
-- `rule = <rulestring>` is optional. It accepts the same [rulestring formats](simulation.qd#rulestring-formats) as Settings. An unsupported rule is an error, rather than being silently replaced by Life.
+- `rule = <rulestring>` is optional. It accepts the same [rulestring formats](simulation.qd#rulestring-formats) as Settings. An unsupported rule is an error, rather than being silently replaced by Life. Importing a pattern sets the board to its rule, so a rule with `B0` can't be imported onto an unbounded board; switch to wrapping or fixed edges first.
 
 ### Body
 
