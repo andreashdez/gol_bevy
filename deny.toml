@@ -1,0 +1,11 @@
+# cargo-deny configuration for the Audit workflow and `just audit`, which only
+# run `cargo deny check advisories`. Licences are checked by cargo-about; see
+# about.toml.
+
+[advisories]
+# Vulnerabilities fail the check whichever crate they are in. A crate whose
+# author has stopped maintaining it fails it only when gol-bevy depends on it
+# directly: one deep in Bevy's tree, such as a font parser winit uses for
+# Wayland window decorations, can only be replaced upstream. Set explicitly, as
+# cargo-deny's default has changed between versions.
+unmaintained = "workspace"
