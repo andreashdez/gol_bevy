@@ -6,6 +6,8 @@ Add a line under Unreleased in the same pull request as the change; see
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-24
+
 ### Changed
 
 - The app stops updating while nothing on screen changes: a paused, untouched window no
@@ -121,7 +123,8 @@ Add a line under Unreleased in the same pull request as the change; see
 First release, with finite and unbounded boards, a pattern library with stamps, RLE import
 and export, saved workspaces, and builds for Linux, Windows, and macOS.
 
-[Unreleased]: https://github.com/andreashdez/gol_bevy/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/andreashdez/gol_bevy/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/andreashdez/gol_bevy/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/andreashdez/gol_bevy/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/andreashdez/gol_bevy/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/andreashdez/gol_bevy/releases/tag/v0.1.0

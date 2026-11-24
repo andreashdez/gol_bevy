@@ -1,6 +1,6 @@
 [package]
 name = "gol-bevy"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "Conway's Game of Life as a desktop app, built on Bevy"
 license = "MIT"
