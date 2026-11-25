@@ -54,9 +54,11 @@ struct SettingsPersistence {
     /// The file at `path` holds the settings as loaded, so their first snapshot
     /// is already saved and launching doesn't rewrite the file.
     saved_as_loaded: bool,
-    /// Lines of the file the app doesn't write itself, such as comments or keys
-    /// of a newer version, written back as they were.
-    kept_lines: Vec<String>,
+    /// What of the file the app doesn't write itself, written back as it was.
+    kept: KeptText,
+    /// The first snapshot, before anything changed: a value the app couldn't
+    /// read stays in the file while its setting still has the value it had then.
+    loaded: Option<PersistedSettings>,
 }
 
 impl SettingsPersistence {
@@ -66,7 +68,8 @@ impl SettingsPersistence {
             last_saved: None,
             pending: None,
             saved_as_loaded: false,
-            kept_lines: Vec::new(),
+            kept: KeptText::default(),
+            loaded: None,
         }
     }
 }
@@ -159,14 +162,42 @@ struct ParsedSettings {
     grid: Option<bool>,
     cell_age: Option<bool>,
     theme: Option<Theme>,
-    kept_lines: Vec<String>,
+    kept: KeptText,
+}
+
+/// What a save writes back as it was read.
+#[derive(Default)]
+struct KeptText {
+    /// Lines without a key the app writes, such as comments or keys of a newer version.
+    lines: Vec<String>,
+    /// Lines of the app's own keys whose value it couldn't read, such as a theme
+    /// of a newer version, by key.
+    unread: Vec<(String, String)>,
+    /// Comments at the end of the app's own keys' lines, by key.
+    comments: Vec<(String, String)>,
+}
+
+impl KeptText {
+    fn unread(&self, key: &str) -> Option<&str> {
+        find_by_key(&self.unread, key)
+    }
+
+    fn comment(&self, key: &str) -> Option<&str> {
+        find_by_key(&self.comments, key)
+    }
+}
+
+fn find_by_key<'a>(list: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    list.iter()
+        .find(|(held, _)| held == key)
+        .map(|(_, text)| text.as_str())
 }
 
 /// What loading leaves for later: the settings that wait for the simulation,
-/// and the lines to keep, if a file was read.
+/// and the text to keep, if a file was read.
 struct LoadedSettings {
     simulation: SimulationSettings,
-    kept_lines: Option<Vec<String>>,
+    kept: Option<KeptText>,
 }
 
 fn setup_settings_persistence(
@@ -199,11 +230,11 @@ fn setup_settings_persistence(
     );
 
     commands.insert_resource(loaded.simulation);
-    let read = loaded.kept_lines.is_some();
+    let read = loaded.kept.is_some();
     commands.insert_resource(SettingsPersistence {
         // Settings read from an older file are saved to the new one.
         saved_as_loaded: read && source == path,
-        kept_lines: loaded.kept_lines.unwrap_or_default(),
+        kept: loaded.kept.unwrap_or_default(),
         ..SettingsPersistence::new(path)
     });
 }
@@ -247,7 +278,7 @@ fn load_settings(
             }
             LoadedSettings {
                 simulation: settings.simulation,
-                kept_lines: Some(settings.kept_lines),
+                kept: Some(settings.kept),
             }
         }
         Err(err) => {
@@ -260,7 +291,7 @@ fn load_settings(
             }
             LoadedSettings {
                 simulation: SimulationSettings::default(),
-                kept_lines: None,
+                kept: None,
             }
         }
     }
@@ -304,6 +335,7 @@ fn persist_settings(
     let Some(current) = state.snapshot() else {
         return;
     };
+    let loaded = *persistence.loaded.get_or_insert(current);
     if std::mem::take(&mut persistence.saved_as_loaded) {
         persistence.last_saved = Some(current);
     }
@@ -339,41 +371,25 @@ fn persist_settings(
         return;
     }
 
-    let simulation = current.simulation;
-    let mut contents = format!(
-        "board_cols = {}\nboard_rows = {}\nfill_canvas = {}\ngrid = {}\ncell_age = {}\ntheme = \"{}\"\n",
-        current.board.0,
-        current.board.1,
-        current.fill_canvas,
-        current.grid,
-        current.cell_age,
-        theme_storage_str(current.theme),
-    );
-    if let Some(rule) = simulation.rule {
-        contents.push_str(&format!("rule = \"{rule}\"\n"));
+    let mut contents = String::new();
+    let values = setting_values(&current);
+    let loaded_values = setting_values(&loaded);
+    for ((key, value), loaded_value) in SETTING_KEYS.iter().zip(&values).zip(&loaded_values) {
+        let kept = &persistence.kept;
+        match (kept.unread(key), value) {
+            (Some(line), _) if value == loaded_value => contents.push_str(line),
+            (_, Some(value)) => {
+                contents.push_str(&format!("{key} = {value}"));
+                if let Some(comment) = kept.comment(key) {
+                    contents.push(' ');
+                    contents.push_str(comment);
+                }
+            }
+            (_, None) => continue,
+        }
+        contents.push('\n');
     }
-    if let Some(edges) = simulation.edges {
-        contents.push_str(&format!(
-            "boundary_mode = \"{}\"\n",
-            edges_storage_str(edges)
-        ));
-    }
-    if let Some(tick_rate_ms) = simulation.tick_rate_ms {
-        contents.push_str(&format!("tick_rate_ms = {tick_rate_ms}\n"));
-    }
-    if let Some(max_speed) = simulation.max_speed {
-        contents.push_str(&format!("max_speed = {max_speed}\n"));
-    }
-    if let Some(pause) = simulation.pause_when_settled {
-        contents.push_str(&format!("pause_when_settled = {pause}\n"));
-    }
-    if let Some(density) = simulation.random_density_percent {
-        contents.push_str(&format!("random_density_percent = {density}\n"));
-    }
-    if let Some(seed) = simulation.random_seed {
-        contents.push_str(&format!("random_seed = {seed}\n"));
-    }
-    for line in &persistence.kept_lines {
+    for line in &persistence.kept.lines {
         contents.push_str(line);
         contents.push('\n');
     }
@@ -390,46 +406,110 @@ fn persist_settings(
     persistence.pending = None;
 }
 
-/// Minimal key/value reader for the handful of scalars this app persists. Lines
-/// it doesn't write itself are kept, so a save doesn't lose them.
+/// The keys the app writes, in the order it writes them.
+const SETTING_KEYS: [&str; 13] = [
+    "board_cols",
+    "board_rows",
+    "fill_canvas",
+    "grid",
+    "cell_age",
+    "theme",
+    "rule",
+    "boundary_mode",
+    "tick_rate_ms",
+    "max_speed",
+    "pause_when_settled",
+    "random_density_percent",
+    "random_seed",
+];
+
+/// The value written for each of `SETTING_KEYS`, or `None` for a key left out.
+fn setting_values(settings: &PersistedSettings) -> [Option<String>; SETTING_KEYS.len()] {
+    let simulation = settings.simulation;
+    [
+        Some(settings.board.0.to_string()),
+        Some(settings.board.1.to_string()),
+        Some(settings.fill_canvas.to_string()),
+        Some(settings.grid.to_string()),
+        Some(settings.cell_age.to_string()),
+        Some(format!("\"{}\"", theme_storage_str(settings.theme))),
+        simulation.rule.map(|rule| format!("\"{rule}\"")),
+        simulation
+            .edges
+            .map(|edges| format!("\"{}\"", edges_storage_str(edges))),
+        simulation.tick_rate_ms.map(|ms| ms.to_string()),
+        simulation.max_speed.map(|max| max.to_string()),
+        simulation.pause_when_settled.map(|pause| pause.to_string()),
+        simulation
+            .random_density_percent
+            .map(|density| density.to_string()),
+        simulation.random_seed.map(|seed| seed.to_string()),
+    ]
+}
+
+/// Minimal key/value reader for the handful of scalars this app persists. What
+/// it doesn't write itself is kept, so a save doesn't lose it: other lines, the
+/// lines of values it can't read, and comments after its own values.
 fn parse_settings_from_toml(contents: &str) -> ParsedSettings {
+    /// Sets `field`, and returns whether the value could be read.
+    fn set<T>(field: &mut Option<T>, value: Option<T>) -> bool {
+        *field = value;
+        field.is_some()
+    }
+
     let mut parsed = ParsedSettings::default();
     let mut cols = None;
     let mut rows = None;
 
     for raw in contents.lines() {
-        let keep = |parsed: &mut ParsedSettings| parsed.kept_lines.push(raw.trim_end().to_owned());
-        let line = raw.split('#').next().unwrap_or("").trim();
+        let raw = raw.trim_end();
+        let (line, comment) = split_comment(raw);
         let Some((key, raw_value)) = line.split_once('=') else {
             if !raw.trim().is_empty() {
-                keep(&mut parsed);
+                parsed.kept.lines.push(raw.to_owned());
             }
             continue;
         };
+        let key = key.trim();
         let value = unquote(raw_value.trim());
+        let simulation = &mut parsed.simulation;
 
-        match key.trim() {
-            "board_cols" => cols = value.parse::<usize>().ok(),
-            "board_rows" => rows = value.parse::<usize>().ok(),
-            "fill_canvas" => parsed.fill_canvas = value.parse::<bool>().ok(),
-            "grid" => parsed.grid = value.parse::<bool>().ok(),
-            "cell_age" => parsed.cell_age = value.parse::<bool>().ok(),
-            "theme" => parsed.theme = theme_from_storage_str(value),
-            "rule" => parsed.simulation.rule = Rule::parse(value).ok(),
-            "boundary_mode" => parsed.simulation.edges = edges_from_storage_str(value),
-            "tick_rate_ms" => parsed.simulation.tick_rate_ms = value.parse::<u64>().ok(),
-            "max_speed" => parsed.simulation.max_speed = value.parse::<bool>().ok(),
-            "pause_when_settled" => {
-                parsed.simulation.pause_when_settled = value.parse::<bool>().ok()
-            }
-            "random_density_percent" => {
-                parsed.simulation.random_density_percent =
-                    value.parse::<u8>().ok().filter(|&density| density <= 100)
-            }
-            "random_seed" => parsed.simulation.random_seed = value.parse::<u64>().ok(),
+        let read = match key {
+            "board_cols" => set(&mut cols, value.parse::<usize>().ok()),
+            "board_rows" => set(&mut rows, value.parse::<usize>().ok()),
+            "fill_canvas" => set(&mut parsed.fill_canvas, value.parse::<bool>().ok()),
+            "grid" => set(&mut parsed.grid, value.parse::<bool>().ok()),
+            "cell_age" => set(&mut parsed.cell_age, value.parse::<bool>().ok()),
+            "theme" => set(&mut parsed.theme, theme_from_storage_str(value)),
+            "rule" => set(&mut simulation.rule, Rule::parse(value).ok()),
+            "boundary_mode" => set(&mut simulation.edges, edges_from_storage_str(value)),
+            "tick_rate_ms" => set(&mut simulation.tick_rate_ms, value.parse::<u64>().ok()),
+            "max_speed" => set(&mut simulation.max_speed, value.parse::<bool>().ok()),
+            "pause_when_settled" => set(
+                &mut simulation.pause_when_settled,
+                value.parse::<bool>().ok(),
+            ),
+            "random_density_percent" => set(
+                &mut simulation.random_density_percent,
+                value.parse::<u8>().ok().filter(|&density| density <= 100),
+            ),
+            "random_seed" => set(&mut simulation.random_seed, value.parse::<u64>().ok()),
             // Settings of earlier versions, which nothing reads any more.
-            "palette" | "layout_preset" => {}
-            _ => keep(&mut parsed),
+            "palette" | "layout_preset" => continue,
+            _ => {
+                parsed.kept.lines.push(raw.to_owned());
+                continue;
+            }
+        };
+        // A key's last line decides, as it does for the value.
+        let kept = &mut parsed.kept;
+        kept.unread.retain(|(held, _)| held != key);
+        kept.comments.retain(|(held, _)| held != key);
+        if !read {
+            kept.unread.push((key.to_owned(), raw.to_owned()));
+        }
+        if let Some(comment) = comment {
+            kept.comments.push((key.to_owned(), comment.to_owned()));
         }
     }
 
@@ -437,6 +517,21 @@ fn parse_settings_from_toml(contents: &str) -> ParsedSettings {
         parsed.board = Some((cols, rows));
     }
     parsed
+}
+
+/// Splits a line at the first `#` outside quotes, into what comes before it and
+/// the comment from it on.
+fn split_comment(line: &str) -> (&str, Option<&str>) {
+    let mut quote = None;
+    for (at, c) in line.char_indices() {
+        match (quote, c) {
+            (None, '#') => return (&line[..at], Some(&line[at..])),
+            (None, '"' | '\'') => quote = Some(c),
+            (Some(open), _) if c == open => quote = None,
+            _ => {}
+        }
+    }
+    (line, None)
 }
 
 fn edges_storage_str(edges: Edges) -> &'static str {
@@ -589,25 +684,52 @@ mod persistence_tests {
     }
 
     #[test]
-    fn a_save_keeps_comments_and_keys_it_does_not_know() {
+    fn a_save_keeps_comments_and_keys_and_values_it_does_not_know() {
         let directory = crate::test_support::TestDirectory::new();
         let path = directory.0.join("settings.toml");
         let parsed = parse_settings_from_toml(
-            "# my settings\ngrid = false\nfuture_option = \"on\"\nlayout_preset = \"minimal\"\n",
+            "# my settings\ngrid = false # off for now\ntheme = \"solarized\" # from 0.9\n\
+             future_option = \"a # b\"\nlayout_preset = \"minimal\"\n",
         );
         let kept = vec![
             "# my settings".to_owned(),
-            "future_option = \"on\"".to_owned(),
+            "future_option = \"a # b\"".to_owned(),
         ];
-        assert_eq!(parsed.kept_lines, kept);
+        assert_eq!(parsed.kept.lines, kept);
+        assert_eq!(parsed.grid, Some(false));
+        assert_eq!(parsed.theme, None);
 
         let mut world = persistence_world(path.clone());
-        world.resource_mut::<SettingsPersistence>().kept_lines = parsed.kept_lines;
+        world.resource_mut::<SettingsPersistence>().kept = parsed.kept;
         advance(&mut world, 0);
         advance(&mut world, 500);
         let saved = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(parse_settings_from_toml(&saved).kept_lines, kept);
+        assert_eq!(parse_settings_from_toml(&saved).kept.lines, kept);
+        assert!(saved.contains("grid = false # off for now\n"), "{saved}");
+        // The theme in use is the default, as the one in the file wasn't read.
+        assert!(
+            saved.contains("theme = \"solarized\" # from 0.9\n"),
+            "{saved}"
+        );
         assert!(!saved.contains("layout_preset"));
+
+        // Choosing a theme replaces the one that couldn't be read.
+        *world.resource_mut::<Theme>() = Theme::Light;
+        advance(&mut world, 0);
+        advance(&mut world, 500);
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("theme = \"light\" # from 0.9\n"), "{saved}");
+        assert!(!saved.contains("solarized"), "{saved}");
+    }
+
+    #[test]
+    fn comments_start_outside_quotes() {
+        assert_eq!(split_comment("a = 1 # one"), ("a = 1 ", Some("# one")));
+        assert_eq!(
+            split_comment("a = \"#1\" # '#'"),
+            ("a = \"#1\" ", Some("# '#'"))
+        );
+        assert_eq!(split_comment("a = 'x#y'"), ("a = 'x#y'", None));
     }
 
     #[test]
