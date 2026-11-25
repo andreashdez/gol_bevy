@@ -1,6 +1,7 @@
 //! Persisted workspace settings, independent of the UI implementation.
 use crate::{
-    board::{BoundaryMode, RandomizeSettings, Rule},
+    board::{BoundaryMode, RandomizeSettings},
+    rule::Rule,
     shared::{BoardSettings, CellAge, GridOverlay, Simulation, StartupSet, Theme, WEB_BUILD},
     universe::{Universe, plane_from_board},
 };

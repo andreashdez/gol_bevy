@@ -1,8 +1,9 @@
 //! Native editors and modal input routing. Drafts survive closing and reopening.
 use super::*;
 use crate::{
-    board::{BoundaryMode, RandomizeSettings, Rule},
+    board::{BoundaryMode, RandomizeSettings},
     keybindings::{BINDING_TOGGLE_HELP, TypedKeys, command_key},
+    rule::Rule,
     shared::{
         BOARD_SIZE_MAX, BOARD_SIZE_MIN, BOARD_SIZE_PRESETS, BoardSettings, DiagnosticsOverlay,
         Theme, WEB_BUILD,

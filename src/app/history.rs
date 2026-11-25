@@ -2,7 +2,7 @@
 //! from before a run so it can be reset to.
 
 use super::App;
-use crate::{board::Rule, universe::CellSnapshot};
+use crate::{rule::Rule, universe::CellSnapshot};
 use std::collections::VecDeque;
 
 const EDIT_HISTORY_MAX: usize = 32;

@@ -4,11 +4,13 @@
 //! row's neighbours come from the far side of the board when it wraps and from
 //! nowhere when it does not, and the last chunk across and the last one up may
 //! be only partly on the board.
-use crate::sparse_board::{
-    CHUNK_SIZE, ChangedRows, Chunk, MIN_BAND_ROWS, RowSums, Transitions, bits, next_rows,
-    split_bands,
+use crate::{
+    chunk::{
+        ChangedRows, Chunk, ChunkChange, EMPTY_CHUNK, LAST, RowSums, SIDE, Transitions, bands_for,
+        bits, cell_key, compare_rows, next_rows, step_bands,
+    },
+    rule::Rule,
 };
-use bevy::tasks::{ComputeTaskPool, TaskPool};
 
 /// Preferences for replacing a board with random cells. A fixed seed repeats
 /// the same row-major sequence for the same dimensions and density.
@@ -54,145 +56,6 @@ impl RandomizeSettings {
     pub fn seed(self) -> Option<u64> {
         self.seed
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RuleParseError {
-    Empty,
-    Malformed,
-    InvalidDigit(char),
-    NeighborOutOfRange(u32),
-}
-
-impl std::fmt::Display for RuleParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Empty => write!(f, "empty rulestring"),
-            Self::Malformed => write!(f, "rulestring must look like 'B3/S23'"),
-            Self::InvalidDigit(ch) => write!(f, "invalid neighbor count '{ch}' in rulestring"),
-            Self::NeighborOutOfRange(n) => write!(f, "neighbor count {n} exceeds the maximum of 8"),
-        }
-    }
-}
-
-impl std::error::Error for RuleParseError {}
-
-/// Birth and survival neighbor counts, as written in `B3/S23` notation. Each is a
-/// bitmask over the nine possible neighbor counts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Rule {
-    birth: u16,
-    survive: u16,
-}
-
-impl Rule {
-    /// Conway's Game of Life.
-    pub const LIFE: Self = Self {
-        birth: 1 << 3,
-        survive: (1 << 2) | (1 << 3),
-    };
-
-    /// Accepts `B3/S23`, the equivalent `S23/B3`, `B3S23` without the slash, and
-    /// the older `23/3` survival-first ordering. Golly's bounded-grid suffix, as
-    /// in `B3/S23:T64,64`, is ignored: boards here have their own edges.
-    pub fn parse(source: &str) -> Result<Self, RuleParseError> {
-        let text = source.split_once(':').map_or(source, |(rule, _)| rule);
-        let text = text.trim().to_ascii_lowercase();
-        if text.is_empty() {
-            return Err(RuleParseError::Empty);
-        }
-        let (left, right) = match text.split_once('/') {
-            Some(halves) => halves,
-            // Without the slash, the second letter starts the second half.
-            None if text.starts_with(['b', 's']) => match text[1..].find(['b', 's']) {
-                Some(at) => text.split_at(at + 1),
-                None => return Err(RuleParseError::Malformed),
-            },
-            None => return Err(RuleParseError::Malformed),
-        };
-        let (left, right) = (left.trim(), right.trim());
-
-        let (birth, survive) = match (
-            left.strip_prefix('b'),
-            right.strip_prefix('s'),
-            left.strip_prefix('s'),
-            right.strip_prefix('b'),
-        ) {
-            (Some(birth), Some(survive), _, _) => (birth, survive),
-            (_, _, Some(survive), Some(birth)) => (birth, survive),
-            _ if left
-                .chars()
-                .chain(right.chars())
-                .all(|c| c.is_ascii_digit())
-                && !(left.is_empty() && right.is_empty()) =>
-            {
-                // Legacy ordering puts survival counts first, e.g. `23/3`.
-                (right, left)
-            }
-            _ => return Err(RuleParseError::Malformed),
-        };
-
-        Ok(Self {
-            birth: counts_to_mask(birth)?,
-            survive: counts_to_mask(survive)?,
-        })
-    }
-
-    /// Whether a dead cell with no live neighbours is born, which on an unbounded
-    /// board would light every cell of the plane.
-    pub(crate) fn births_from_nothing(self) -> bool {
-        self.allows_birth(0)
-    }
-
-    fn allows_birth(self, neighbors: u8) -> bool {
-        self.birth & (1 << neighbors) != 0
-    }
-
-    fn allows_survival(self, neighbors: u8) -> bool {
-        self.survive & (1 << neighbors) != 0
-    }
-
-    /// Birth counts in bits 0..=8 and survival counts in bits 9..=17, so the next
-    /// state is bit `neighbors + 9 * alive` without branching on `alive`.
-    pub(crate) fn transition_mask(self) -> u32 {
-        u32::from(self.birth) | (u32::from(self.survive) << 9)
-    }
-}
-
-impl Default for Rule {
-    fn default() -> Self {
-        Self::LIFE
-    }
-}
-
-impl std::fmt::Display for Rule {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "B")?;
-        for n in 0..=8u8 {
-            if self.allows_birth(n) {
-                write!(f, "{n}")?;
-            }
-        }
-        write!(f, "/S")?;
-        for n in 0..=8u8 {
-            if self.allows_survival(n) {
-                write!(f, "{n}")?;
-            }
-        }
-        Ok(())
-    }
-}
-
-fn counts_to_mask(counts: &str) -> Result<u16, RuleParseError> {
-    let mut mask = 0u16;
-    for ch in counts.chars() {
-        let digit = ch.to_digit(10).ok_or(RuleParseError::InvalidDigit(ch))?;
-        if digit > 8 {
-            return Err(RuleParseError::NeighborOutOfRange(digit));
-        }
-        mask |= 1 << digit;
-    }
-    Ok(mask)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -246,10 +109,6 @@ impl PackedCells {
         self.0.len() * size_of::<Chunk>()
     }
 }
-
-const SIDE: usize = CHUNK_SIZE as usize;
-const LAST: usize = SIDE - 1;
-static EMPTY_CHUNK: Chunk = [0; SIDE];
 
 /// The low `count` bits, for `count` up to 64.
 fn low_bits(count: usize) -> u64 {
@@ -347,14 +206,6 @@ impl Shape {
     }
 }
 
-/// A chunk's next generation, staged so bands can share the old one.
-#[derive(Debug, Clone)]
-struct ChunkChange {
-    slot: u32,
-    next: Chunk,
-    rows: ChangedRows,
-}
-
 #[derive(Debug, Clone)]
 pub struct Board {
     shape: Shape,
@@ -377,7 +228,7 @@ pub struct Board {
     /// recycled buffer for the generation's scheduled chunks
     work_scratch: Vec<(u32, u64)>,
     /// recycled lists for each band's changes
-    change_scratch: Vec<Vec<ChunkChange>>,
+    change_scratch: Vec<Vec<ChunkChange<u32>>>,
     /// running count of live cells, kept in step with every mutation
     live_count: usize,
     /// XOR of [`cell_key`] for every flip made by stepping, so generations of one
@@ -516,15 +367,11 @@ impl Board {
     }
 
     pub fn step(&mut self) -> bool {
-        let threads = ComputeTaskPool::get_or_init(TaskPool::default).thread_num();
-        self.step_in_bands(|rows| threads.min(rows / MIN_BAND_ROWS))
+        self.step_in_bands(bands_for)
     }
 
-    /// Evaluates the scheduled rows in as many bands of whole chunks as `bands`
-    /// asks for, given the number of rows, each with about as many rows. Bands
-    /// run in parallel on the compute task pool when there is more than one, and
-    /// only read the chunks and stage their changes, which are applied once all
-    /// have finished, so no band can see another's half of the generation.
+    /// Steps as [`step_bands`] does, in as many bands as `bands` asks for given
+    /// the number of rows, then applies the staged changes.
     fn step_in_bands(&mut self, bands: impl FnOnce(usize) -> usize) -> bool {
         if self.active_list.is_empty() {
             return false;
@@ -538,31 +385,11 @@ impl Board {
                 .drain(..)
                 .map(|slot| (slot, std::mem::take(&mut active[slot as usize]))),
         );
-        let rows = work
-            .iter()
-            .map(|&(_, rows)| rows.count_ones() as usize)
-            .sum();
-        let bands = bands(rows).max(1);
         let mut changes = std::mem::take(&mut self.change_scratch);
-        if changes.len() < bands {
-            changes.resize_with(bands, Vec::new);
-        }
-
-        let (chunks, shape, rule) = (&self.chunks[..], self.shape, self.rule);
-        let (live_delta, flips) = if bands == 1 {
-            step_band(chunks, shape, rule, &work, &mut changes[0])
-        } else {
-            ComputeTaskPool::get_or_init(TaskPool::default)
-                .scope(|scope| {
-                    for (band, changes) in split_bands(&work, rows, bands).zip(&mut changes) {
-                        scope.spawn(async move { step_band(chunks, shape, rule, band, changes) });
-                    }
-                })
-                .into_iter()
-                .fold((0, 0), |(live, flips), (band_live, band_flips)| {
-                    (live + band_live, flips ^ band_flips)
-                })
-        };
+        let (chunks, shape, rule) = (&self.chunks[..], self.shape, Transitions::new(self.rule));
+        let (live_delta, flips) = step_bands(&work, bands, &mut changes, |band, changes| {
+            step_band(chunks, shape, &rule, band, changes)
+        });
 
         let mut changed = false;
         for list in &mut changes {
@@ -579,11 +406,11 @@ impl Board {
         changed
     }
 
-    fn apply(&mut self, change: &ChunkChange) {
-        let slot = change.slot as usize;
+    fn apply(&mut self, change: &ChunkChange<u32>) {
+        let slot = change.key as usize;
         if !self.dirty_full {
             if self.dirty_rows[slot] == 0 {
-                self.dirty_list.push(change.slot);
+                self.dirty_list.push(change.key);
             }
             self.dirty_rows[slot] |= change.rows.any;
             for row in bits(change.rows.any) {
@@ -891,11 +718,10 @@ impl Rows<'_> {
 fn step_band(
     chunks: &[Chunk],
     shape: Shape,
-    rule: Rule,
+    rule: &Transitions,
     band: &[(u32, u64)],
-    changes: &mut Vec<ChunkChange>,
+    changes: &mut Vec<ChunkChange<u32>>,
 ) -> (isize, u64) {
-    let rule = Transitions::new(rule);
     let (mut live_delta, mut flips) = (0, 0);
     for &(slot, scheduled) in band {
         let (cx, cy) = (slot as usize % shape.across, slot as usize / shape.across);
@@ -922,7 +748,6 @@ fn step_band(
         // The board's last row may end partway up the chunk, and the line past
         // it is the first row of the chunk above.
         let past_top = shape.top_row(cy) + 2;
-        let on_board = shape.valid_cols(cx);
 
         let old = level.chunks[1];
         let mut next = *old;
@@ -931,45 +756,32 @@ fn step_band(
             _ if line == past_top => above.sums(0),
             _ => level.sums(line - 1),
         };
-        next_rows(scheduled, &rule, sums, &mut next);
-        let mut rows = ChangedRows::default();
-        for row in bits(scheduled) {
-            next[row] &= on_board;
-            let flipped = old[row] ^ next[row];
-            if flipped == 0 {
-                continue;
-            }
-            let changed = shape.changed(cx, row, flipped);
-            rows.any |= changed.any;
-            rows.west |= changed.west;
-            rows.east |= changed.east;
-            live_delta += next[row].count_ones() as isize - old[row].count_ones() as isize;
-            let first = (cy * SIDE + row) * shape.cols + cx * SIDE;
-            for col in bits(flipped) {
-                flips ^= cell_key((first + col) as u64);
-            }
-        }
+        next_rows(scheduled, rule, sums, &mut next);
+        let (rows, live, keys) = compare_rows(
+            old,
+            &mut next,
+            scheduled,
+            shape.valid_cols(cx),
+            shape.east_col(cx),
+            |row| ((cy * SIDE + row) * shape.cols + cx * SIDE) as u64,
+            |first, col| cell_key(first + col as u64),
+        );
+        live_delta += live;
+        flips ^= keys;
         if rows.any != 0 {
-            changes.push(ChunkChange { slot, next, rows });
+            changes.push(ChunkChange {
+                key: slot,
+                next,
+                rows,
+            });
         }
     }
     (live_delta, flips)
 }
 
-/// A well-mixed key per cell (SplitMix64), so that no set of flips is likely to
-/// cancel out unless each cell flipped back.
-pub(crate) fn cell_key(idx: u64) -> u64 {
-    let value = idx.wrapping_add(1).wrapping_mul(0x9E3779B97F4A7C15);
-    let value = (value ^ (value >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-    let value = (value ^ (value >> 27)).wrapping_mul(0x94D049BB133111EB);
-    value ^ (value >> 31)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        Board, BoundaryMode, DirtyCells, RandomizeSettings, Rule, RuleParseError, cell_key,
-    };
+    use super::{Board, BoundaryMode, DirtyCells, RandomizeSettings, Rule, cell_key};
 
     fn live_cells(board: &Board) -> Vec<(usize, usize)> {
         let mut cells: Vec<_> = board.live_cells().collect();
@@ -1094,40 +906,6 @@ mod tests {
             }
         }
         board
-    }
-
-    #[test]
-    fn rulestrings_parse_in_every_accepted_ordering() {
-        let life = Rule::LIFE;
-        assert_eq!(Rule::parse("B3/S23"), Ok(life));
-        assert_eq!(Rule::parse("b3/s23"), Ok(life));
-        assert_eq!(Rule::parse(" B3 / S23 "), Ok(life));
-        assert_eq!(Rule::parse("S23/B3"), Ok(life));
-        // Legacy ordering lists survival counts first.
-        assert_eq!(Rule::parse("23/3"), Ok(life));
-        assert_eq!(life.to_string(), "B3/S23");
-
-        let highlife = Rule::parse("B36/S23").expect("HighLife should parse");
-        assert_ne!(highlife, life);
-        assert_eq!(highlife.to_string(), "B36/S23");
-
-        assert_eq!(Rule::parse(""), Err(RuleParseError::Empty));
-        assert_eq!(Rule::parse("B3S23"), Ok(life));
-        assert_eq!(Rule::parse("s23b3"), Ok(life));
-        assert_eq!(Rule::parse("B3/S23:T64,64"), Ok(life));
-        assert_eq!(Rule::parse("B/S").unwrap().to_string(), "B/S");
-        assert_eq!(Rule::parse(":T64,64"), Err(RuleParseError::Empty));
-        for malformed in ["/", "B3", "B3B3", "323"] {
-            assert_eq!(Rule::parse(malformed), Err(RuleParseError::Malformed));
-        }
-        assert_eq!(
-            Rule::parse("B3/S2x"),
-            Err(RuleParseError::InvalidDigit('x'))
-        );
-        assert_eq!(
-            Rule::parse("B9/S23"),
-            Err(RuleParseError::NeighborOutOfRange(9))
-        );
     }
 
     #[test]

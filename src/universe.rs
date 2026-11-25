@@ -2,8 +2,9 @@
 //! [`SparseBoard`]. Cells have signed coordinates here, so the app has one way to
 //! address a cell, and a finite board takes only those it has.
 use crate::{
-    board::{Board, BoundaryMode, PackedCells, Rule},
+    board::{Board, BoundaryMode, PackedCells},
     patterns::{PatternParseError, RleWriter, read_rle_runs},
+    rule::Rule,
     sparse_board::{
         CellRect, PLANE_CHUNKS_MAX, PLANE_EXPORT_CELLS_MAX, PlaneFull, SparseBoard, SparseSnapshot,
         UnboundedRuleError,
@@ -416,8 +417,9 @@ mod tests {
         plane_within,
     };
     use crate::{
-        board::{Board, BoundaryMode, Rule},
+        board::{Board, BoundaryMode},
         patterns::PatternParseError,
+        rule::Rule,
         sparse_board::{SparseBoard, UnboundedRuleError},
     };
 

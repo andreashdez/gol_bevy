@@ -556,7 +556,7 @@ fn the_unbounded_edges_action_moves_onto_the_plane_unless_the_rule_refuses() {
     assert_eq!(app.board.boundary_mode(), None);
 
     let mut app = GolApp::new(8, 8);
-    app.set_rule(crate::board::Rule::parse("B0/S").unwrap());
+    app.set_rule(crate::rule::Rule::parse("B0/S").unwrap());
     assert!(!app.board.allows_unbounded());
     apply_action(Action::Unbounded, &mut app);
     assert!(app.board.finite().is_some());

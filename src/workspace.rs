@@ -1,7 +1,8 @@
 //! Versioned workspace files. Decode completely before touching the live app.
 use crate::{
-    board::{Board, BoundaryMode, RandomizeSettings, Rule},
+    board::{Board, BoundaryMode, RandomizeSettings},
     patterns::{MAX_LIBRARY_CELLS, MAX_LIBRARY_PATTERNS, MAX_PATTERN_NAME_BYTES, Pattern, to_rle},
+    rule::Rule,
     shared::{BOARD_SIZE_MAX, BOARD_SIZE_MIN},
     sparse_board::PLANE_EXPORT_CELLS_MAX,
     universe::{Universe, plane_from_rle, plane_to_rle},

@@ -1,7 +1,7 @@
 .docname {Architecture}
 .include {docs}
 
-gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`app`, `board`, `sparse_board`, `universe`, `settle`, `patterns`, `workspace`) knows nothing about Bevy's UI or rendering, so it is tested directly.
+gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`app`, `rule`, `chunk`, `board`, `sparse_board`, `universe`, `settle`, `patterns`, `workspace`) knows nothing about Bevy's UI or rendering, so it is tested directly.
 
 ## Source layout
 
@@ -15,6 +15,8 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
         - stamp.rs
         - selection.rs
         - playback.rs
+      - rule.rs
+      - chunk.rs
       - board.rs
       - sparse_board.rs
       - universe.rs
@@ -69,8 +71,10 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
 | Module                  | Responsibility                                                                |
 |-------------------------|-------------------------------------------------------------------------------|
 | `app`                   | Application state and user actions: tools, stamps, speed, undo and redo, import and export |
-| `board`                 | The finite board: rules, edge modes, and a grid of chunks of cells at a bit each |
-| `sparse_board`          | The unbounded board: a map of the same chunks, and the row-at-a-time step both boards use |
+| `rule`                  | Life-like rules, and reading and writing their rulestrings                    |
+| `chunk`                 | The 64 × 64 chunks of cells at a bit each that both boards are made of, and the row-at-a-time step and parallel bands both use |
+| `board`                 | The finite board: edge modes, and a grid of chunks                            |
+| `sparse_board`          | The unbounded board: a map of the same chunks                                 |
 | `universe`              | Either kind of board behind signed cell coordinates, and the snapshots undo keeps of them |
 | `settle`                | Noticing a board that repeats, from generation fingerprints                   |
 | `patterns`              | Built-in patterns and RLE reading and writing                                 |

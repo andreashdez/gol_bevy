@@ -1,4 +1,4 @@
-use crate::board::{Rule, RuleParseError};
+use crate::rule::{Rule, RuleParseError};
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -473,7 +473,7 @@ fn parse_header(header: &str) -> Result<RleHeader, PatternParseError> {
 #[cfg(test)]
 mod tests {
     use super::{Pattern, PatternParseError, RleWriter, read_rle_runs, to_rle};
-    use crate::board::Rule;
+    use crate::rule::Rule;
 
     #[test]
     fn parses_comments_and_run_lengths() {
@@ -631,7 +631,7 @@ mod tests {
     #[test]
     fn writes_rle_that_reads_back_as_the_same_cells() {
         use super::to_rle;
-        use crate::board::Rule;
+        use crate::rule::Rule;
 
         let glider = [(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)];
         assert_eq!(

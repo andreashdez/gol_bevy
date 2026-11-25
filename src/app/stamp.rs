@@ -4,8 +4,8 @@
 
 use super::{App, EditTool};
 use crate::{
-    board::Rule,
     patterns::{Pattern, PatternParseError},
+    rule::Rule,
 };
 use std::fmt;
 

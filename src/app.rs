@@ -26,8 +26,9 @@ pub use self::{
     stamp::{PasteError, PatternImport},
 };
 use crate::{
-    board::{self, BoundaryMode, RandomizeSettings, Rule},
+    board::{self, BoundaryMode, RandomizeSettings},
     patterns::Pattern,
+    rule::Rule,
     settle::SettleWatch,
     shared::BOARD_SIZE_MAX,
     sparse_board::{CellRect, PLANE_CHUNKS_MAX, UnboundedRuleError},

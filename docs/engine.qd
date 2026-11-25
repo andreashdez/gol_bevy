@@ -1,7 +1,7 @@
 .docname {Simulation engine}
 .include {docs}
 
-The simulation lives in `src/board.rs`, the finite board, and `src/sparse_board.rs`, the [unbounded](#unbounded-board) one. Both are plain Rust, apart from borrowing Bevy's compute task pool to step in parallel, and both store and step cells the same way, 64 at a time. They are built to keep large boards fast whether they are nearly empty or full of activity.
+The simulation lives in `src/board.rs`, the finite board, and `src/sparse_board.rs`, the [unbounded](#unbounded-board) one, which share their chunks and the step that works out a chunk's next rows from `src/chunk.rs`. All three are plain Rust, apart from borrowing Bevy's compute task pool to step in parallel, and both boards store and step cells the same way, 64 at a time. They are built to keep large boards fast whether they are nearly empty or full of activity.
 
 ## Cell storage
 
@@ -13,11 +13,11 @@ Undo keeps earlier boards as `PackedCells`, a copy of the chunks, so the history
 
 ## Rules as bitmasks
 
-A `Rule` stores birth and survival counts as two 9-bit masks, one bit per possible neighbour count (0 to 8), written together as an 18-bit *transition mask*: birth counts in bits 0–8 and survival counts in bits 9–17.
+A `Rule`, in `src/rule.rs`, stores birth and survival counts as two 9-bit masks, one bit per possible neighbour count (0 to 8), written together as an 18-bit *transition mask*: birth counts in bits 0–8 and survival counts in bits 9–17.
 
 ## Stepping a row at a time
 
-`next_rows` in `src/sparse_board.rs` works out the next state of a chunk's scheduled rows, 64 cells of a row in one go, and both boards step with it. Each row is first summed across: with the row moved one cell west and one cell east, so that bit *i* of each word is one of cell *i*'s neighbours, bitwise logic gives every cell the count of itself and its two neighbours, 0 to 3, and of just its two neighbours, 0 to 2, each as two bits over two words. A cell's neighbour count is the three-cell sums of the rows below and above it plus the two-cell sum of its own row, so `next_rows` walks a chunk's rows from the lowest, keeping the last three rows' sums, and works out each row's sums once rather than once for each of the three rows that see it. A carry-save adder turns the three sums into each cell's count as four bits spread over four words, about a dozen operations for all 64 cells.
+`next_rows` in `src/chunk.rs` works out the next state of a chunk's scheduled rows, 64 cells of a row in one go, and both boards step with it. Each row is first summed across: with the row moved one cell west and one cell east, so that bit *i* of each word is one of cell *i*'s neighbours, bitwise logic gives every cell the count of itself and its two neighbours, 0 to 3, and of just its two neighbours, 0 to 2, each as two bits over two words. A cell's neighbour count is the three-cell sums of the rows below and above it plus the two-cell sum of its own row, so `next_rows` walks a chunk's rows from the lowest, keeping the last three rows' sums, and works out each row's sums once rather than once for each of the three rows that see it. A carry-save adder turns the three sums into each cell's count as four bits spread over four words, about a dozen operations for all 64 cells.
 
 The rule is then applied to all 64 cells at once. A `Transitions`, worked out from the rule once a generation, holds each count's outcome for a dead cell and a live one, and each cell's outcome is picked out by one bit of its count at a time. Life, which most boards run, comes down to a few operations: three neighbours, or two and alive.
 
@@ -108,6 +108,8 @@ It also checks banded steps against serial ones, that a glider keeps the work to
 
 `render_plugin.rs` steps a board wider and taller than a chunk and checks every texel, and every cell's age, against the cell it stands for. It also checks that only cells still ageing are revisited.
 
-`sparse_board.rs` checks stepping against a brute-force simulation and against `Board`, with extra attention to chunk edges and corners, since a row left unscheduled would silently give wrong cells rather than fail. It checks `next_rows` on its own against counting each cell's neighbours, for scheduled rows in runs and gaps of every length, under named rules and random ones, `B0` among them. It also checks banded steps against serial ones, that bands keep every chunk and split the rows evenly, the known final population of the R-pentomino, that a glider stays in a handful of chunks, the live bounds against every cell's, and that loading a run matches populating each of its cells.
+`sparse_board.rs` checks stepping against a brute-force simulation and against `Board`, with extra attention to chunk edges and corners, since a row left unscheduled would silently give wrong cells rather than fail. It checks `next_rows` on its own against counting each cell's neighbours, for scheduled rows in runs and gaps of every length, under named rules and random ones, `B0` among them. It also checks banded steps against serial ones, the known final population of the R-pentomino, that a glider stays in a handful of chunks, the live bounds against every cell's, and that loading a run matches populating each of its cells.
+
+`chunk.rs` checks that bands keep every chunk and split the rows evenly, and `rule.rs` that rulestrings parse in every accepted form.
 
 `patterns.rs` evolves the built-in oscillators and spaceships and checks that they behave as named. It also checks that the Gosper glider gun fires one glider every 30 generations, and that Diehard vanishes after exactly 130.

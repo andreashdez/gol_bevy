@@ -1,37 +1,21 @@
 //! An unbounded board. Live cells sit in a sparse map of fixed-size chunks, so
 //! memory follows the live cells rather than any board size, and a generation
 //! costs time proportional to what changed in the last one.
-use crate::board::{Rule, cell_key};
-use bevy::{
-    platform::collections::HashMap,
-    tasks::{ComputeTaskPool, TaskPool},
+use crate::{
+    chunk::{
+        CHUNK_BITS, CHUNK_SIZE, ChangedRows, Chunk, ChunkChange, EMPTY_CHUNK, LAST, ROW_ABOVE,
+        RowSums, Transitions, bands_for, bits, cell_key, compare_rows, next_rows, step_bands,
+    },
+    rule::Rule,
 };
+use bevy::platform::collections::HashMap;
 use std::sync::Arc;
 
-const CHUNK_BITS: u32 = 6;
-/// Width and height of a chunk in cells.
-pub const CHUNK_SIZE: i64 = 1 << CHUNK_BITS;
 const CHUNK_MASK: i64 = CHUNK_SIZE - 1;
-/// Index of a chunk's last row, and of its last column.
-const LAST_LINE: u32 = CHUNK_SIZE as u32 - 1;
 
-/// One row per `u64`, with cell `x` in bit `x`. A row holds as many cells as a
-/// machine word, so a generation updates them all at once.
-pub type Chunk = [u64; CHUNK_SIZE as usize];
 /// A chunk's position in chunks: the cell's coordinates, divided by [`CHUNK_SIZE`]
 /// and rounded down, so cell -1 is in chunk -1.
 pub type ChunkKey = (i64, i64);
-
-static EMPTY_CHUNK: Chunk = [0; CHUNK_SIZE as usize];
-
-/// Fewest scheduled rows that justify another parallel band, on either board. A
-/// row of 30% noise takes about 50 ns, fingerprint and all, so a band of these
-/// is some 50 µs of work, well beyond what it costs to wake a thread of the task
-/// pool and wait for it. It is also sixteen whole chunks, so a board busy
-/// everywhere splits as it would if bands were counted in chunks, while settled
-/// debris, whose chunks have a row or two scheduled each, stays on one thread
-/// rather than spreading a few microseconds of work across all of them.
-pub(crate) const MIN_BAND_ROWS: usize = 1024;
 
 /// Changed chunks tracked between render syncs before settling for a full redraw.
 /// Nothing else bounds the list, as a run may cross new chunks forever between syncs.
@@ -199,40 +183,6 @@ impl SparseSnapshot {
     }
 }
 
-/// Which rows of a chunk changed: any of their cells, and those in its first and
-/// last columns, which is what the chunks either side of it can see.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct ChangedRows {
-    pub(crate) any: u64,
-    pub(crate) west: u64,
-    pub(crate) east: u64,
-}
-
-impl ChangedRows {
-    const ALL: Self = Self {
-        any: !0,
-        west: !0,
-        east: !0,
-    };
-
-    fn cell(x: usize, y: usize) -> Self {
-        let row = 1 << y;
-        Self {
-            any: row,
-            west: if x == 0 { row } else { 0 },
-            east: if x as u32 == LAST_LINE { row } else { 0 },
-        }
-    }
-}
-
-/// A chunk's next generation, staged so bands can share the old one.
-#[derive(Debug, Clone)]
-struct ChunkChange {
-    key: ChunkKey,
-    next: Chunk,
-    rows: ChangedRows,
-}
-
 #[derive(Debug, Clone)]
 pub struct SparseBoard {
     /// live chunks. A chunk with no live cells is removed.
@@ -247,7 +197,7 @@ pub struct SparseBoard {
     /// recycled buffer for the generation's scheduled chunks
     work_scratch: Vec<(ChunkKey, u64)>,
     /// recycled lists for each band's changes
-    change_scratch: Vec<Vec<ChunkChange>>,
+    change_scratch: Vec<Vec<ChunkChange<ChunkKey>>>,
     /// running count of live cells, kept in step with every mutation
     live_count: usize,
     /// XOR of the key of every cell flipped by stepping, so generations of one run
@@ -392,7 +342,7 @@ impl SparseBoard {
         let rows = ChangedRows {
             any: 1 << row,
             west: (flipped & 1) << row,
-            east: (flipped >> LAST_LINE) << row,
+            east: (flipped >> LAST) << row,
         };
         wake(&mut self.active, key, rows);
         flipped
@@ -406,16 +356,12 @@ impl SparseBoard {
     /// Steps unless the generation would leave more than `max_chunks` chunks,
     /// in which case nothing changes. Returns whether any cell changed.
     pub fn step_within(&mut self, max_chunks: usize) -> Result<bool, PlaneFull> {
-        let threads = ComputeTaskPool::get_or_init(TaskPool::default).thread_num();
-        self.step_in_bands(|rows| threads.min(rows / MIN_BAND_ROWS), max_chunks)
+        self.step_in_bands(bands_for, max_chunks)
     }
 
-    /// Evaluates the scheduled rows in as many bands of whole chunks as `bands`
-    /// asks for, given the number of rows, each with about as many rows. Bands
-    /// run in parallel on the compute task pool when there is more than one, and
-    /// only read the chunks and stage their changes, which are applied once all
-    /// have finished, so no band can see another's half of the generation, and
-    /// a generation that would outgrow `max_chunks` can be dropped whole.
+    /// Steps as [`step_bands`] does, in as many bands as `bands` asks for given
+    /// the number of rows, then applies the staged changes, unless they would
+    /// outgrow `max_chunks`: then the generation is dropped whole.
     fn step_in_bands(
         &mut self,
         bands: impl FnOnce(usize) -> usize,
@@ -428,31 +374,11 @@ impl SparseBoard {
         let mut work = std::mem::take(&mut self.work_scratch);
         work.clear();
         work.extend(self.active.drain());
-        let rows = work
-            .iter()
-            .map(|&(_, rows)| rows.count_ones() as usize)
-            .sum();
-        let bands = bands(rows).max(1);
         let mut changes = std::mem::take(&mut self.change_scratch);
-        if changes.len() < bands {
-            changes.resize_with(bands, Vec::new);
-        }
-
-        let (chunks, rule) = (&self.chunks, self.rule);
-        let (live_delta, flips) = if bands == 1 {
-            step_band(chunks, rule, &work, &mut changes[0])
-        } else {
-            ComputeTaskPool::get_or_init(TaskPool::default)
-                .scope(|scope| {
-                    for (band, changes) in split_bands(&work, rows, bands).zip(&mut changes) {
-                        scope.spawn(async move { step_band(chunks, rule, band, changes) });
-                    }
-                })
-                .into_iter()
-                .fold((0, 0), |(live, flips), (band_live, band_flips)| {
-                    (live + band_live, flips ^ band_flips)
-                })
-        };
+        let (chunks, rule) = (&self.chunks, Transitions::new(self.rule));
+        let (live_delta, flips) = step_bands(&work, bands, &mut changes, |band, changes| {
+            step_band(chunks, &rule, band, changes)
+        });
 
         if self.outgrows(&changes, max_chunks) {
             for list in &mut changes {
@@ -485,7 +411,7 @@ impl SparseBoard {
     }
 
     /// Whether applying `changes` would leave more than `max_chunks` chunks.
-    fn outgrows(&self, changes: &[Vec<ChunkChange>], max_chunks: usize) -> bool {
+    fn outgrows(&self, changes: &[Vec<ChunkChange<ChunkKey>>], max_chunks: usize) -> bool {
         let staged: usize = changes.iter().map(Vec::len).sum();
         // Each change adds a chunk at most, so most generations need no count.
         if self.chunks.len().saturating_add(staged) <= max_chunks {
@@ -502,7 +428,7 @@ impl SparseBoard {
         after > max_chunks
     }
 
-    fn apply(&mut self, change: &ChunkChange) {
+    fn apply(&mut self, change: &ChunkChange<ChunkKey>) {
         let ChunkChange { key, next, rows } = change;
         if !self.dirty_full {
             let old = self.chunks.get(key).map_or(&EMPTY_CHUNK, |chunk| &**chunk);
@@ -702,7 +628,7 @@ impl SparseBoard {
             }
         }
         let ((left, bottom), (right, top)) = (chunk_origin(low), chunk_origin(high));
-        let last = |cells: u64| i64::from(LAST_LINE - cells.leading_zeros());
+        let last = |cells: u64| LAST as i64 - i64::from(cells.leading_zeros());
         Some((
             (
                 left + i64::from(west.trailing_zeros()),
@@ -838,17 +764,6 @@ fn rect_mask(rect: CellRect, left: i64, y: i64) -> u64 {
     u64::MAX >> (CHUNK_SIZE as i128 - (end - start)) << start
 }
 
-/// Positions of the set bits, lowest first.
-pub(crate) fn bits(mut mask: u64) -> impl Iterator<Item = usize> {
-    std::iter::from_fn(move || {
-        (mask != 0).then(|| {
-            let bit = mask.trailing_zeros() as usize;
-            mask &= mask - 1;
-            bit
-        })
-    })
-}
-
 /// A cell can only change after it or one of its neighbours has, so schedule the
 /// rows beside the ones that changed, in this chunk and in any neighbour that can
 /// see them. Scheduling rows, not chunks, keeps a lone glider from costing a chunk.
@@ -859,8 +774,8 @@ fn wake(active: &mut HashMap<ChunkKey, u64>, (x, y): ChunkKey, rows: ChangedRows
         }
     };
     let spread = |rows: u64| rows | rows << 1 | rows >> 1;
-    let to_last_row = |rows: u64| (rows & 1) << LAST_LINE;
-    let to_first_row = |rows: u64| rows >> LAST_LINE;
+    let to_last_row = |rows: u64| (rows & 1) << LAST;
+    let to_first_row = |rows: u64| rows >> LAST;
 
     schedule((x, y), spread(rows.any));
     schedule((x - 1, y), spread(rows.west));
@@ -873,33 +788,6 @@ fn wake(active: &mut HashMap<ChunkKey, u64>, (x, y): ChunkKey, rows: ChangedRows
     schedule((x + 1, y + 1), to_first_row(rows.east));
 }
 
-/// Splits scheduled chunks into at most `bands` runs of whole chunks, each with
-/// about as many of the `rows` scheduled rows as the others, so that bands take
-/// about as long however unevenly the rows fall among the chunks.
-pub(crate) fn split_bands<K>(
-    work: &[(K, u64)],
-    rows: usize,
-    bands: usize,
-) -> impl Iterator<Item = &[(K, u64)]> {
-    // Every band but the last has at least this many rows, so there are no more
-    // than `bands` of them.
-    let band_rows = rows.div_ceil(bands.max(1)).max(1);
-    let mut rest = work;
-    std::iter::from_fn(move || {
-        if rest.is_empty() {
-            return None;
-        }
-        let (mut end, mut taken) = (0, 0);
-        while end < rest.len() && taken < band_rows {
-            taken += rest[end].1.count_ones() as usize;
-            end += 1;
-        }
-        let (band, tail) = rest.split_at(end);
-        rest = tail;
-        Some(band)
-    })
-}
-
 /// A chunk's 3 × 3 neighbourhood, row by row, with the chunk itself in the middle.
 type Around<'a> = [&'a Chunk; 9];
 
@@ -907,11 +795,10 @@ type Around<'a> = [&'a Chunk; 9];
 /// the live count and the XOR of the keys of every cell that flipped.
 fn step_band(
     chunks: &HashMap<ChunkKey, Arc<Chunk>>,
-    rule: Rule,
+    rule: &Transitions,
     band: &[(ChunkKey, u64)],
-    changes: &mut Vec<ChunkChange>,
+    changes: &mut Vec<ChunkChange<ChunkKey>>,
 ) -> (isize, u64) {
-    let rule = Transitions::new(rule);
     let (mut live_delta, mut flips) = (0, 0);
     for &(key, scheduled) in band {
         let (x, y) = key;
@@ -930,22 +817,18 @@ fn step_band(
         let (left, bottom) = chunk_origin(key);
         let old = around[4];
         let mut next = *old;
-        next_rows(scheduled, &rule, |line| row_sums(&around, line), &mut next);
-        let mut rows = ChangedRows::default();
-        for row in bits(scheduled) {
-            let flipped = old[row] ^ next[row];
-            if flipped == 0 {
-                continue;
-            }
-            rows.any |= 1 << row;
-            rows.west |= (flipped & 1) << row;
-            rows.east |= (flipped >> LAST_LINE) << row;
-            live_delta += next[row].count_ones() as isize - old[row].count_ones() as isize;
-            let row_key = cell_key((bottom + row as i64) as u64);
-            for col in bits(flipped) {
-                flips ^= cell_key(cell_key((left + col as i64) as u64) ^ row_key);
-            }
-        }
+        next_rows(scheduled, rule, |line| row_sums(&around, line), &mut next);
+        let (rows, live, keys) = compare_rows(
+            old,
+            &mut next,
+            scheduled,
+            !0,
+            LAST,
+            |row| cell_key((bottom + row as i64) as u64),
+            |row_key, col| cell_key(cell_key((left + col as i64) as u64) ^ row_key),
+        );
+        live_delta += live;
+        flips ^= keys;
         if rows.any != 0 {
             changes.push(ChunkChange { key, next, rows });
         }
@@ -957,144 +840,29 @@ fn step_band(
 /// [`next_rows`] numbers them.
 fn row_sums(around: &Around, line: usize) -> RowSums {
     let (first, row) = match line {
-        0 => (0, LAST_LINE as usize),
+        0 => (0, LAST),
         ROW_ABOVE => (6, 0),
         _ => (3, line - 1),
     };
     let centre = around[first + 1][row];
     RowSums::new(
-        centre << 1 | around[first][row] >> LAST_LINE,
+        centre << 1 | around[first][row] >> LAST,
         centre,
-        centre >> 1 | around[first + 2][row] << LAST_LINE,
-    )
-}
-
-/// The line [`next_rows`] asks for the row above a chunk's last row by.
-const ROW_ABOVE: usize = CHUNK_SIZE as usize + 1;
-
-/// A row of 64 cells, with each cell's west and east neighbours added up
-/// alongside it, bit-sliced so that bit `i` of each word belongs to cell `i`.
-/// A row's sums serve three rows: its own, and those either side of it.
-#[derive(Clone, Copy)]
-pub(crate) struct RowSums {
-    centre: u64,
-    /// The ones and twos of each cell and its two neighbours, 0 to 3, which is
-    /// what the rows either side see of this one.
-    ones: u64,
-    twos: u64,
-    /// The ones and twos of just the two neighbours, 0 to 2, which is what a
-    /// cell sees of its own row.
-    side_ones: u64,
-    side_twos: u64,
-}
-
-impl RowSums {
-    /// From a row's cells and the same row moved one cell east, `west`, which
-    /// lines each cell up with its west neighbour, and one cell west, `east`.
-    pub(crate) fn new(west: u64, centre: u64, east: u64) -> Self {
-        let (side_ones, side_twos) = (west ^ east, west & east);
-        Self {
-            centre,
-            ones: side_ones ^ centre,
-            twos: side_twos | side_ones & centre,
-            side_ones,
-            side_twos,
-        }
-    }
-}
-
-/// A rule as [`next_cells`] applies it to 64 neighbour counts at once, worked
-/// out once a generation rather than once a row.
-#[derive(Clone, Copy)]
-pub(crate) struct Transitions {
-    /// Life, which most boards run, reduces to a handful of operations.
-    life: bool,
-    /// For each count, all ones if a dead cell with that many neighbours is
-    /// born, and all ones if a live cell's fate differs from a dead one's.
-    born: [u64; 9],
-    differs: [u64; 9],
-}
-
-impl Transitions {
-    pub(crate) fn new(rule: Rule) -> Self {
-        let mask = rule.transition_mask();
-        let word = |bit: usize| 0u64.wrapping_sub(u64::from(mask >> bit & 1));
-        Self {
-            life: rule == Rule::LIFE,
-            born: std::array::from_fn(word),
-            differs: std::array::from_fn(|count| word(count) ^ word(count + 9)),
-        }
-    }
-
-    /// The next state of each cell of `alive`, from its count of live
-    /// neighbours as four bit planes, lowest first.
-    fn apply(&self, alive: u64, [n0, n1, n2, n3]: [u64; 4]) -> u64 {
-        if self.life {
-            // Three neighbours, or two and alive. Eight leaves `n1` clear.
-            return n1 & !n2 & (n0 | alive);
-        }
-        // Each cell's outcome for every count, then halving the candidates by
-        // one bit of the count at a time: `pick` takes `high` where `bit` is set.
-        let pick = |low: u64, high: u64, bit: u64| low ^ ((low ^ high) & bit);
-        let outcome = |count: usize| self.born[count] ^ (self.differs[count] & alive);
-        let pairs = [0, 2, 4, 6].map(|count| pick(outcome(count), outcome(count + 1), n0));
-        let quads = [pick(pairs[0], pairs[1], n1), pick(pairs[2], pairs[3], n1)];
-        // A count of eight has the three low bits clear.
-        pick(pick(quads[0], quads[1], n2), outcome(8), n3)
-    }
-}
-
-/// Works out the next state of the `scheduled` rows of a chunk into `next`.
-/// `sums(line)` gives the sums of row `line - 1` of the chunk's column, so line
-/// 0 is the last row of the chunk below and [`ROW_ABOVE`] the first row of the
-/// chunk above. Rows go lowest first, keeping the last three rows' sums, so a
-/// run of scheduled rows works out each row's sums once rather than three times.
-pub(crate) fn next_rows(
-    scheduled: u64,
-    rule: &Transitions,
-    mut sums: impl FnMut(usize) -> RowSums,
-    next: &mut Chunk,
-) {
-    // The last row worked out, with the sums of the rows below, level with, and
-    // above it.
-    let mut window: Option<(usize, [RowSums; 3])> = None;
-    for row in bits(scheduled) {
-        let rows = match window {
-            Some((last, [_, level, above])) if last + 1 == row => [level, above, sums(row + 2)],
-            Some((last, [.., above])) if last + 2 == row => [above, sums(row + 1), sums(row + 2)],
-            _ => [sums(row), sums(row + 1), sums(row + 2)],
-        };
-        next[row] = next_cells(&rows, rule);
-        window = Some((row, rows));
-    }
-}
-
-/// The next state of the 64 cells of the middle row, from the sums of the rows
-/// below, level with, and above it.
-fn next_cells([below, level, above]: &[RowSums; 3], rule: &Transitions) -> u64 {
-    // Each cell's live neighbours, 0 to 8, as four bit planes, added by
-    // carry-save: the three cells of each row either side, and the two of its own.
-    let ones = below.ones ^ above.ones;
-    let n0 = ones ^ level.side_ones;
-    let carry = below.ones & above.ones | ones & level.side_ones;
-    let twos = below.twos ^ above.twos;
-    let more_twos = twos ^ level.side_twos;
-    let fours = below.twos & above.twos | twos & level.side_twos;
-    let n1 = more_twos ^ carry;
-    let more_fours = more_twos & carry;
-    rule.apply(
-        level.centre,
-        [n0, n1, fours ^ more_fours, fours & more_fours],
+        centre >> 1 | around[first + 2][row] << LAST,
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockGrid, CHANGE_SCRATCH_KEPT, CHUNK_SIZE, CellRect, Chunk, DIRTY_CHUNKS_MAX, DirtyChunks,
-        SparseBoard, Transitions, UnboundedRuleError, next_rows, row_sums, split_bands,
+        BlockGrid, CHANGE_SCRATCH_KEPT, CellRect, DIRTY_CHUNKS_MAX, DirtyChunks, SparseBoard,
+        UnboundedRuleError, row_sums,
     };
-    use crate::board::{Board, BoundaryMode, Rule};
+    use crate::{
+        board::{Board, BoundaryMode},
+        chunk::{CHUNK_SIZE, Chunk, Transitions, next_rows},
+        rule::Rule,
+    };
     use std::collections::{HashMap, HashSet};
 
     const GLIDER: [(i64, i64); 5] = [(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)];
@@ -1844,33 +1612,6 @@ mod tests {
                         };
                         assert_eq!(cells >> col & 1 != 0, expected, "{rule} ({col}, {row})");
                     }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn bands_split_the_rows_evenly_and_keep_every_chunk() {
-        let mut rng = fastrand::Rng::with_seed(5);
-        for _ in 0..200 {
-            let work: Vec<_> = (0..rng.usize(1..60))
-                .map(|key| (key, rng.u64(1..) & rng.u64(..) | 1 << rng.u32(0..64)))
-                .collect();
-            let rows: usize = work
-                .iter()
-                .map(|&(_, rows)| rows.count_ones() as usize)
-                .sum();
-            for bands in 1..=9 {
-                let split: Vec<_> = split_bands(&work, rows, bands).collect();
-                assert!(split.len() <= bands, "{} bands of {bands}", split.len());
-                assert_eq!(split.concat(), work);
-                let band_rows = rows.div_ceil(bands);
-                for band in &split {
-                    let taken: usize = band
-                        .iter()
-                        .map(|&(_, rows)| rows.count_ones() as usize)
-                        .sum();
-                    assert!(taken < band_rows + 64, "{taken} rows for {band_rows}");
                 }
             }
         }

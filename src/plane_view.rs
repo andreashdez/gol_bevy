@@ -2,10 +2,11 @@
 //! so one the size of the canvas shows whatever part of the plane is in view,
 //! and a zoomed-out view merges cells into blocks that fit its pixels.
 use crate::{
+    chunk::{CHUNK_SIZE, Chunk, EMPTY_CHUNK},
     coords::CELL_SIZE,
     render_plugin::{BoardSprite, CellPalette, CellStyle, SETTLED_AGE, settled_age, texel_offset},
     shared::{MainCamera, RedrawRequested, Simulation, StartupSet, UpdateSet},
-    sparse_board::{BlockGrid, CHUNK_SIZE, CellRect, Chunk, ChunkKey, DirtyChunks, SparseBoard},
+    sparse_board::{BlockGrid, CellRect, ChunkKey, DirtyChunks, SparseBoard},
     universe::Universe,
 };
 use bevy::{
@@ -135,8 +136,6 @@ impl PlaneAges {
         aged
     }
 }
-
-static EMPTY_CHUNK: Chunk = [0; CHUNK_SIZE as usize];
 
 /// The blocks to draw for a view of the world rectangle `view`. Blocks are as
 /// small as the `cells_per_pixel` of the view allows, and aligned to their own
