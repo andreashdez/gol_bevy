@@ -71,9 +71,10 @@ Any Life-like rule works. These are all accepted, ignoring case and spaces aroun
 |--------------------|-------------|-----------------------------------|
 | `B…/S…`            | `B36/S23`   | Birth on 3 or 6, survive on 2 or 3 |
 | `S…/B…`            | `S23/B36`   | The same rule, survival first     |
+| `B…S…`             | `B36S23`    | The same rule, without the slash  |
 | `…/…` (legacy)     | `23/36`     | Survival counts first, then birth |
 
-Each count is a digit from 0 to 8. Either side may be empty, as in `B2/S`. The rule is always displayed in `B/S` form.
+Each count is a digit from 0 to 8. Either side may be empty, as in `B2/S`, though not both in the legacy form. A suffix after a colon, such as Golly's bounded grid in `B3/S23:T64,64`, is ignored, as the board's edges are set separately. The rule is always displayed in `B/S` form.
 
 Invalid rulestrings are rejected with a message below the field, and the current rule stays in place.
 

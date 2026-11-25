@@ -450,13 +450,11 @@ fn parse_header(header: &str) -> Result<RleHeader, PatternParseError> {
             }
             // A declared rule used to be discarded, which silently simulated
             // non-Life patterns under B3/S23. Golly appends a bounded grid's
-            // topology after a colon (`B3/S23:T64,64`); boards here have their
-            // own edges, so it is ignored, and the comma inside it splits off
-            // an entry with no key, which the match ignores too.
+            // topology after a colon (`B3/S23:T64,64`), which `Rule::parse`
+            // ignores; the comma inside it splits off an entry with no key,
+            // which the match ignores too.
             "rule" => {
-                let rule_string = value.split_once(':').map_or(value, |(rule, _)| rule);
-                rule =
-                    Some(Rule::parse(rule_string.trim()).map_err(PatternParseError::InvalidRule)?);
+                rule = Some(Rule::parse(value).map_err(PatternParseError::InvalidRule)?);
             }
             _ => {}
         }

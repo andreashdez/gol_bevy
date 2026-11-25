@@ -92,18 +92,25 @@ impl Rule {
         survive: (1 << 2) | (1 << 3),
     };
 
-    /// Accepts `B3/S23`, the equivalent `S23/B3`, and the older `23/3`
-    /// survival-first ordering.
+    /// Accepts `B3/S23`, the equivalent `S23/B3`, `B3S23` without the slash, and
+    /// the older `23/3` survival-first ordering. Golly's bounded-grid suffix, as
+    /// in `B3/S23:T64,64`, is ignored: boards here have their own edges.
     pub fn parse(source: &str) -> Result<Self, RuleParseError> {
-        let text = source.trim();
+        let text = source.split_once(':').map_or(source, |(rule, _)| rule);
+        let text = text.trim().to_ascii_lowercase();
         if text.is_empty() {
             return Err(RuleParseError::Empty);
         }
-        let Some((left, right)) = text.split_once('/') else {
-            return Err(RuleParseError::Malformed);
+        let (left, right) = match text.split_once('/') {
+            Some(halves) => halves,
+            // Without the slash, the second letter starts the second half.
+            None if text.starts_with(['b', 's']) => match text[1..].find(['b', 's']) {
+                Some(at) => text.split_at(at + 1),
+                None => return Err(RuleParseError::Malformed),
+            },
+            None => return Err(RuleParseError::Malformed),
         };
-        let left = left.trim().to_ascii_lowercase();
-        let right = right.trim().to_ascii_lowercase();
+        let (left, right) = (left.trim(), right.trim());
 
         let (birth, survive) = match (
             left.strip_prefix('b'),
@@ -113,11 +120,14 @@ impl Rule {
         ) {
             (Some(birth), Some(survive), _, _) => (birth, survive),
             (_, _, Some(survive), Some(birth)) => (birth, survive),
-            _ if left.chars().all(|c| c.is_ascii_digit())
-                && right.chars().all(|c| c.is_ascii_digit()) =>
+            _ if left
+                .chars()
+                .chain(right.chars())
+                .all(|c| c.is_ascii_digit())
+                && !(left.is_empty() && right.is_empty()) =>
             {
                 // Legacy ordering puts survival counts first, e.g. `23/3`.
-                (right.as_str(), left.as_str())
+                (right, left)
             }
             _ => return Err(RuleParseError::Malformed),
         };
@@ -1102,7 +1112,14 @@ mod tests {
         assert_eq!(highlife.to_string(), "B36/S23");
 
         assert_eq!(Rule::parse(""), Err(RuleParseError::Empty));
-        assert_eq!(Rule::parse("B3S23"), Err(RuleParseError::Malformed));
+        assert_eq!(Rule::parse("B3S23"), Ok(life));
+        assert_eq!(Rule::parse("s23b3"), Ok(life));
+        assert_eq!(Rule::parse("B3/S23:T64,64"), Ok(life));
+        assert_eq!(Rule::parse("B/S").unwrap().to_string(), "B/S");
+        assert_eq!(Rule::parse(":T64,64"), Err(RuleParseError::Empty));
+        for malformed in ["/", "B3", "B3B3", "323"] {
+            assert_eq!(Rule::parse(malformed), Err(RuleParseError::Malformed));
+        }
         assert_eq!(
             Rule::parse("B3/S2x"),
             Err(RuleParseError::InvalidDigit('x'))
