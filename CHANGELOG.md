@@ -6,6 +6,18 @@ Add a line under Unreleased in the same pull request as the change; see
 
 ## [Unreleased]
 
+### Changed
+
+- Rulestrings without the slash, such as `B36S23`, are accepted, and so is a suffix after
+  a colon, such as Golly's `B3/S23:T64,64`, in Settings as in RLE files. A rulestring of
+  just `/` is refused.
+
+### Fixed
+
+- Saving settings no longer erases a value the app couldn't read, such as a theme from a
+  newer version, until that setting is changed, and keeps comments at the end of its own
+  lines. A `#` inside quotes no longer starts a comment.
+
 ## [0.4.0] - 2026-11-24
 
 ### Changed
