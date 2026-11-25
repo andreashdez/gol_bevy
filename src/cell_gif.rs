@@ -1,0 +1,364 @@
+//! Generations of a rectangle of the board as an animated GIF, drawn from the
+//! cells as [`CellImage`] draws a still. Each frame after the first covers only
+//! the box of cells that changed, with the cells in it that didn't left
+//! transparent, and a generation that changes nothing lengthens the frame
+//! before it. Plain Rust, so a recording runs off the main thread.
+use crate::{
+    cell_image::CellImage,
+    sparse_board::{CellRect, PLANE_CHUNKS_MAX},
+    universe::Universe,
+};
+use std::{
+    io,
+    sync::atomic::{AtomicUsize, Ordering},
+};
+
+/// Most cells along either side of a recording: a frame of a busy board this
+/// size is 4 MiB to encode, once for every generation.
+pub const MAX_GIF_SIDE: usize = 2048;
+
+/// Most generations a recording holds.
+pub const MAX_GIF_GENERATIONS: usize = 1000;
+
+/// Cells are drawn as squares of as many pixels as keep the longer side within
+/// this, smaller than a still image, as every frame is drawn at this size.
+const GIF_SIDE: usize = 1024;
+
+/// Most pixels across a cell, however small the area.
+const MAX_SCALE: usize = 8;
+
+/// How long a generation shows at maximum speed. GIF delays count hundredths
+/// of a second, and browsers slow any delay under 2 to 10, so 50 generations a
+/// second is the fastest a GIF plays everywhere.
+pub const FASTEST_MS_PER_GENERATION: u64 = 20;
+
+/// Palette indices: the two cell colours, and the transparent one for cells
+/// that a frame leaves as the frame before drew them.
+const LIVE: u8 = 1;
+const UNCHANGED: u8 = 2;
+
+/// What a recording starts from: a copy of the board, stepped on its own so
+/// the board itself plays on, and the area to draw.
+#[derive(Debug, Clone)]
+pub struct GifRequest {
+    pub(crate) board: Universe,
+    pub(crate) rect: CellRect,
+    pub(crate) generations: usize,
+    pub(crate) ms_per_generation: u64,
+}
+
+/// A finished recording.
+#[derive(Debug)]
+pub struct GifRecording {
+    pub file: Vec<u8>,
+    /// Generations drawn, fewer than asked for if an unbounded board reached
+    /// its memory limit first.
+    pub generations: usize,
+    /// Width and height in cells.
+    pub size: (usize, usize),
+    /// Pixels across each cell.
+    pub scale: usize,
+}
+
+impl GifRequest {
+    /// The generations to draw, the current one first.
+    pub fn generations(&self) -> usize {
+        self.generations
+    }
+
+    /// Draws the current generation and the ones after it, dead cells in
+    /// `colors[0]` and live ones in `colors[1]`, as a GIF that loops forever.
+    /// `progress` counts the generations drawn so far.
+    pub fn record(
+        mut self,
+        colors: [[u8; 3]; 2],
+        progress: &AtomicUsize,
+    ) -> io::Result<GifRecording> {
+        let (width, height) = (self.rect.width, self.rect.height);
+        let scale = (GIF_SIDE / width.max(height)).clamp(1, MAX_SCALE);
+        let pixels = |cells: usize| u16::try_from(cells * scale).map_err(io::Error::other);
+        let [dead, live] = colors;
+        let mut encoder = gif::Encoder::new(
+            Vec::new(),
+            pixels(width)?,
+            pixels(height)?,
+            &[dead, live, dead].concat(),
+        )
+        .map_err(io::Error::other)?;
+        encoder
+            .set_repeat(gif::Repeat::Infinite)
+            .map_err(io::Error::other)?;
+
+        let mut previous: Option<CellImage> = None;
+        // The latest frame, written once the next change shows how long it lasts.
+        let mut pending: Option<gif::Frame<'static>> = None;
+        let mut clock = Clock::default();
+        let mut drawn = 0;
+        while drawn < self.generations {
+            if drawn > 0 && self.board.step_within(PLANE_CHUNKS_MAX).is_err() {
+                break;
+            }
+            let image = CellImage::capture(&self.board, self.rect);
+            let changed = match &previous {
+                None => Some((0, 0, width, height)),
+                Some(previous) => image.changed_since(previous),
+            };
+            if let Some(area) = changed {
+                let frame = draw(&image, previous.as_ref(), area, scale);
+                if let Some(mut done) = pending.replace(frame) {
+                    done.delay = clock.lap();
+                    encoder.write_frame(&done).map_err(io::Error::other)?;
+                }
+            }
+            clock.run(self.ms_per_generation);
+            previous = Some(image);
+            drawn += 1;
+            progress.store(drawn, Ordering::Relaxed);
+        }
+        if let Some(mut last) = pending {
+            last.delay = clock.lap();
+            encoder.write_frame(&last).map_err(io::Error::other)?;
+        }
+        Ok(GifRecording {
+            file: encoder.into_inner().map_err(io::Error::other)?,
+            generations: drawn,
+            size: (width, height),
+            scale,
+        })
+    }
+}
+
+/// Time in milliseconds, handed out to frames in hundredths of a second. Each
+/// frame ends on the hundredth nearest its true end, so rounding never adds up
+/// over a recording: generations of 25 ms alternate frames of 3 and 2.
+#[derive(Default)]
+struct Clock {
+    /// When the frame being timed started, and how long it has run.
+    start: u64,
+    running: u64,
+}
+
+impl Clock {
+    fn run(&mut self, ms: u64) {
+        self.running += ms;
+    }
+
+    /// The running frame's delay, starting the next one.
+    fn lap(&mut self) -> u16 {
+        let hundredths = |ms: u64| (ms + 5) / 10;
+        let end = self.start + self.running;
+        let delay = hundredths(end) - hundredths(self.start);
+        (self.start, self.running) = (end, 0);
+        u16::try_from(delay).unwrap_or(u16::MAX)
+    }
+}
+
+/// A frame of the cells of `area` of `image`, each a square `scale` pixels
+/// across. With a `previous` image the frame lies over it, and the cells that
+/// haven't changed since are transparent.
+fn draw(
+    image: &CellImage,
+    previous: Option<&CellImage>,
+    (left, top, width, height): (usize, usize, usize, usize),
+    scale: usize,
+) -> gif::Frame<'static> {
+    let row_pixels = width * scale;
+    let mut buffer = Vec::with_capacity(row_pixels * height * scale);
+    for y in top..top + height {
+        let start = buffer.len();
+        for x in left..left + width {
+            let alive = image.is_alive(x, y);
+            let index = if previous.is_some_and(|previous| previous.is_alive(x, y) == alive) {
+                UNCHANGED
+            } else {
+                u8::from(alive) * LIVE
+            };
+            buffer.extend(std::iter::repeat_n(index, scale));
+        }
+        for _ in 1..scale {
+            buffer.extend_from_within(start..start + row_pixels);
+        }
+    }
+    // Within the whole image, whose sides were checked to fit.
+    let pixels = |cells: usize| (cells * scale) as u16;
+    gif::Frame {
+        left: pixels(left),
+        top: pixels(top),
+        width: pixels(width),
+        height: pixels(height),
+        buffer: buffer.into(),
+        dispose: gif::DisposalMethod::Keep,
+        transparent: previous.map(|_| UNCHANGED),
+        ..gif::Frame::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Clock, GifRequest, MAX_GIF_SIDE};
+    use crate::{board::Board, sparse_board::CellRect, universe::Universe};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const COLORS: [[u8; 3]; 2] = [[10, 20, 30], [200, 210, 220]];
+
+    fn request(board: Universe, rect: CellRect, generations: usize, ms: u64) -> GifRequest {
+        GifRequest {
+            board,
+            rect,
+            generations,
+            ms_per_generation: ms,
+        }
+    }
+
+    /// Each frame's delay and its pixels as RGBA once composed over the ones
+    /// before, as a viewer shows them.
+    fn play(file: &[u8]) -> Vec<(u16, Vec<u8>)> {
+        let mut options = gif::DecodeOptions::new();
+        options.set_color_output(gif::ColorOutput::RGBA);
+        let mut decoder = options.read_info(file).unwrap();
+        let (width, height) = (decoder.width() as usize, decoder.height() as usize);
+        let mut screen = vec![0u8; width * height * 4];
+        let mut frames = Vec::new();
+        while let Some(frame) = decoder.read_next_frame().unwrap() {
+            assert_eq!(frame.dispose, gif::DisposalMethod::Keep);
+            let (left, top) = (frame.left as usize, frame.top as usize);
+            for (index, pixel) in frame.buffer.as_chunks::<4>().0.iter().enumerate() {
+                let (x, y) = (
+                    left + index % frame.width as usize,
+                    top + index / frame.width as usize,
+                );
+                if pixel[3] != 0 {
+                    screen[(y * width + x) * 4..][..4].copy_from_slice(pixel);
+                }
+            }
+            frames.push((frame.delay, screen.clone()));
+        }
+        frames
+    }
+
+    /// The RGBA pixels of `board`'s `rect` at `scale`, top row first.
+    fn expected(board: &Universe, rect: CellRect, scale: usize) -> Vec<u8> {
+        let mut pixels = Vec::new();
+        for y in (0..rect.height * scale).rev() {
+            for x in 0..rect.width * scale {
+                let (x, y) = (
+                    rect.left + (x / scale) as i64,
+                    rect.bottom + (y / scale) as i64,
+                );
+                pixels.extend(COLORS[usize::from(board.is_alive(x, y))]);
+                pixels.push(255);
+            }
+        }
+        pixels
+    }
+
+    #[test]
+    fn every_frame_shows_its_generation_as_the_board_steps_it() {
+        // A glider and a blinker on a wrapping board, drawn through the wrap.
+        let mut board = Universe::Finite(Board::new(20, 12));
+        for (x, y) in [
+            (1, 10),
+            (2, 9),
+            (0, 8),
+            (1, 8),
+            (2, 8),
+            (15, 3),
+            (16, 3),
+            (17, 3),
+        ] {
+            board.populate(x, y);
+        }
+        let rect = CellRect {
+            left: 0,
+            bottom: 0,
+            width: 20,
+            height: 12,
+        };
+        let progress = AtomicUsize::new(0);
+        let recording = request(board.clone(), rect, 30, 100)
+            .record(COLORS, &progress)
+            .unwrap();
+        assert_eq!(recording.generations, 30);
+        assert_eq!(progress.load(Ordering::Relaxed), 30);
+        assert_eq!((recording.size, recording.scale), ((20, 12), 8));
+
+        let frames = play(&recording.file);
+        assert_eq!(frames.len(), 30);
+        for (generation, (delay, pixels)) in frames.iter().enumerate() {
+            assert_eq!(*delay, 10, "generation {generation}");
+            assert!(
+                *pixels == expected(&board, rect, 8),
+                "generation {generation}"
+            );
+            board.step_within(usize::MAX).unwrap();
+        }
+    }
+
+    #[test]
+    fn generations_that_change_nothing_lengthen_the_frame_before() {
+        // A block never changes: one frame for the whole recording.
+        let mut board = Universe::Finite(Board::new(8, 8));
+        for (x, y) in [(3, 3), (4, 3), (3, 4), (4, 4)] {
+            board.populate(x, y);
+        }
+        let rect = CellRect {
+            left: 0,
+            bottom: 0,
+            width: 8,
+            height: 8,
+        };
+        let recording = request(board, rect, 7, 250)
+            .record(COLORS, &AtomicUsize::new(0))
+            .unwrap();
+        let frames = play(&recording.file);
+        assert_eq!(
+            frames.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [175]
+        );
+    }
+
+    #[test]
+    fn delays_round_to_hundredths_without_drifting() {
+        let mut clock = Clock::default();
+        let laps: Vec<_> = (0..4)
+            .map(|_| {
+                clock.run(25);
+                clock.lap()
+            })
+            .collect();
+        assert_eq!(laps, [3, 2, 3, 2]);
+        clock.run(20);
+        assert_eq!(clock.lap(), 2);
+    }
+
+    #[test]
+    fn an_unbounded_board_draws_what_passes_through_its_area() {
+        let mut plane = Universe::Unbounded(Default::default());
+        for (x, y) in [(1, 2), (2, 1), (0, 0), (1, 0), (2, 0)] {
+            plane.populate(x - 100, y - 100);
+        }
+        let rect = CellRect {
+            left: -102,
+            bottom: -102,
+            width: MAX_GIF_SIDE,
+            height: 6,
+        };
+        let recording = request(plane, rect, 12, 40)
+            .record(COLORS, &AtomicUsize::new(0))
+            .unwrap();
+        assert_eq!(recording.generations, 12);
+        assert_eq!(recording.scale, 1);
+        // The glider heads down and right, out through the area's bottom.
+        let frames = play(&recording.file);
+        let live = |pixels: &Vec<u8>| {
+            pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|pixel| pixel[..3] == COLORS[1])
+                .count()
+        };
+        assert_eq!(live(&frames[0].1), 5);
+        assert!(live(&frames.last().unwrap().1) < 5);
+    }
+}

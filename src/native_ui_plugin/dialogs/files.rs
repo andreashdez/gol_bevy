@@ -1,11 +1,19 @@
-//! Native file dialogs for workspaces, `.rle` files, and images, and their shortcuts.
+//! Native file dialogs for workspaces, `.rle` files, images, and animations,
+//! and their shortcuts.
 use super::*;
 use crate::{
+    cell_gif::GifRequest,
     cell_image::CellImage,
     workspace::{DecodedWorkspace, Workspace},
 };
 use bevy::tasks::{IoTaskPool, Task, TaskPool, futures::check_ready};
-use std::path::Path;
+use std::{
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 pub(super) enum FileRequest {
     /// Captured at the click, so the file holds what was on screen then, even
@@ -17,6 +25,8 @@ pub(super) enum FileRequest {
     /// Captured at the click like a save, with the theme's colours for dead
     /// and live cells.
     SaveImage(Box<CellImage>, [[u8; 3]; 2]),
+    /// A copy of the board to record from, taken at the click like an image.
+    SaveGif(Box<GifRequest>, [[u8; 3]; 2]),
 }
 
 /// The native file dialog in progress, if any, then the reading or writing of
@@ -27,7 +37,14 @@ pub(in crate::native_ui_plugin) struct FileDialog(pub(super) Option<FileWork>);
 
 pub(super) enum FileWork {
     Picking(FileRequest, Task<Option<PathBuf>>),
-    Working(PathBuf, Task<FileOutcome>),
+    Working(PathBuf, Task<FileOutcome>, Option<Progress>),
+}
+
+/// How far work that takes a while has got: generations of a GIF recorded so
+/// far, of how many.
+pub(super) struct Progress {
+    done: Arc<AtomicUsize>,
+    total: usize,
 }
 
 /// What the file task produced, applied to the app back on the main thread.
@@ -36,7 +53,7 @@ pub(super) enum FileOutcome {
     /// Validated in full, so only a usable workspace asks to replace yours.
     Opened(Result<Box<DecodedWorkspace>, String>),
     Rle(Result<String, String>),
-    /// What was saved, to report.
+    /// What an image or animation saved, to report.
     ImageSaved(Result<String, String>),
 }
 
@@ -67,16 +84,35 @@ pub(super) fn request_save_image(state: &mut DialogState) {
     }
     match state.sim.app.board_image() {
         Ok(image) => {
-            let colors = state.theme.board();
-            let rgb = |color| {
-                let [red, green, blue, _] = crate::render_plugin::color_to_texel(color);
-                [red, green, blue]
-            };
-            let colors = [rgb(colors.dead), rgb(colors.live)];
+            let colors = cell_colors(state);
             request_file(state, FileRequest::SaveImage(Box::new(image), colors));
         }
         Err(error) => report(state, true, error.to_string()),
     }
+}
+
+/// Records `generations` of the selection, or else the board, as a GIF.
+pub(super) fn request_save_gif(state: &mut DialogState, generations: usize) {
+    if file_dialog_busy(state) {
+        return;
+    }
+    match state.sim.app.board_gif(generations) {
+        Ok(request) => {
+            let colors = cell_colors(state);
+            request_file(state, FileRequest::SaveGif(Box::new(request), colors));
+        }
+        Err(error) => report(state, true, error.to_string()),
+    }
+}
+
+/// The theme's dead and live cell colours.
+fn cell_colors(state: &DialogState) -> [[u8; 3]; 2] {
+    let colors = state.theme.board();
+    let rgb = |color| {
+        let [red, green, blue, _] = crate::render_plugin::color_to_texel(color);
+        [red, green, blue]
+    };
+    [rgb(colors.dead), rgb(colors.live)]
 }
 
 /// Whether a file dialog is already open, which Cmd/Ctrl+S or O from the board
@@ -106,6 +142,7 @@ pub(super) fn request_file(state: &mut DialogState, request: FileRequest) {
         FileRequest::Open => "Choose a workspace file to open.",
         FileRequest::OpenRle => "Choose an RLE pattern file.",
         FileRequest::SaveImage(..) => "Choose where to save the image.",
+        FileRequest::SaveGif(..) => "Choose where to save the GIF.",
     }
     .into();
     state.file_dialog.0 = Some(FileWork::Picking(request, task));
@@ -124,6 +161,7 @@ fn spawn_file_dialog(
         .or_else(dirs::document_dir);
     let file_name = match request {
         FileRequest::SaveImage(..) => "board.png".into(),
+        FileRequest::SaveGif(..) => "board.gif".into(),
         _ => previous
             .and_then(Path::file_name)
             .map_or_else(|| "workspace.golw".into(), |name| name.to_string_lossy()),
@@ -133,6 +171,9 @@ fn spawn_file_dialog(
             .add_filter("RLE pattern", &["rle"])
             .add_filter("Text", &["txt"]),
         FileRequest::SaveImage(..) => rfd::AsyncFileDialog::new().add_filter("PNG image", &["png"]),
+        FileRequest::SaveGif(..) => {
+            rfd::AsyncFileDialog::new().add_filter("GIF animation", &["gif"])
+        }
         _ => rfd::AsyncFileDialog::new().add_filter("Game of Life workspace", &["golw"]),
     };
     if let Some(directory) = directory {
@@ -141,7 +182,7 @@ fn spawn_file_dialog(
     // The system dialog asks before replacing an existing file.
     let chosen: std::pin::Pin<Box<dyn Future<Output = Option<rfd::FileHandle>> + Send>> =
         match request {
-            FileRequest::Save(_) | FileRequest::SaveImage(..) => {
+            FileRequest::Save(_) | FileRequest::SaveImage(..) | FileRequest::SaveGif(..) => {
                 Box::pin(dialog.set_file_name(file_name).save_file())
             }
             FileRequest::Open | FileRequest::OpenRle => Box::pin(dialog.pick_file()),
@@ -167,11 +208,18 @@ pub(in crate::native_ui_plugin) fn poll_file_dialog(mut state: DialogState) {
             };
             finish_file_request(&mut state, request, chosen);
         }
-        Some(FileWork::Working(_, task)) => {
+        Some(FileWork::Working(_, task, progress)) => {
             let Some(outcome) = check_ready(task) else {
+                if let Some(Progress { done, total }) = progress {
+                    let done = done.load(Ordering::Relaxed);
+                    let feedback = format!("Recording… {done} of {total} generations.");
+                    if state.drafts.feedback != feedback {
+                        state.drafts.feedback = feedback;
+                    }
+                }
                 return;
             };
-            let Some(FileWork::Working(path, _)) = state.file_dialog.0.take() else {
+            let Some(FileWork::Working(path, ..)) = state.file_dialog.0.take() else {
                 return;
             };
             finish_file_work(&mut state, path, outcome);
@@ -192,7 +240,7 @@ pub(in crate::native_ui_plugin) fn keep_awake_while_working(
 
 /// Starts reading or writing the chosen file on the IO pool: serializing and
 /// writing a save, reading and decoding a workspace, reading an `.rle` file, or
-/// drawing and writing an image.
+/// drawing and writing an image or an animation.
 pub(super) fn finish_file_request(
     state: &mut DialogState,
     request: FileRequest,
@@ -203,10 +251,18 @@ pub(super) fn finish_file_request(
         return;
     };
     let feedback = match request {
-        FileRequest::Save(_) | FileRequest::SaveImage(..) => "Saving…",
+        FileRequest::Save(_) | FileRequest::SaveImage(..) | FileRequest::SaveGif(..) => "Saving…",
         FileRequest::Open | FileRequest::OpenRle => "Opening…",
     };
     report(state, false, feedback.into());
+    let progress = match &request {
+        FileRequest::SaveGif(gif, _) => Some(Progress {
+            done: Arc::default(),
+            total: gif.generations(),
+        }),
+        _ => None,
+    };
+    let done = progress.as_ref().map(|progress| Arc::clone(&progress.done));
     let target = path.clone();
     let work = async move {
         let shown = target.display();
@@ -239,10 +295,31 @@ pub(super) fn finish_file_request(
                         .map_err(|error| format!("Could not save {shown}: {error}")),
                 )
             }
+            FileRequest::SaveGif(gif, colors) => {
+                let done = done.expect("a GIF has its progress");
+                let asked = gif.generations();
+                FileOutcome::ImageSaved(
+                    gif.record(colors, &done)
+                        .and_then(|gif| {
+                            crate::atomic_file::write(&target, &gif.file)?;
+                            let ((width, height), scale) = (gif.size, gif.scale);
+                            let generations = gif.generations;
+                            let early = if generations < asked {
+                                " It stops early, where the board reached its memory limit."
+                            } else {
+                                ""
+                            };
+                            Ok(format!(
+                                "Saved {generations} generations of {width} × {height} cells, {scale} pixels across each, to {shown}.{early}"
+                            ))
+                        })
+                        .map_err(|error| format!("Could not save {shown}: {error}")),
+                )
+            }
         }
     };
     let task = IoTaskPool::get_or_init(TaskPool::default).spawn(work);
-    state.file_dialog.0 = Some(FileWork::Working(path, task));
+    state.file_dialog.0 = Some(FileWork::Working(path, task, progress));
 }
 
 /// Applies a finished file task and reports its result.

@@ -506,6 +506,35 @@ impl Board {
         })
     }
 
+    /// Calls `visit` with each run of live cells among the `width` × `height`
+    /// cells from `(left, bottom)`, which lie on the board, as `(col, row,
+    /// length)`, row by row from the lowest and left to right. A run that
+    /// crosses into the next chunk comes in two pieces.
+    pub fn for_each_live_run_in(
+        &self,
+        (left, bottom): (usize, usize),
+        (width, height): (usize, usize),
+        mut visit: impl FnMut(usize, usize, usize),
+    ) {
+        let shape = self.shape;
+        let right = left + width;
+        debug_assert!(right <= shape.cols && bottom + height <= shape.rows);
+        for row in bottom..bottom + height {
+            for cx in left / SIDE..right.div_ceil(SIDE) {
+                let first = cx * SIDE;
+                let inside = low_bits(right.min(first + SIDE) - first)
+                    & !low_bits(left.saturating_sub(first));
+                let mut cells = self.chunks[shape.slot(cx, row / SIDE)][row % SIDE] & inside;
+                while cells != 0 {
+                    let start = cells.trailing_zeros() as usize;
+                    let length = (cells >> start).trailing_ones() as usize;
+                    visit(first + start, row, length);
+                    cells &= !(low_bits(length) << start);
+                }
+            }
+        }
+    }
+
     /// Counts the live cells under each block of a `width` × `height` grid over
     /// the board, row 0 first, into `counts`. Blocks are at least a cell across,
     /// so the grid may not be larger than the board.
@@ -1289,6 +1318,29 @@ mod tests {
         assert_eq!(live_cells(&board), vec![(0, 0), (64, 3), (69, 19)]);
         assert_eq!(board.live_cells_count(), 3);
         assert_eq!(board.take_dirty_cells(), DirtyCells::Full);
+    }
+
+    #[test]
+    fn live_runs_in_a_rectangle_cover_exactly_its_live_cells_in_order() {
+        let board = soup(150, 70, 0.6, 3);
+        let mut rng = fastrand::Rng::with_seed(4);
+        for _ in 0..200 {
+            let (left, bottom) = (rng.usize(..150), rng.usize(..70));
+            let (width, height) = (rng.usize(..=150 - left), rng.usize(..=70 - bottom));
+            let mut cells = Vec::new();
+            board.for_each_live_run_in((left, bottom), (width, height), |x, y, length| {
+                assert!(length > 0);
+                cells.extend((x..x + length).map(|x| (y, x)));
+            });
+            let expected: Vec<_> = (bottom..bottom + height)
+                .flat_map(|y| (left..left + width).map(move |x| (y, x)))
+                .filter(|&(y, x)| board.is_alive(x, y))
+                .collect();
+            assert_eq!(
+                cells, expected,
+                "{width} × {height} from ({left}, {bottom})"
+            );
+        }
     }
 
     #[test]

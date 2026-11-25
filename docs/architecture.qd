@@ -1,7 +1,7 @@
 .docname {Architecture}
 .include {docs}
 
-gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`app`, `rule`, `chunk`, `board`, `sparse_board`, `universe`, `settle`, `patterns`, `cell_image`, `workspace`) knows nothing about Bevy's UI or rendering, so it is tested directly.
+gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`app`, `rule`, `chunk`, `board`, `sparse_board`, `universe`, `settle`, `patterns`, `cell_image`, `cell_gif`, `workspace`) knows nothing about Bevy's UI or rendering, so it is tested directly.
 
 ## Source layout
 
@@ -23,6 +23,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
       - settle.rs
       - patterns.rs
       - cell_image.rs
+      - cell_gif.rs
       - workspace.rs
       - atomic_file.rs
       - shared.rs
@@ -80,6 +81,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
 | `settle`                | Noticing a board that repeats, from generation fingerprints                   |
 | `patterns`              | Built-in patterns and RLE reading and writing                                 |
 | `cell_image`            | A rectangle of the board as a bit per cell, and the PNG drawn from it         |
+| `cell_gif`              | Recording generations of a copy of the board as a GIF, each frame only what changed |
 | `workspace`             | Versioned workspace files, checked completely before they replace anything    |
 | `atomic_file`           | Writing through a temporary file, so a failed save keeps the old contents     |
 | `shared`                | App-wide Bevy state: the simulation resource, system sets, overlay toggles, themes, board size settings |

@@ -65,6 +65,36 @@ impl CellImage {
         self.words[y * self.row_words + x / 64] >> (x % 64) & 1 != 0
     }
 
+    /// The smallest box holding every cell that differs from `earlier`, an
+    /// image of the same size, as `(left, top, width, height)`; `None` if no
+    /// cell does.
+    pub fn changed_since(&self, earlier: &Self) -> Option<(usize, usize, usize, usize)> {
+        assert_eq!(self.size(), earlier.size());
+        // Every row's changes together, to find the leftmost and rightmost.
+        let mut columns = vec![0u64; self.row_words];
+        let mut rows = None;
+        let pairs = self
+            .words
+            .chunks_exact(self.row_words)
+            .zip(earlier.words.chunks_exact(self.row_words));
+        for (y, (row, before)) in pairs.enumerate() {
+            let mut changed = false;
+            for ((column, now), then) in columns.iter_mut().zip(row).zip(before) {
+                *column |= now ^ then;
+                changed |= now != then;
+            }
+            if changed {
+                rows = Some(rows.map_or((y, y), |(top, _)| (top, y)));
+            }
+        }
+        let (top, bottom) = rows?;
+        let first = columns.iter().position(|&word| word != 0)?;
+        let last = columns.iter().rposition(|&word| word != 0)?;
+        let left = first * 64 + columns[first].trailing_zeros() as usize;
+        let right = last * 64 + 63 - columns[last].leading_zeros() as usize;
+        Some((left, top, right - left + 1, bottom - top + 1))
+    }
+
     /// Pixels across each cell: as many as keep the longer side within
     /// [`SCALED_SIDE`] pixels, from 1 to [`MAX_SCALE`].
     pub fn scale(&self) -> usize {

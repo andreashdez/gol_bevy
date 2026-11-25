@@ -137,7 +137,9 @@ pub(super) fn hint(action: Action) -> String {
         Action::Import if crate::shared::WEB_BUILD => "Add an RLE pattern to your library".into(),
         Action::Import => "Add an RLE pattern to your library, or open a workspace file".into(),
         Action::Export if crate::shared::WEB_BUILD => "Copy the board as RLE".into(),
-        Action::Export => "Copy the board as RLE, or save an image or a workspace file".into(),
+        Action::Export => {
+            "Copy the board as RLE, or save an image, a GIF, or a workspace file".into()
+        }
         Action::Settings => {
             "Board size, rule, randomization, theme, grid, cell age, and edges".into()
         }
@@ -169,6 +171,9 @@ pub(super) fn hint(action: Action) -> String {
             key(BINDING_TOGGLE_BOUNDARY_MODE)
         ),
         Action::ExportRle => "Copy the live cells to the clipboard as RLE".into(),
+        Action::SaveGif => {
+            "Record this many generations of the selection, or else the board, as a GIF".into()
+        }
         Action::SaveImage => {
             "Save the selection, or else the board, as a PNG in the theme's colours".into()
         }

@@ -1209,8 +1209,40 @@ fn an_image_shows_the_selection_or_else_the_board_or_the_live_cells_of_the_plane
     app.board.populate(-5, 9);
     app.board.populate(1, 0);
     assert_eq!(app.board_image().unwrap().size(), (7, 10));
+    // A GIF draws every frame, so it takes a smaller area than an image.
+    app.board.populate(3000, 0);
+    assert_eq!(app.board_image().unwrap().size(), (3006, 10));
+    assert_eq!(
+        app.board_gif(10).unwrap_err(),
+        ImageExportError::TooLarge(2048)
+    );
     app.board.populate(i64::MIN, i64::MAX);
-    assert_eq!(app.board_image().unwrap_err(), ImageExportError::TooLarge);
+    assert_eq!(
+        app.board_image().unwrap_err(),
+        ImageExportError::TooLarge(16384)
+    );
+}
+
+#[test]
+fn a_gif_plays_at_the_playback_speed_from_a_copy_of_the_board() {
+    let mut app = App::new(16, 8);
+    app.populate_board(3, 2);
+    app.set_tick_rate_ms(150);
+    let request = app.board_gif(30).unwrap();
+    assert_eq!(
+        (request.generations(), request.ms_per_generation),
+        (30, 150)
+    );
+    app.set_max_speed();
+    assert_eq!(app.board_gif(30).unwrap().ms_per_generation, 20);
+
+    // Recording steps the copy, not the board.
+    let recording = request
+        .record([[0; 3], [255; 3]], &std::sync::atomic::AtomicUsize::new(0))
+        .unwrap();
+    assert_eq!(recording.generations, 30);
+    assert_eq!(app.epoch, 0);
+    assert!(app.board.is_alive(3, 2));
 }
 
 #[test]

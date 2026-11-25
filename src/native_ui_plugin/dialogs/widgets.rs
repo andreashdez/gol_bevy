@@ -99,6 +99,26 @@ pub(super) fn apply_row(
     action: Action,
     fields: impl FnOnce(&mut ChildSpawnerCommands),
 ) {
+    let apply = action_row(parent, "Apply", action, fields);
+    parent
+        .commands()
+        .entity(apply)
+        .insert(Name::new(match action {
+            Action::ResizeBoard => "Apply board size",
+            Action::ApplyRule => "Apply rule",
+            _ => "Apply seed",
+        }));
+}
+
+/// Fields with a button that acts on them at the end of their row, returning
+/// the button.
+pub(super) fn action_row(
+    parent: &mut ChildSpawnerCommands,
+    title: &str,
+    action: Action,
+    fields: impl FnOnce(&mut ChildSpawnerCommands),
+) -> Entity {
+    let mut button_entity = Entity::PLACEHOLDER;
     parent
         .spawn(Node {
             align_items: AlignItems::FlexEnd,
@@ -108,18 +128,14 @@ pub(super) fn apply_row(
         })
         .with_children(|p| {
             fields(p);
-            let apply = button(p, "Apply", action);
+            button_entity = button(p, title, action);
+            // As tall as the fields beside it.
             p.commands()
-                .entity(apply)
-                .insert(Name::new(match action {
-                    Action::ResizeBoard => "Apply board size",
-                    Action::ApplyRule => "Apply rule",
-                    _ => "Apply seed",
-                }))
-                // As tall as the fields beside it.
+                .entity(button_entity)
                 .entry::<Node>()
                 .and_modify(|mut node| node.min_height = px(FIELD_HEIGHT));
         });
+    button_entity
 }
 
 /// A setting with its name on the left and its control beside it.

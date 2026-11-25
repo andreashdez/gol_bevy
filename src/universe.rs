@@ -112,14 +112,22 @@ impl Universe {
     /// On the plane this reads only the chunks `rect` touches.
     pub fn for_each_live_run_in(&self, rect: CellRect, mut visit: impl FnMut(i64, i64, usize)) {
         match self {
-            Self::Finite(_) => {
-                for y in rect.bottom..rect.bottom + rect.height as i64 {
-                    for x in rect.left..rect.left + rect.width as i64 {
-                        if self.is_alive(x, y) {
-                            visit(x, y, 1);
-                        }
-                    }
-                }
+            Self::Finite(board) => {
+                // Only the part of `rect` on the board has cells.
+                let (cols, rows) = board.size();
+                let clip = |start: i64, length: usize, end: usize| {
+                    let clamp = |at: i64| at.clamp(0, end as i64) as usize;
+                    let first = clamp(start);
+                    (
+                        first,
+                        clamp(start.saturating_add_unsigned(length as u64)) - first,
+                    )
+                };
+                let (left, width) = clip(rect.left, rect.width, cols);
+                let (bottom, height) = clip(rect.bottom, rect.height, rows);
+                board.for_each_live_run_in((left, bottom), (width, height), |x, y, length| {
+                    visit(x as i64, y as i64, length);
+                });
             }
             Self::Unbounded(plane) => plane.for_each_live_run_in(rect, visit),
         }

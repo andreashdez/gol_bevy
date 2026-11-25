@@ -2,6 +2,7 @@
 use super::*;
 use crate::{
     board::{BoundaryMode, RandomizeSettings},
+    cell_gif::MAX_GIF_GENERATIONS,
     keybindings::{BINDING_TOGGLE_HELP, TypedKeys, command_key},
     rule::Rule,
     shared::{
@@ -28,15 +29,15 @@ mod widgets;
 pub(super) use files::{FileDialog, file_shortcuts, poll_file_dialog};
 use files::{
     FileRequest, confirm_open, file_dialog_busy, request_file, request_open, request_save,
-    request_save_image,
+    request_save_gif, request_save_image,
 };
 use help::help_columns;
 use import_preview::import_preview;
 pub(super) use import_preview::sync_import_preview;
 pub(super) use widgets::{Segment, Switch, sync_density, sync_switches};
 use widgets::{
-    apply_row, density_changed, density_slider, field, heading, inline_field, segmented, setting,
-    switch,
+    action_row, apply_row, density_changed, density_slider, field, heading, inline_field,
+    segmented, setting, switch,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +91,8 @@ pub(super) struct Drafts {
     /// Percent; the slider applies it as it moves.
     density: u8,
     seed: String,
+    /// How many generations a GIF records.
+    generations: String,
     feedback: String,
     error: bool,
     return_focus: Option<Entity>,
@@ -112,6 +115,7 @@ impl Default for Drafts {
             rule: String::new(),
             density: 25,
             seed: String::new(),
+            generations: "100".into(),
             feedback: String::new(),
             error: false,
             return_focus: None,
@@ -131,6 +135,7 @@ pub(super) enum Field {
     Height,
     Rule,
     Seed,
+    Generations,
 }
 #[derive(Component)]
 pub(super) enum DialogReadout {
@@ -183,6 +188,7 @@ fn save_fields<F: bevy::ecs::query::QueryFilter>(
             Field::Height => &mut drafts.height,
             Field::Rule => &mut drafts.rule,
             Field::Seed => &mut drafts.seed,
+            Field::Generations => &mut drafts.generations,
         };
         if *target != value {
             *target = value;
@@ -391,6 +397,13 @@ fn dialog_action(
         Action::ExportRle => export_rle(&mut state),
         Action::SaveWorkspace => request_save(&mut state),
         Action::SaveImage => request_save_image(&mut state),
+        Action::SaveGif => match parse_generations(&state.drafts.generations) {
+            Ok(generations) => request_save_gif(&mut state, generations),
+            Err(error) => {
+                state.drafts.error = true;
+                state.drafts.feedback = error;
+            }
+        },
         Action::OpenWorkspace => request_open(&mut state),
         Action::OpenRle => {
             if !file_dialog_busy(&mut state) {
@@ -415,6 +428,14 @@ fn parse_randomize(density: u8, seed: &str) -> Result<RandomizeSettings, &'stati
         Some(seed.trim().parse::<u64>().map_err(|_| "Seed must be a whole number from 0 to 18446744073709551615, or blank for a fresh seed.")?)
     };
     RandomizeSettings::new(density, seed).ok_or("Density runs from 0 to 100%.")
+}
+
+fn parse_generations(text: &str) -> Result<usize, String> {
+    text.trim()
+        .parse::<usize>()
+        .ok()
+        .filter(|generations| (1..=MAX_GIF_GENERATIONS).contains(generations))
+        .ok_or_else(|| format!("A GIF records 1 to {MAX_GIF_GENERATIONS} generations."))
 }
 
 fn show_rule(fields: &mut Query<(&Field, &mut EditableText)>, rulestring: &str) {
@@ -618,6 +639,8 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         if !WEB_BUILD {
                             heading(p, "Image", "Save a PNG of the selection, or else of the whole board, or of the live cells of an unbounded board, in the theme's colours.");
                             p.spawn(row()).with_children(|p| { button(p, "Save image…", Action::SaveImage); });
+                            heading(p, "Animation", "Record the same area as a looping GIF at the playback speed, from the current generation on. The board plays on meanwhile.");
+                            action_row(p, "Save GIF…", Action::SaveGif, |p| inline_field(p, "Generations", &drafts.generations, Field::Generations, false));
                             heading(p, "Workspace file", &format!("Save your board and imported patterns to a .golw file. {}+S saves.", command_key()));
                             p.spawn(row()).with_children(|p| { button(p, "Save workspace…", Action::SaveWorkspace); });
                         }
@@ -662,7 +685,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         p.spawn(label("Choose a stamp or draw cells, then press Space to play. U undoes an edit and pauses; one drag counts as one edit.", 16.0, Token::Ink));
                         p.spawn(label("Tab moves between controls; the board is the last stop, and while it is outlined Space and the other shortcuts apply to it. Escape closes a dialog. Simulation shortcuts are disabled while a dialog is open.", 14.0, Token::Muted));
                         help_columns(p);
-                        p.spawn(label("Import adds RLE patterns to the palette and opens workspace files. Export copies the board as RLE, and saves images and workspace files.", 14.0, Token::Muted));
+                        p.spawn(label("Import adds RLE patterns to the palette and opens workspace files. Export copies the board as RLE, and saves images, GIFs, and workspace files.", 14.0, Token::Muted));
                     }
                     DialogKind::ConfirmOpen => {
                         let file = drafts.pending_open.as_ref()

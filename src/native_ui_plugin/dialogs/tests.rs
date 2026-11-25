@@ -359,7 +359,7 @@ fn choose(world: &mut World, request: FileRequest, path: Option<&Path>) {
 
 /// Waits for the file task `choose` started and applies its result.
 fn finish_work(world: &mut World) {
-    let Some(FileWork::Working(path, task)) = world.resource_mut::<FileDialog>().0.take() else {
+    let Some(FileWork::Working(path, task, _)) = world.resource_mut::<FileDialog>().0.take() else {
         return;
     };
     let mut outcome = Some((path, bevy::tasks::block_on(task)));
@@ -415,6 +415,41 @@ fn an_image_saves_in_the_theme_colours_without_moving_the_workspace_folder() {
     // Cell (0, 31) is the top left: the first pixel row starts with live ones.
     assert_eq!(pixels[0], 0xff);
     assert_eq!(pixels[1], 0);
+}
+
+#[test]
+fn a_gif_records_the_generations_asked_for_and_refuses_a_count_out_of_range() {
+    let mut world = test_world(DialogKind::Export);
+    for generations in ["0", "1001", "ten"] {
+        world.resource_mut::<Drafts>().generations = generations.into();
+        let save = world.spawn(Action::SaveGif).id();
+        world.trigger(Activate { entity: save });
+        let drafts = world.resource::<Drafts>();
+        assert!(drafts.error, "{generations}");
+        assert_eq!(drafts.feedback, "A GIF records 1 to 1000 generations.");
+        assert!(world.resource::<FileDialog>().0.is_none());
+    }
+
+    let directory = crate::test_support::TestDirectory::new();
+    let path = directory.0.join("board.gif");
+    world.resource_mut::<Simulation>().app.populate_board(4, 4);
+    let gif = world.resource::<Simulation>().app.board_gif(5).unwrap();
+    choose(
+        &mut world,
+        FileRequest::SaveGif(Box::new(gif), [[0; 3], [255; 3]]),
+        Some(&path),
+    );
+    let drafts = world.resource::<Drafts>();
+    assert!(!drafts.error, "{}", drafts.feedback);
+    assert!(
+        drafts
+            .feedback
+            .starts_with("Saved 5 generations of 32 × 32 cells, 8 pixels across each"),
+        "{}",
+        drafts.feedback
+    );
+    assert_eq!(drafts.workspace_path, None);
+    assert!(std::fs::read(&path).unwrap().starts_with(b"GIF89a"));
 }
 
 #[test]

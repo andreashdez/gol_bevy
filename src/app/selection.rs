@@ -1,8 +1,9 @@
 //! The Select tool's rectangle and what can be done with it, and writing the
-//! board or the selection out as RLE or as an image.
+//! board or the selection out as RLE, as an image, or as an animation.
 
 use super::{App, EditTool};
 use crate::{
+    cell_gif::{FASTEST_MS_PER_GENERATION, GifRequest, MAX_GIF_SIDE},
     cell_image::{CellImage, MAX_IMAGE_SIDE},
     patterns::RleWriter,
     sparse_board::{CellRect, PLANE_EXPORT_CELLS_MAX},
@@ -53,21 +54,23 @@ impl fmt::Display for SelectionExportError {
     }
 }
 
-/// Why the board can't be saved as an image.
+/// Why the board can't be saved as an image or an animation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageExportError {
     Empty,
-    TooLarge,
+    /// Wider or taller than this many cells.
+    TooLarge(usize),
 }
 
 impl fmt::Display for ImageExportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Empty => "The board is empty, so there is nothing to draw.",
-            Self::TooLarge => {
-                "The image would be over 16,384 cells on a side · select a smaller area."
-            }
-        })
+        match self {
+            Self::Empty => f.write_str("The board is empty, so there is nothing to draw."),
+            Self::TooLarge(limit) => write!(
+                f,
+                "That's over {limit} cells on a side, too large to draw · select a smaller area."
+            ),
+        }
     }
 }
 
@@ -254,6 +257,31 @@ impl App {
     /// The selection as an image, or else the whole of a finite board, or the
     /// live cells of an unbounded one, cropped to their bounding box.
     pub fn board_image(&self) -> Result<CellImage, ImageExportError> {
+        let rect = self.image_area(MAX_IMAGE_SIDE)?;
+        Ok(CellImage::capture(&self.board, rect))
+    }
+
+    /// The current generation and the `generations - 1` after it, to record
+    /// over the area [`board_image`](Self::board_image) draws, at the playback
+    /// speed, from a copy of the board.
+    pub fn board_gif(&self, generations: usize) -> Result<GifRequest, ImageExportError> {
+        let rect = self.image_area(MAX_GIF_SIDE)?;
+        Ok(GifRequest {
+            board: self.board.clone(),
+            rect,
+            generations,
+            ms_per_generation: if self.is_max_speed() {
+                FASTEST_MS_PER_GENERATION
+            } else {
+                self.tick_rate_ms()
+            },
+        })
+    }
+
+    /// The selection, or else the whole of a finite board, or the box around
+    /// the live cells of an unbounded one, if it is at most `max_side` cells on
+    /// a side.
+    fn image_area(&self, max_side: usize) -> Result<CellRect, ImageExportError> {
         let rect = match (self.selection(), &self.board) {
             (Some(rect), _) => rect,
             (None, Universe::Finite(board)) => {
@@ -280,9 +308,9 @@ impl App {
                 }
             }
         };
-        if rect.width > MAX_IMAGE_SIDE || rect.height > MAX_IMAGE_SIDE {
-            return Err(ImageExportError::TooLarge);
+        if rect.width > max_side || rect.height > max_side {
+            return Err(ImageExportError::TooLarge(max_side));
         }
-        Ok(CellImage::capture(&self.board, rect))
+        Ok(rect)
     }
 }

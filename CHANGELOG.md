@@ -11,6 +11,9 @@ Add a line under Unreleased in the same pull request as the change; see
 - **Save image…** in Export saves the selection, or else the board, as a PNG in the
   theme's colours, drawn from the cells rather than the screen: each cell up to 8 pixels
   across, and a pixel each on large boards.
+- **Save GIF…** in Export records generations of the same area as a looping GIF at the
+  playback speed, from a copy of the board, so the board plays on. Each frame holds only
+  the cells that changed, and the dialog counts the generations recorded.
 
 ### Changed
 
