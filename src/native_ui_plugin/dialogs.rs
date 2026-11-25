@@ -28,6 +28,7 @@ mod widgets;
 pub(super) use files::{FileDialog, file_shortcuts, poll_file_dialog};
 use files::{
     FileRequest, confirm_open, file_dialog_busy, request_file, request_open, request_save,
+    request_save_image,
 };
 use help::help_columns;
 use import_preview::import_preview;
@@ -163,6 +164,8 @@ pub(super) struct DialogState<'w> {
     file_dialog: ResMut<'w, FileDialog>,
     /// Where file results go when no dialog shows feedback, as after Cmd+S.
     notice: ResMut<'w, crate::feedback::EditFeedback>,
+    /// For the colours of a saved image.
+    theme: Res<'w, Theme>,
     /// Absent in tests, which must not touch the system clipboard.
     clipboard: Option<ResMut<'w, Clipboard>>,
 }
@@ -387,6 +390,7 @@ fn dialog_action(
         }
         Action::ExportRle => export_rle(&mut state),
         Action::SaveWorkspace => request_save(&mut state),
+        Action::SaveImage => request_save_image(&mut state),
         Action::OpenWorkspace => request_open(&mut state),
         Action::OpenRle => {
             if !file_dialog_busy(&mut state) {
@@ -612,6 +616,8 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         heading(p, "Pattern", "Copy the live cells, cropped to their bounding box, as RLE with the board rule.");
                         p.spawn(row()).with_children(|p| { button(p, "Copy board as RLE", Action::ExportRle); });
                         if !WEB_BUILD {
+                            heading(p, "Image", "Save a PNG of the selection, or else of the whole board, or of the live cells of an unbounded board, in the theme's colours.");
+                            p.spawn(row()).with_children(|p| { button(p, "Save image…", Action::SaveImage); });
                             heading(p, "Workspace file", &format!("Save your board and imported patterns to a .golw file. {}+S saves.", command_key()));
                             p.spawn(row()).with_children(|p| { button(p, "Save workspace…", Action::SaveWorkspace); });
                         }
@@ -656,7 +662,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         p.spawn(label("Choose a stamp or draw cells, then press Space to play. U undoes an edit and pauses; one drag counts as one edit.", 16.0, Token::Ink));
                         p.spawn(label("Tab moves between controls; the board is the last stop, and while it is outlined Space and the other shortcuts apply to it. Escape closes a dialog. Simulation shortcuts are disabled while a dialog is open.", 14.0, Token::Muted));
                         help_columns(p);
-                        p.spawn(label("Import adds RLE patterns to the palette and opens workspace files. Export copies the board as RLE and saves workspace files.", 14.0, Token::Muted));
+                        p.spawn(label("Import adds RLE patterns to the palette and opens workspace files. Export copies the board as RLE, and saves images and workspace files.", 14.0, Token::Muted));
                     }
                     DialogKind::ConfirmOpen => {
                         let file = drafts.pending_open.as_ref()

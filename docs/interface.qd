@@ -101,7 +101,7 @@ Clear, randomize, undo, and redo show a notice at the bottom left of the canvas 
 | Dialog              | Opens with                               | Contains                                                       |
 |---------------------|------------------------------------------|----------------------------------------------------------------|
 | **Import**          | the **Import** button                    | RLE import, and opening workspace files                        |
-| **Export**          | the **Export** button                    | copying the board as RLE, and saving workspace files           |
+| **Export**          | the **Export** button                    | copying the board as RLE, and saving images and workspace files |
 | **Settings**        | the **Settings** button, or the rule in the status bar | board size, rule, theme, grid, cell age, edges, diagnostics, generation reset |
 | **Help**            | .keybinding {/} or the **Help** button   | a summary and the full list of shortcuts                       |
 | **Diagnostics**     | .keybinding {F3} or **Settings**         | live simulation statistics                                     |

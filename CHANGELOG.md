@@ -6,6 +6,12 @@ Add a line under Unreleased in the same pull request as the change; see
 
 ## [Unreleased]
 
+### Added
+
+- **Save image…** in Export saves the selection, or else the board, as a PNG in the
+  theme's colours, drawn from the cells rather than the screen: each cell up to 8 pixels
+  across, and a pixel each on large boards.
+
 ### Changed
 
 - Rulestrings without the slash, such as `B36S23`, are accepted, and so is a suffix after

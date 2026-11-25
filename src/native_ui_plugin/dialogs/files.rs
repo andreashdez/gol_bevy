@@ -1,6 +1,9 @@
-//! Native file dialogs for workspaces and `.rle` files, and their shortcuts.
+//! Native file dialogs for workspaces, `.rle` files, and images, and their shortcuts.
 use super::*;
-use crate::workspace::{DecodedWorkspace, Workspace};
+use crate::{
+    cell_image::CellImage,
+    workspace::{DecodedWorkspace, Workspace},
+};
 use bevy::tasks::{IoTaskPool, Task, TaskPool, futures::check_ready};
 use std::path::Path;
 
@@ -11,6 +14,9 @@ pub(super) enum FileRequest {
     Open,
     /// An `.rle` file to load into the import fields.
     OpenRle,
+    /// Captured at the click like a save, with the theme's colours for dead
+    /// and live cells.
+    SaveImage(Box<CellImage>, [[u8; 3]; 2]),
 }
 
 /// The native file dialog in progress, if any, then the reading or writing of
@@ -30,6 +36,8 @@ pub(super) enum FileOutcome {
     /// Validated in full, so only a usable workspace asks to replace yours.
     Opened(Result<Box<DecodedWorkspace>, String>),
     Rle(Result<String, String>),
+    /// What was saved, to report.
+    ImageSaved(Result<String, String>),
 }
 
 pub(super) fn request_save(state: &mut DialogState) {
@@ -49,6 +57,25 @@ pub(super) fn request_save(state: &mut DialogState) {
 pub(super) fn request_open(state: &mut DialogState) {
     if !file_dialog_busy(state) {
         request_file(state, FileRequest::Open);
+    }
+}
+
+/// Saves the selection, or else the board, as a PNG in the theme's colours.
+pub(super) fn request_save_image(state: &mut DialogState) {
+    if file_dialog_busy(state) {
+        return;
+    }
+    match state.sim.app.board_image() {
+        Ok(image) => {
+            let colors = state.theme.board();
+            let rgb = |color| {
+                let [red, green, blue, _] = crate::render_plugin::color_to_texel(color);
+                [red, green, blue]
+            };
+            let colors = [rgb(colors.dead), rgb(colors.live)];
+            request_file(state, FileRequest::SaveImage(Box::new(image), colors));
+        }
+        Err(error) => report(state, true, error.to_string()),
     }
 }
 
@@ -78,6 +105,7 @@ pub(super) fn request_file(state: &mut DialogState, request: FileRequest) {
         FileRequest::Save(_) => "Choose where to save the workspace.",
         FileRequest::Open => "Choose a workspace file to open.",
         FileRequest::OpenRle => "Choose an RLE pattern file.",
+        FileRequest::SaveImage(..) => "Choose where to save the image.",
     }
     .into();
     state.file_dialog.0 = Some(FileWork::Picking(request, task));
@@ -94,13 +122,17 @@ fn spawn_file_dialog(
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .or_else(dirs::document_dir);
-    let file_name = previous
-        .and_then(Path::file_name)
-        .map_or_else(|| "workspace.golw".into(), |name| name.to_string_lossy());
+    let file_name = match request {
+        FileRequest::SaveImage(..) => "board.png".into(),
+        _ => previous
+            .and_then(Path::file_name)
+            .map_or_else(|| "workspace.golw".into(), |name| name.to_string_lossy()),
+    };
     let mut dialog = match request {
         FileRequest::OpenRle => rfd::AsyncFileDialog::new()
             .add_filter("RLE pattern", &["rle"])
             .add_filter("Text", &["txt"]),
+        FileRequest::SaveImage(..) => rfd::AsyncFileDialog::new().add_filter("PNG image", &["png"]),
         _ => rfd::AsyncFileDialog::new().add_filter("Game of Life workspace", &["golw"]),
     };
     if let Some(directory) = directory {
@@ -109,7 +141,9 @@ fn spawn_file_dialog(
     // The system dialog asks before replacing an existing file.
     let chosen: std::pin::Pin<Box<dyn Future<Output = Option<rfd::FileHandle>> + Send>> =
         match request {
-            FileRequest::Save(_) => Box::pin(dialog.set_file_name(file_name).save_file()),
+            FileRequest::Save(_) | FileRequest::SaveImage(..) => {
+                Box::pin(dialog.set_file_name(file_name).save_file())
+            }
             FileRequest::Open | FileRequest::OpenRle => Box::pin(dialog.pick_file()),
         };
     Some(IoTaskPool::get().spawn(async move { chosen.await.map(|file| file.path().to_owned()) }))
@@ -157,7 +191,8 @@ pub(in crate::native_ui_plugin) fn keep_awake_while_working(
 }
 
 /// Starts reading or writing the chosen file on the IO pool: serializing and
-/// writing a save, reading and decoding a workspace, or reading an `.rle` file.
+/// writing a save, reading and decoding a workspace, reading an `.rle` file, or
+/// drawing and writing an image.
 pub(super) fn finish_file_request(
     state: &mut DialogState,
     request: FileRequest,
@@ -168,7 +203,7 @@ pub(super) fn finish_file_request(
         return;
     };
     let feedback = match request {
-        FileRequest::Save(_) => "Saving…",
+        FileRequest::Save(_) | FileRequest::SaveImage(..) => "Saving…",
         FileRequest::Open | FileRequest::OpenRle => "Opening…",
     };
     report(state, false, feedback.into());
@@ -190,6 +225,20 @@ pub(super) fn finish_file_request(
             FileRequest::OpenRle => FileOutcome::Rle(
                 read_rle(&target).map_err(|error| format!("Could not open {shown}: {error}")),
             ),
+            FileRequest::SaveImage(image, colors) => {
+                let ((width, height), scale) = (image.size(), image.scale());
+                FileOutcome::ImageSaved(
+                    image
+                        .to_png(scale, colors)
+                        .and_then(|file| crate::atomic_file::write(&target, &file))
+                        .map(|()| {
+                            format!(
+                                "Saved {width} × {height} cells, {scale} pixels across each, to {shown}."
+                            )
+                        })
+                        .map_err(|error| format!("Could not save {shown}: {error}")),
+                )
+            }
         }
     };
     let task = IoTaskPool::get_or_init(TaskPool::default).spawn(work);
@@ -198,7 +247,8 @@ pub(super) fn finish_file_request(
 
 /// Applies a finished file task and reports its result.
 pub(super) fn finish_file_work(state: &mut DialogState, path: PathBuf, outcome: FileOutcome) {
-    let workspace_file = !matches!(outcome, FileOutcome::Rle(_));
+    // Images and patterns aren't where the next workspace dialog should start.
+    let workspace_file = matches!(outcome, FileOutcome::Saved(_) | FileOutcome::Opened(_));
     let result = match outcome {
         FileOutcome::Saved(result) => {
             result.map(|()| format!("Workspace saved to {}.", path.display()))
@@ -209,6 +259,7 @@ pub(super) fn finish_file_work(state: &mut DialogState, path: PathBuf, outcome: 
             String::new()
         }),
         FileOutcome::Rle(result) => result.map(|source| load_rle(state, &path, source)),
+        FileOutcome::ImageSaved(result) => result,
     };
     match result {
         Ok(feedback) => {

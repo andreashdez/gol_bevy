@@ -97,6 +97,12 @@ History keeps up to 32 edits, within a budget of about 16 MiB of board snapshots
 
 Resizing the board keeps the undo and redo history. Undoing past a resize keeps the board at its new size and brings back the cells of the earlier board that fit in it.
 
+## Save an image
+
+To save a picture of the board, open **Export** and click **Save image…**; the web version has no files to save to. It saves a PNG of the [selection](#selections) if there is one, or else of the whole board, or on an unbounded board of the box around its live cells. The image is drawn from the cells rather than the screen, in the theme's live and dead colours, without the grid or cell age, and doesn't depend on the window or the zoom.
+
+Each cell is a square of up to 8 pixels, as many as keep the image within 4096 pixels on its longer side, and a single pixel on anything larger. An image can be at most 16,384 cells on a side; for anything larger, select part of it. The file takes a bit a pixel, so even a 2048 × 2048 board saves small. As with workspaces, the file is written through a temporary one beside it, and the system file dialog asks before replacing an existing file.
+
 ## Save and reopen workspaces
 
 .keybinding {Mod+S} saves and .keybinding {Mod+O} opens, from the board or with **Import**, **Export**, or **Settings** open; results show in the dialog, or as a brief notice over the board. Reading and writing happen in the background, so the board keeps running while a large workspace saves or loads; until it finishes, another save or open is refused with a notice.

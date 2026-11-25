@@ -2,6 +2,7 @@ pub mod app;
 mod atomic_file;
 pub mod board;
 pub mod canvas_view;
+pub mod cell_image;
 pub mod chunk;
 pub mod coords;
 pub mod feedback;

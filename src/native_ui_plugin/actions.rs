@@ -38,6 +38,8 @@ pub(super) enum Action {
     EditRule,
     ExportRle,
     SaveWorkspace,
+    /// Saves the selection, or else the board, as a PNG.
+    SaveImage,
     OpenWorkspace,
     /// Loads an `.rle` file into the import fields.
     OpenRle,
@@ -98,6 +100,7 @@ pub(super) fn activate(
         | Action::EditRule
         | Action::ExportRle
         | Action::SaveWorkspace
+        | Action::SaveImage
         | Action::OpenWorkspace
         | Action::OpenRle
         | Action::ConfirmOpenWorkspace

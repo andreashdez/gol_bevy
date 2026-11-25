@@ -1193,6 +1193,27 @@ fn selecting(app: &mut App, from: (i64, i64), to: (i64, i64)) {
 }
 
 #[test]
+fn an_image_shows_the_selection_or_else_the_board_or_the_live_cells_of_the_plane() {
+    let mut app = App::new(16, 8);
+    app.populate_board(3, 2);
+    assert_eq!(app.board_image().unwrap().size(), (16, 8));
+    selecting(&mut app, (4, 2), (2, 1));
+    let image = app.board_image().unwrap();
+    assert_eq!(image.size(), (3, 2));
+    assert!(image.is_alive(1, 0));
+
+    app.set_tool(EditTool::Draw);
+    app.set_unbounded().unwrap();
+    app.clear_board();
+    assert_eq!(app.board_image().unwrap_err(), ImageExportError::Empty);
+    app.board.populate(-5, 9);
+    app.board.populate(1, 0);
+    assert_eq!(app.board_image().unwrap().size(), (7, 10));
+    app.board.populate(i64::MIN, i64::MAX);
+    assert_eq!(app.board_image().unwrap_err(), ImageExportError::TooLarge);
+}
+
+#[test]
 fn a_selection_spans_its_corners_whichever_way_it_was_dragged() {
     let mut app = App::new(16, 16);
     selecting(&mut app, (9, 2), (4, 7));

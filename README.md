@@ -22,6 +22,7 @@ installing anything.
   that grows as far as the pattern does.
 - **RLE import and export**, compatible with other Life tools such as Golly, and
   workspace files that keep the board and imported patterns between runs.
+- **PNG export** of the board or a selection, in the theme's colours.
 - **Keyboard and screen reader friendly**: Tab navigation and accessible names on every
   control, a cell cursor for editing the board from the keyboard, and dark, light, and
   high-contrast themes.

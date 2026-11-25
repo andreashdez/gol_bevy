@@ -1,7 +1,7 @@
 .docname {Architecture}
 .include {docs}
 
-gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`app`, `rule`, `chunk`, `board`, `sparse_board`, `universe`, `settle`, `patterns`, `workspace`) knows nothing about Bevy's UI or rendering, so it is tested directly.
+gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`app`, `rule`, `chunk`, `board`, `sparse_board`, `universe`, `settle`, `patterns`, `cell_image`, `workspace`) knows nothing about Bevy's UI or rendering, so it is tested directly.
 
 ## Source layout
 
@@ -22,6 +22,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
       - universe.rs
       - settle.rs
       - patterns.rs
+      - cell_image.rs
       - workspace.rs
       - atomic_file.rs
       - shared.rs
@@ -78,6 +79,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
 | `universe`              | Either kind of board behind signed cell coordinates, and the snapshots undo keeps of them |
 | `settle`                | Noticing a board that repeats, from generation fingerprints                   |
 | `patterns`              | Built-in patterns and RLE reading and writing                                 |
+| `cell_image`            | A rectangle of the board as a bit per cell, and the PNG drawn from it         |
 | `workspace`             | Versioned workspace files, checked completely before they replace anything    |
 | `atomic_file`           | Writing through a temporary file, so a failed save keeps the old contents     |
 | `shared`                | App-wide Bevy state: the simulation resource, system sets, overlay toggles, themes, board size settings |
@@ -101,7 +103,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
 |-------------------------|-------------------------------------------------------------------------------|
 | `history`               | Undo and redo, edit strokes, and the board before a run that reset returns to |
 | `stamp`                 | The pattern library, pasting, and turning, flipping, and placing the stamp    |
-| `selection`             | The Select tool's rectangle, and copying it or the board as RLE               |
+| `selection`             | The Select tool's rectangle, and copying it or the board as RLE or an image   |
 | `playback`              | Running, speed, settling and pausing by itself, and the population history    |
 
 `render_plugin` and `input_plugin` keep their plugin wiring in the parent file, and their systems in modules of their own:

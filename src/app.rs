@@ -3,8 +3,8 @@
 //! This file holds the [`App`] struct, its constructor, and the board editing
 //! at its core. Each child module adds an `impl App` block for one concern:
 //! `history` for undo, redo, and the start of a run; `stamp` for the pattern
-//! library and the stamp; `selection` for the Select tool and RLE export; and
-//! `playback` for running, speed, settling, and population history.
+//! library and the stamp; `selection` for the Select tool and RLE and image
+//! export; and `playback` for running, speed, settling, and population history.
 
 mod history;
 mod playback;
@@ -22,7 +22,7 @@ use self::{
 };
 pub use self::{
     playback::{AutoPause, POPULATION_HISTORY},
-    selection::{BoardExport, BoardExportError, SelectionExportError},
+    selection::{BoardExport, BoardExportError, ImageExportError, SelectionExportError},
     stamp::{PasteError, PatternImport},
 };
 use crate::{

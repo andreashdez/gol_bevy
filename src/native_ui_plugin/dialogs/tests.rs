@@ -28,6 +28,7 @@ fn test_world(dialog: DialogKind) -> World {
     world.init_resource::<crate::keybindings::TypedKeys>();
     world.init_resource::<FileDialog>();
     world.init_resource::<crate::feedback::EditFeedback>();
+    world.init_resource::<Theme>();
     world.add_observer(dialog_action);
     world
 }
@@ -374,6 +375,46 @@ fn finish_work(world: &mut World) {
 fn save_request(world: &World) -> FileRequest {
     let workspace = world.resource::<Simulation>().app.workspace().unwrap();
     FileRequest::Save(Box::new(workspace))
+}
+
+#[test]
+fn an_image_saves_in_the_theme_colours_without_moving_the_workspace_folder() {
+    let directory = crate::test_support::TestDirectory::new();
+    let path = directory.0.join("board.png");
+    let mut world = test_world(DialogKind::Export);
+    world.resource_mut::<Simulation>().app.populate_board(0, 31);
+    let image = world.resource::<Simulation>().app.board_image().unwrap();
+    let colors = [[1, 2, 3], [4, 5, 6]];
+    choose(
+        &mut world,
+        FileRequest::SaveImage(Box::new(image), colors),
+        Some(&path),
+    );
+
+    let drafts = world.resource::<Drafts>();
+    assert!(!drafts.error, "{}", drafts.feedback);
+    assert!(
+        drafts
+            .feedback
+            .starts_with("Saved 32 × 32 cells, 8 pixels across each"),
+        "{}",
+        drafts.feedback
+    );
+    assert_eq!(drafts.workspace_path, None);
+    let file = std::fs::read(&path).unwrap();
+    let mut reader = png::Decoder::new(std::io::Cursor::new(file))
+        .read_info()
+        .unwrap();
+    let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+    let frame = reader.next_frame(&mut pixels).unwrap();
+    assert_eq!((frame.width, frame.height), (256, 256));
+    assert_eq!(
+        reader.info().palette.as_deref(),
+        Some(&[1, 2, 3, 4, 5, 6][..])
+    );
+    // Cell (0, 31) is the top left: the first pixel row starts with live ones.
+    assert_eq!(pixels[0], 0xff);
+    assert_eq!(pixels[1], 0);
 }
 
 #[test]

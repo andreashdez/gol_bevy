@@ -1,8 +1,9 @@
 //! The Select tool's rectangle and what can be done with it, and writing the
-//! board or the selection out as RLE.
+//! board or the selection out as RLE or as an image.
 
 use super::{App, EditTool};
 use crate::{
+    cell_image::{CellImage, MAX_IMAGE_SIDE},
     patterns::RleWriter,
     sparse_board::{CellRect, PLANE_EXPORT_CELLS_MAX},
     universe::{Universe, plane_to_rle},
@@ -48,6 +49,24 @@ impl fmt::Display for SelectionExportError {
             Self::NothingSelected => "Nothing selected · drag with the Select tool (4)",
             Self::Empty => "No live cells in the selection",
             Self::TooLarge => "Too many live cells in the selection to copy",
+        })
+    }
+}
+
+/// Why the board can't be saved as an image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageExportError {
+    Empty,
+    TooLarge,
+}
+
+impl fmt::Display for ImageExportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Empty => "The board is empty, so there is nothing to draw.",
+            Self::TooLarge => {
+                "The image would be over 16,384 cells on a side · select a smaller area."
+            }
         })
     }
 }
@@ -230,5 +249,40 @@ impl App {
             width,
             height,
         })
+    }
+
+    /// The selection as an image, or else the whole of a finite board, or the
+    /// live cells of an unbounded one, cropped to their bounding box.
+    pub fn board_image(&self) -> Result<CellImage, ImageExportError> {
+        let rect = match (self.selection(), &self.board) {
+            (Some(rect), _) => rect,
+            (None, Universe::Finite(board)) => {
+                let (width, height) = board.size();
+                CellRect {
+                    left: 0,
+                    bottom: 0,
+                    width,
+                    height,
+                }
+            }
+            (None, Universe::Unbounded(plane)) => {
+                let (min, max) = plane.live_bounds().ok_or(ImageExportError::Empty)?;
+                // Measured without subtracting, which far-apart cells would overflow.
+                let span = |low: i64, high: i64| {
+                    usize::try_from(high.abs_diff(low))
+                        .map_or(usize::MAX, |span| span.saturating_add(1))
+                };
+                CellRect {
+                    left: min.0,
+                    bottom: min.1,
+                    width: span(min.0, max.0),
+                    height: span(min.1, max.1),
+                }
+            }
+        };
+        if rect.width > MAX_IMAGE_SIDE || rect.height > MAX_IMAGE_SIDE {
+            return Err(ImageExportError::TooLarge);
+        }
+        Ok(CellImage::capture(&self.board, rect))
     }
 }
