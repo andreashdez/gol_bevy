@@ -19,6 +19,8 @@ use bevy::{
 };
 use std::path::PathBuf;
 
+#[cfg(target_arch = "wasm32")]
+mod browser;
 mod files;
 mod help;
 mod import_preview;
@@ -637,12 +639,14 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                     DialogKind::Export => {
                         heading(p, "Pattern", "Copy the live cells, cropped to their bounding box, as RLE with the board rule.");
                         p.spawn(row()).with_children(|p| { button(p, "Copy board as RLE", Action::ExportRle); });
+                        // The web version hands files to the browser to download, with no dialog to follow.
+                        let [image, gif, period] = if WEB_BUILD { ["Download image", "Download GIF", "Download one period"] } else { ["Save image…", "Save GIF…", "Save one period…"] };
+                        heading(p, "Image", "Save a PNG of the selection, or else of the whole board, or of the live cells of an unbounded board, in the theme's colours.");
+                        p.spawn(row()).with_children(|p| { button(p, image, Action::SaveImage); });
+                        heading(p, "Animation", "Record the same area as a looping GIF at the playback speed, from the current generation on. One period records until the board comes back to it, so the loop has no jump. The board plays on meanwhile.");
+                        action_row(p, gif, Action::SaveGif, |p| inline_field(p, "Generations", &drafts.generations, Field::Generations, false));
+                        p.spawn(row()).with_children(|p| { button(p, period, Action::SaveGifPeriod); });
                         if !WEB_BUILD {
-                            heading(p, "Image", "Save a PNG of the selection, or else of the whole board, or of the live cells of an unbounded board, in the theme's colours.");
-                            p.spawn(row()).with_children(|p| { button(p, "Save image…", Action::SaveImage); });
-                            heading(p, "Animation", "Record the same area as a looping GIF at the playback speed, from the current generation on. One period records until the board comes back to it, so the loop has no jump. The board plays on meanwhile.");
-                            action_row(p, "Save GIF…", Action::SaveGif, |p| inline_field(p, "Generations", &drafts.generations, Field::Generations, false));
-                            p.spawn(row()).with_children(|p| { button(p, "Save one period…", Action::SaveGifPeriod); });
                             heading(p, "Workspace file", &format!("Save your board and imported patterns to a .golw file. {}+S saves.", command_key()));
                             p.spawn(row()).with_children(|p| { button(p, "Save workspace…", Action::SaveWorkspace); });
                         }

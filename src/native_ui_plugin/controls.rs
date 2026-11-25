@@ -136,7 +136,9 @@ pub(super) fn hint(action: Action) -> String {
         // The web build has no workspace files.
         Action::Import if crate::shared::WEB_BUILD => "Add an RLE pattern to your library".into(),
         Action::Import => "Add an RLE pattern to your library, or open a workspace file".into(),
-        Action::Export if crate::shared::WEB_BUILD => "Copy the board as RLE".into(),
+        Action::Export if crate::shared::WEB_BUILD => {
+            "Copy the board as RLE, or download an image or a GIF".into()
+        }
         Action::Export => {
             "Copy the board as RLE, or save an image, a GIF, or a workspace file".into()
         }

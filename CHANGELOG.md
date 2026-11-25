@@ -16,6 +16,7 @@ Add a line under Unreleased in the same pull request as the change; see
   the cells that changed, and the dialog counts the generations recorded. **Save one
   period…** records until the board comes back to the current generation, for a loop
   without a jump.
+- The web version downloads images and GIFs from Export, as `board.png` and `board.gif`.
 
 ### Changed
 

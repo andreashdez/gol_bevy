@@ -17,7 +17,7 @@ It opens full screen in a new page. Press .keybinding {/} once it has loaded to 
 
 The web version has the full simulation, drawing tools, stamps, rules, undo, and selection. Some things need the desktop app:
 
-- **No files.** You can't open or save workspaces or open \.rle files. To bring in a pattern, paste its RLE into **Import**; to keep one, **Export** copies the board as RLE.
+- **No workspace or pattern files.** You can't open or save workspaces or open \.rle files. To bring in a pattern, paste its RLE into **Import**; to keep one, **Export** copies the board as RLE. Images and GIFs from **Export** download through the browser, as `board.png` and `board.gif`.
 - **Settings are not saved.** Every visit starts with the defaults.
 - **One thread.** Browsers run the simulation on a single core, so large boards and maximum speed are slower than on the desktop.
 - **No screen reader support.** The web version does not expose its interface to assistive tools. Keyboard navigation and the colour themes work as on the desktop. See [Accessibility](accessibility.qd).

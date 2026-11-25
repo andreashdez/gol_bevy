@@ -58,12 +58,26 @@ rfd = "0.18"
 
 # The web build, for the demo on the docs site. `web` gives Bevy browser clocks
 # and task executors, `webgl2` renders through WebGL2, and `js` seeds random
-# boards from the browser instead of a fixed seed. web-sys, already in the tree
-# through Bevy, asks the browser whether it runs on a Mac, for the Cmd key.
+# boards from the browser instead of a fixed seed. web-sys, js-sys, and
+# wasm-bindgen, already in the tree through Bevy, ask the browser whether it
+# runs on a Mac, for the Cmd key, and hand it saved images to download.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 bevy = { version = "0.20", default-features = false, features = ["web", "webgl2"] }
 fastrand = { version = "2.5", features = ["js"] }
-web-sys = { version = "0.3", features = ["Navigator", "Window"] }
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+    "Blob",
+    "BlobPropertyBag",
+    "Document",
+    "Element",
+    "HtmlAnchorElement",
+    "HtmlElement",
+    "Navigator",
+    "Node",
+    "Url",
+    "Window",
+] }
 
 [dev-dependencies]
 criterion = "0.8"

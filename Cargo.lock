@@ -2973,10 +2973,12 @@ dependencies = [
  "dirs",
  "fastrand",
  "gif",
+ "js-sys",
  "png",
  "rfd",
  "serde",
  "serde_json",
+ "wasm-bindgen",
  "web-sys",
 ]
 

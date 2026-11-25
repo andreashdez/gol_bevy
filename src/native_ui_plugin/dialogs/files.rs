@@ -2,7 +2,7 @@
 //! and their shortcuts.
 use super::*;
 use crate::{
-    cell_gif::{GifLength, GifRequest},
+    cell_gif::{GifLength, GifRecording, GifRequest},
     cell_image::CellImage,
     workspace::{DecodedWorkspace, Workspace},
 };
@@ -38,6 +38,9 @@ pub(in crate::native_ui_plugin) struct FileDialog(pub(super) Option<FileWork>);
 pub(super) enum FileWork {
     Picking(FileRequest, Task<Option<PathBuf>>),
     Working(PathBuf, Task<FileOutcome>, Option<Progress>),
+    /// A GIF the web version records between frames, as it has one thread.
+    #[cfg(target_arch = "wasm32")]
+    Recording(Box<crate::cell_gif::GifRecorder>, GifLength),
 }
 
 /// How far work that takes a while has got: generations of a GIF recorded so
@@ -122,6 +125,8 @@ pub(super) fn file_dialog_busy(state: &mut DialogState) -> bool {
         None => return false,
         Some(FileWork::Picking(..)) => "A file dialog is already open.",
         Some(FileWork::Working(..)) => "Still working on the last file.",
+        #[cfg(target_arch = "wasm32")]
+        Some(FileWork::Recording(..)) => "Still recording the last GIF.",
     };
     report(state, false, notice.into());
     true
@@ -129,11 +134,7 @@ pub(super) fn file_dialog_busy(state: &mut DialogState) -> bool {
 
 pub(super) fn request_file(state: &mut DialogState, request: FileRequest) {
     let Some(task) = spawn_file_dialog(&request, state.drafts.workspace_path.as_deref()) else {
-        report(
-            state,
-            true,
-            "Files are not available in the web version.".into(),
-        );
+        without_file_dialog(state, request);
         return;
     };
     state.drafts.error = false;
@@ -197,6 +198,27 @@ fn spawn_file_dialog(_: &FileRequest, _: Option<&Path>) -> Option<Task<Option<Pa
     None
 }
 
+/// Without file dialogs, the web version downloads images and animations, and
+/// has nowhere to put anything else.
+#[cfg(target_arch = "wasm32")]
+fn without_file_dialog(state: &mut DialogState, request: FileRequest) {
+    match request {
+        FileRequest::SaveImage(image, colors) => super::browser::save_image(state, &image, colors),
+        FileRequest::SaveGif(gif, colors) => super::browser::start_gif(state, *gif, colors),
+        _ => report(
+            state,
+            true,
+            "Files are not available in the web version.".into(),
+        ),
+    }
+}
+
+/// The native file dialog is always there.
+#[cfg(not(target_arch = "wasm32"))]
+fn without_file_dialog(state: &mut DialogState, _: FileRequest) {
+    report(state, true, "No file dialog is available.".into());
+}
+
 pub(in crate::native_ui_plugin) fn poll_file_dialog(mut state: DialogState) {
     match state.file_dialog.0.as_mut() {
         Some(FileWork::Picking(_, task)) => {
@@ -211,13 +233,7 @@ pub(in crate::native_ui_plugin) fn poll_file_dialog(mut state: DialogState) {
         Some(FileWork::Working(_, task, progress)) => {
             let Some(outcome) = check_ready(task) else {
                 if let Some(Progress { done, total }) = progress {
-                    let done = done.load(Ordering::Relaxed);
-                    let feedback = match total {
-                        Some(total) => format!("Recording… {done} of {total} generations."),
-                        None => format!(
-                            "Recording… {done} generations, until the board comes back round."
-                        ),
-                    };
+                    let feedback = recording_progress(done.load(Ordering::Relaxed), *total);
                     if state.drafts.feedback != feedback {
                         state.drafts.feedback = feedback;
                     }
@@ -229,6 +245,8 @@ pub(in crate::native_ui_plugin) fn poll_file_dialog(mut state: DialogState) {
             };
             finish_file_work(&mut state, path, outcome);
         }
+        #[cfg(target_arch = "wasm32")]
+        Some(FileWork::Recording(..)) => super::browser::keep_recording(&mut state),
         None => {}
     }
 }
@@ -310,21 +328,7 @@ pub(super) fn finish_file_request(
                     gif.record(colors, &done)
                         .and_then(|gif| {
                             crate::atomic_file::write(&target, &gif.file)?;
-                            let ((width, height), scale) = (gif.size, gif.scale);
-                            let generations = gif.generations;
-                            let what = match length {
-                                GifLength::Period => format!("one period, {generations} generations,"),
-                                GifLength::Generations(_) => format!("{generations} generations"),
-                            };
-                            let early = match length {
-                                GifLength::Generations(asked) if generations < asked => {
-                                    " It stops early, where the board reached its memory limit."
-                                }
-                                _ => "",
-                            };
-                            Ok(format!(
-                                "Saved {what} of {width} × {height} cells, {scale} pixels across each, to {shown}.{early}"
-                            ))
+                            Ok(gif_saved("Saved", length, &gif, &format!("to {shown}")))
                         })
                         .map_err(|error| format!("Could not save {shown}: {error}")),
                 )
@@ -333,6 +337,33 @@ pub(super) fn finish_file_request(
     };
     let task = IoTaskPool::get_or_init(TaskPool::default).spawn(work);
     state.file_dialog.0 = Some(FileWork::Working(path, task, progress));
+}
+
+/// How far a GIF recording has got, of `total` generations if that's known.
+pub(super) fn recording_progress(done: usize, total: Option<usize>) -> String {
+    match total {
+        Some(total) => format!("Recording… {done} of {total} generations."),
+        None => format!("Recording… {done} generations, until the board comes back round."),
+    }
+}
+
+/// What a saved GIF holds and where it went, `verb` and `place` as in "Saved …
+/// to board.gif".
+pub(super) fn gif_saved(verb: &str, length: GifLength, gif: &GifRecording, place: &str) -> String {
+    let ((width, height), scale, generations) = (gif.size, gif.scale, gif.generations);
+    let what = match length {
+        GifLength::Period => format!("one period, {generations} generations,"),
+        GifLength::Generations(_) => format!("{generations} generations"),
+    };
+    let early = match length {
+        GifLength::Generations(asked) if generations < asked => {
+            " It stops early, where the board reached its memory limit."
+        }
+        _ => "",
+    };
+    format!(
+        "{verb} {what} of {width} × {height} cells, {scale} pixels across each, {place}.{early}"
+    )
 }
 
 /// Applies a finished file task and reports its result.
@@ -392,7 +423,7 @@ fn load_rle(state: &mut DialogState, path: &Path, source: String) -> String {
 
 /// Shows a result in the open dialog, or as a notice over the board when no
 /// dialog shows feedback.
-fn report(state: &mut DialogState, error: bool, feedback: String) {
+pub(super) fn report(state: &mut DialogState, error: bool, feedback: String) {
     if !state.mode.dialog.is_some_and(DialogKind::shows_feedback) && !feedback.is_empty() {
         state.notice.show(feedback.clone());
     }

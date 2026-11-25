@@ -79,11 +79,17 @@ impl GifRequest {
     /// `colors[0]` and live ones in `colors[1]`, as a GIF that loops forever.
     /// `progress` counts the generations drawn so far. Fails for a period if
     /// the board doesn't come back to the current generation in time.
-    pub fn record(
-        mut self,
-        colors: [[u8; 3]; 2],
-        progress: &AtomicUsize,
-    ) -> io::Result<GifRecording> {
+    pub fn record(self, colors: [[u8; 3]; 2], progress: &AtomicUsize) -> io::Result<GifRecording> {
+        let mut recorder = self.recorder(colors)?;
+        while !recorder.step()? {
+            progress.store(recorder.drawn(), Ordering::Relaxed);
+        }
+        recorder.finish()
+    }
+
+    /// A recording to draw a generation at a time, as [`record`](Self::record)
+    /// does all at once.
+    pub fn recorder(self, colors: [[u8; 3]; 2]) -> io::Result<GifRecorder> {
         let (width, height) = (self.rect.width, self.rect.height);
         let scale = (GIF_SIDE / width.max(height)).clamp(1, MAX_SCALE);
         let pixels = |cells: usize| u16::try_from(cells * scale).map_err(io::Error::other);
@@ -98,56 +104,111 @@ impl GifRequest {
         encoder
             .set_repeat(gif::Repeat::Infinite)
             .map_err(io::Error::other)?;
-
         let (limit, find_period) = match self.length {
             GifLength::Generations(generations) => (generations, false),
             GifLength::Period => (MAX_GIF_GENERATIONS, true),
         };
-        // Generations of one run match exactly when their fingerprints do.
-        let start = self.board.fingerprint();
-        let (mut came_back, mut full) = (false, false);
-        let mut previous: Option<CellImage> = None;
-        // The latest frame, written once the next change shows how long it lasts.
-        let mut pending: Option<gif::Frame<'static>> = None;
-        let mut clock = Clock::default();
-        let mut drawn = 0;
-        while drawn <= limit {
-            if drawn > 0 {
-                // A period is only known once the step after the last frame.
-                if drawn == limit && !find_period {
-                    break;
-                }
-                if self.board.step_within(PLANE_CHUNKS_MAX).is_err() {
-                    full = true;
-                    break;
-                }
-                if find_period && self.board.fingerprint() == start {
-                    came_back = true;
-                    break;
-                }
-                if drawn == limit {
-                    break;
-                }
-            }
-            let image = CellImage::capture(&self.board, self.rect);
-            let changed = match &previous {
-                None => Some((0, 0, width, height)),
-                Some(previous) => image.changed_since(previous),
-            };
-            if let Some(area) = changed {
-                let frame = draw(&image, previous.as_ref(), area, scale);
-                if let Some(mut done) = pending.replace(frame) {
-                    done.delay = clock.lap();
-                    encoder.write_frame(&done).map_err(io::Error::other)?;
-                }
-            }
-            clock.run(self.ms_per_generation);
-            previous = Some(image);
-            drawn += 1;
-            progress.store(drawn, Ordering::Relaxed);
+        Ok(GifRecorder {
+            // Generations of one run match exactly when their fingerprints do.
+            start: self.board.fingerprint(),
+            board: self.board,
+            rect: self.rect,
+            ms_per_generation: self.ms_per_generation,
+            limit,
+            find_period,
+            scale,
+            encoder,
+            previous: None,
+            pending: None,
+            clock: Clock::default(),
+            drawn: 0,
+            end: None,
+        })
+    }
+}
+
+/// A recording under way. Drawn a generation at a time, it can run in short
+/// slices, as it does between frames in the web version, which has one thread.
+pub struct GifRecorder {
+    board: Universe,
+    rect: CellRect,
+    ms_per_generation: u64,
+    /// Most generations to draw, and whether to stop sooner, once the board
+    /// comes back to its fingerprint at the `start`.
+    limit: usize,
+    find_period: bool,
+    start: u64,
+    scale: usize,
+    encoder: gif::Encoder<Vec<u8>>,
+    previous: Option<CellImage>,
+    /// The latest frame, written once the next change shows how long it lasts.
+    pending: Option<gif::Frame<'static>>,
+    clock: Clock,
+    drawn: usize,
+    /// Why the recording stopped, once it has.
+    end: Option<End>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum End {
+    /// The limit, which for a period means it never came back.
+    Limit,
+    CameBack,
+    /// The unbounded board reached its memory limit.
+    Full,
+}
+
+impl GifRecorder {
+    /// Generations drawn so far.
+    pub fn drawn(&self) -> usize {
+        self.drawn
+    }
+
+    /// Draws the next generation, or returns true once there are no more.
+    pub fn step(&mut self) -> io::Result<bool> {
+        if self.end.is_some() {
+            return Ok(true);
         }
-        if find_period && !came_back {
-            return Err(io::Error::other(if full {
+        if self.drawn > 0 {
+            // A period is only known once the step after the last frame.
+            self.end = if self.drawn == self.limit && !self.find_period {
+                Some(End::Limit)
+            } else if self.board.step_within(PLANE_CHUNKS_MAX).is_err() {
+                Some(End::Full)
+            } else if self.find_period && self.board.fingerprint() == self.start {
+                Some(End::CameBack)
+            } else if self.drawn == self.limit {
+                Some(End::Limit)
+            } else {
+                None
+            };
+            if self.end.is_some() {
+                return Ok(true);
+            }
+        }
+        let image = CellImage::capture(&self.board, self.rect);
+        let changed = match &self.previous {
+            None => Some((0, 0, self.rect.width, self.rect.height)),
+            Some(previous) => image.changed_since(previous),
+        };
+        if let Some(area) = changed {
+            let frame = draw(&image, self.previous.as_ref(), area, self.scale);
+            if let Some(mut done) = self.pending.replace(frame) {
+                done.delay = self.clock.lap();
+                self.encoder.write_frame(&done).map_err(io::Error::other)?;
+            }
+        }
+        self.clock.run(self.ms_per_generation);
+        self.previous = Some(image);
+        self.drawn += 1;
+        Ok(false)
+    }
+
+    /// The finished GIF, once [`step`](Self::step) has returned true.
+    pub fn finish(mut self) -> io::Result<GifRecording> {
+        debug_assert!(self.end.is_some(), "finished before the last generation");
+        if self.find_period && self.end != Some(End::CameBack) {
+            return Err(io::Error::other(if self.end == Some(End::Full) {
                 "the board reached its memory limit before it came back round".to_owned()
             } else {
                 format!(
@@ -157,15 +218,15 @@ impl GifRequest {
                 )
             }));
         }
-        if let Some(mut last) = pending {
-            last.delay = clock.lap();
-            encoder.write_frame(&last).map_err(io::Error::other)?;
+        if let Some(mut last) = self.pending.take() {
+            last.delay = self.clock.lap();
+            self.encoder.write_frame(&last).map_err(io::Error::other)?;
         }
         Ok(GifRecording {
-            file: encoder.into_inner().map_err(io::Error::other)?,
-            generations: drawn,
-            size: (width, height),
-            scale,
+            file: self.encoder.into_inner().map_err(io::Error::other)?,
+            generations: self.drawn,
+            size: (self.rect.width, self.rect.height),
+            scale: self.scale,
         })
     }
 }

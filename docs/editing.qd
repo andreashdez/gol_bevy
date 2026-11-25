@@ -99,7 +99,7 @@ Resizing the board keeps the undo and redo history. Undoing past a resize keeps 
 
 ## Save an image
 
-To save a picture of the board, open **Export** and click **Save image…**; the web version has no files to save to. It saves a PNG of the [selection](#selections) if there is one, or else of the whole board, or on an unbounded board of the box around its live cells. The image is drawn from the cells rather than the screen, in the theme's live and dead colours, without the grid or cell age, and doesn't depend on the window or the zoom.
+To save a picture of the board, open **Export** and click **Save image…**; the web version downloads it instead, as **Download image**. It saves a PNG of the [selection](#selections) if there is one, or else of the whole board, or on an unbounded board of the box around its live cells. The image is drawn from the cells rather than the screen, in the theme's live and dead colours, without the grid or cell age, and doesn't depend on the window or the zoom.
 
 Each cell is a square of up to 8 pixels, as many as keep the image within 4096 pixels on its longer side, and a single pixel on anything larger. An image can be at most 16,384 cells on a side; for anything larger, select part of it. The file takes a bit a pixel, so even a 2048 × 2048 board saves small. As with workspaces, the file is written through a temporary one beside it, and the system file dialog asks before replacing an existing file.
 
@@ -108,6 +108,8 @@ Each cell is a square of up to 8 pixels, as many as keep the image within 4096 p
 To record the board as it runs, open **Export**, set **Generations**, and click **Save GIF…**. It records the same area as an image, from the current generation on, as a GIF that loops forever: 100 generations by default, and up to 1000. Recording steps a copy of the board, so the board itself plays on, and the dialog counts the generations recorded meanwhile. Another file can't be saved or opened until it finishes.
 
 For a GIF that loops without a jump, click **Save one period…** instead. It records from the current generation until the board comes back to it, up to 1000 generations, so the last frame leads straight back into the first. The board has to be repeating already: a pattern still settling never comes back to where it is, and the GIF isn't saved. Run the board until the status bar shows its period first. The period is the whole board's, so a selection loops after the board's period even if what's inside it repeats sooner.
+
+The web version downloads the GIF instead, as **Download GIF** and **Download one period**. It has one thread, so it records between frames, about half of each, and the board runs slower until the recording finishes.
 
 Each generation shows for as long as it does at the playback speed. At ∞ it shows for 20 ms, 50 generations a second, the fastest that browsers play a GIF: they slow anything quicker to 10 frames a second. GIF times count hundredths of a second, so at 40 generations a second frames alternate between 30 and 20 ms.
 
