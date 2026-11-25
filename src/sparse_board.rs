@@ -45,8 +45,10 @@ const DIRTY_CHUNKS_MAX: usize = 1 << 14;
 const CHANGE_SCRATCH_KEPT: usize = 1 << 10;
 
 /// Chunks a run may reach: a generation that would leave more doesn't run. A
-/// chunk's cells take 512 bytes, so this is half a gigabyte of them, with its
-/// bookkeeping and history on top.
+/// chunk's cells take 512 bytes, so this is half a gigabyte of them; with its
+/// bookkeeping a plane this size takes about 0.9 GB, and stepping it, which
+/// stages a copy of every chunk it changes, about 1.5 GB. History holds on to
+/// the chunks the plane has since replaced on top. See docs/engine.qd.
 pub const PLANE_CHUNKS_MAX: usize = 1 << 20;
 
 /// Live cells that can be written out, as RLE or to a workspace file. Far more
