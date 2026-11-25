@@ -4,7 +4,10 @@ use super::files::{
 use super::import_preview::import_summary;
 use super::widgets::DensitySlider;
 use super::*;
-use crate::{cell_gif::GifLength, workspace::Workspace};
+use crate::{
+    cell_gif::{GifColors, GifLength},
+    workspace::Workspace,
+};
 use bevy::ecs::system::RunSystemOnce;
 use bevy::ui_widgets::{SliderValue, ValueChange};
 use std::path::Path;
@@ -29,6 +32,7 @@ fn test_world(dialog: DialogKind) -> World {
     world.init_resource::<FileDialog>();
     world.init_resource::<crate::feedback::EditFeedback>();
     world.init_resource::<Theme>();
+    world.init_resource::<crate::shared::CellAge>();
     world.add_observer(dialog_action);
     world
 }
@@ -440,7 +444,7 @@ fn a_gif_records_the_generations_asked_for_and_refuses_a_count_out_of_range() {
         .unwrap();
     choose(
         &mut world,
-        FileRequest::SaveGif(Box::new(gif), [[0; 3], [255; 3]]),
+        FileRequest::SaveGif(Box::new(gif), GifColors::plain([0; 3], [255; 3])),
         Some(&path),
     );
     let drafts = world.resource::<Drafts>();
@@ -469,7 +473,7 @@ fn one_period_reports_its_length_or_why_there_is_none() {
             .unwrap();
         choose(
             world,
-            FileRequest::SaveGif(Box::new(gif), [[0; 3], [255; 3]]),
+            FileRequest::SaveGif(Box::new(gif), GifColors::plain([0; 3], [255; 3])),
             Some(&path),
         );
         let drafts = world.resource::<Drafts>();

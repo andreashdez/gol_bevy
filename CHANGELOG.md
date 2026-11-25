@@ -15,7 +15,7 @@ Add a line under Unreleased in the same pull request as the change; see
   playback speed, from a copy of the board, so the board plays on. Each frame holds only
   the cells that changed, and the dialog counts the generations recorded. **Save one
   period…** records until the board comes back to the current generation, for a loop
-  without a jump.
+  without a jump. With cell age on, cells take their colours by age, as on the board.
 - The web version downloads images and GIFs from Export, as `board.png` and `board.gif`.
 
 ### Changed

@@ -173,6 +173,8 @@ pub(super) struct DialogState<'w> {
     notice: ResMut<'w, crate::feedback::EditFeedback>,
     /// For the colours of a saved image.
     theme: Res<'w, Theme>,
+    /// Whether a recorded GIF colours cells by age.
+    cell_age: Res<'w, crate::shared::CellAge>,
     /// Absent in tests, which must not touch the system clipboard.
     clipboard: Option<ResMut<'w, Clipboard>>,
 }
@@ -643,7 +645,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         let [image, gif, period] = if WEB_BUILD { ["Download image", "Download GIF", "Download one period"] } else { ["Save image…", "Save GIF…", "Save one period…"] };
                         heading(p, "Image", "Save a PNG of the selection, or else of the whole board, or of the live cells of an unbounded board, in the theme's colours.");
                         p.spawn(row()).with_children(|p| { button(p, image, Action::SaveImage); });
-                        heading(p, "Animation", "Record the same area as a looping GIF at the playback speed, from the current generation on. One period records until the board comes back to it, so the loop has no jump. The board plays on meanwhile.");
+                        heading(p, "Animation", "Record the same area as a looping GIF at the playback speed, from the current generation on, coloured by age if Cell age is on. One period records until the board comes back to it, so the loop has no jump. The board plays on meanwhile.");
                         action_row(p, gif, Action::SaveGif, |p| inline_field(p, "Generations", &drafts.generations, Field::Generations, false));
                         p.spawn(row()).with_children(|p| { button(p, period, Action::SaveGifPeriod); });
                         if !WEB_BUILD {

@@ -1,8 +1,10 @@
 //! Generations of a rectangle of the board as an animated GIF, drawn from the
-//! cells as [`CellImage`] draws a still. Each frame after the first covers only
-//! the box of cells that changed, with the cells in it that didn't left
-//! transparent, and a generation that changes nothing lengthens the frame
-//! before it. Plain Rust, so a recording runs off the main thread.
+//! cells as [`CellImage`] draws a still: in one colour each for live and dead
+//! cells, or by age, as the board shows them with cell age on. Each frame after
+//! the first covers only the box of cells whose colour changed, with the cells
+//! in it that didn't left transparent, and a generation that changes nothing
+//! lengthens the frame before it. Plain Rust, so a recording runs off the main
+//! thread.
 use crate::{
     cell_image::CellImage,
     sparse_board::{CellRect, PLANE_CHUNKS_MAX},
@@ -32,11 +34,6 @@ const MAX_SCALE: usize = 8;
 /// second is the fastest a GIF plays everywhere.
 pub const FASTEST_MS_PER_GENERATION: u64 = 20;
 
-/// Palette indices: the two cell colours, and the transparent one for cells
-/// that a frame leaves as the frame before drew them.
-const LIVE: u8 = 1;
-const UNCHANGED: u8 = 2;
-
 /// How many generations to record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GifLength {
@@ -45,6 +42,72 @@ pub enum GifLength {
     /// From the current generation until the board comes back to it, so the GIF
     /// loops without a jump. Up to [`MAX_GIF_GENERATIONS`].
     Period,
+}
+
+/// The colours cells are drawn in, dead and live, each by age: the generations
+/// since the cell last changed. Without cell age each has a single colour.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GifColors {
+    /// Dead colours, then live ones, by age; the last of each holds for any
+    /// older cell.
+    by_age: [Vec<[u8; 3]>; 2],
+    /// The age dead and live cells start the recording at, as cells already on
+    /// the board look as if they had been there a while.
+    start: [u8; 2],
+}
+
+impl GifColors {
+    /// One colour for dead cells and one for live ones.
+    pub fn plain(dead: [u8; 3], live: [u8; 3]) -> Self {
+        Self {
+            by_age: [vec![dead], vec![live]],
+            start: [0, 0],
+        }
+    }
+
+    /// Colours by age, from 0 for a cell that just changed. Dead cells start
+    /// the recording at their last colour, and live ones at `live_start`.
+    pub fn by_age(dead: Vec<[u8; 3]>, live: Vec<[u8; 3]>, live_start: u8) -> Self {
+        assert!(!dead.is_empty() && !live.is_empty() && dead.len() + live.len() < 256);
+        let dead_start = u8::try_from(dead.len() - 1).unwrap_or(u8::MAX);
+        Self {
+            by_age: [dead, live],
+            start: [dead_start, live_start],
+        }
+    }
+
+    /// Whether a cell's colour changes as it ages.
+    fn ageing(&self) -> bool {
+        self.by_age.iter().any(|colors| colors.len() > 1)
+    }
+
+    /// Generations after which no cell's colour changes any more.
+    fn settles_after(&self) -> usize {
+        self.by_age.iter().map(Vec::len).max().unwrap_or(1) - 1
+    }
+
+    /// The palette index of a cell's colour.
+    fn index(&self, alive: bool, age: u8) -> u8 {
+        let [dead, live] = &self.by_age;
+        let (first, colors) = if alive { (dead.len(), live) } else { (0, dead) };
+        (first + usize::from(age).min(colors.len() - 1)) as u8
+    }
+
+    /// The index of cells a frame leaves as the frame before drew them.
+    fn unchanged(&self) -> u8 {
+        (self.by_age[0].len() + self.by_age[1].len()) as u8
+    }
+
+    /// Every colour, then the unchanged cells' one, which is never shown.
+    fn palette(&self) -> Vec<u8> {
+        let [dead, live] = &self.by_age;
+        dead.iter()
+            .chain(live)
+            .chain(&dead[..1])
+            .flatten()
+            .copied()
+            .collect()
+    }
 }
 
 /// What a recording starts from: a copy of the board, stepped on its own so
@@ -75,38 +138,41 @@ impl GifRequest {
         self.length
     }
 
-    /// Draws the current generation and the ones after it, dead cells in
-    /// `colors[0]` and live ones in `colors[1]`, as a GIF that loops forever.
-    /// `progress` counts the generations drawn so far. Fails for a period if
-    /// the board doesn't come back to the current generation in time.
-    pub fn record(self, colors: [[u8; 3]; 2], progress: &AtomicUsize) -> io::Result<GifRecording> {
+    /// Draws the current generation and the ones after it as a GIF that loops
+    /// forever. `progress` counts the generations stepped through so far. Fails
+    /// for a period if the board doesn't come back to the current generation
+    /// in time.
+    pub fn record(self, colors: GifColors, progress: &AtomicUsize) -> io::Result<GifRecording> {
         let mut recorder = self.recorder(colors)?;
-        while !recorder.step()? {
-            progress.store(recorder.drawn(), Ordering::Relaxed);
+        loop {
+            let over = recorder.step()?;
+            progress.store(recorder.progress(), Ordering::Relaxed);
+            if over {
+                break;
+            }
         }
         recorder.finish()
     }
 
     /// A recording to draw a generation at a time, as [`record`](Self::record)
     /// does all at once.
-    pub fn recorder(self, colors: [[u8; 3]; 2]) -> io::Result<GifRecorder> {
+    pub fn recorder(self, colors: GifColors) -> io::Result<GifRecorder> {
         let (width, height) = (self.rect.width, self.rect.height);
         let scale = (GIF_SIDE / width.max(height)).clamp(1, MAX_SCALE);
         let pixels = |cells: usize| u16::try_from(cells * scale).map_err(io::Error::other);
-        let [dead, live] = colors;
         let mut encoder = gif::Encoder::new(
             Vec::new(),
             pixels(width)?,
             pixels(height)?,
-            &[dead, live, dead].concat(),
+            &colors.palette(),
         )
         .map_err(io::Error::other)?;
         encoder
             .set_repeat(gif::Repeat::Infinite)
             .map_err(io::Error::other)?;
-        let (limit, find_period) = match self.length {
-            GifLength::Generations(generations) => (generations, false),
-            GifLength::Period => (MAX_GIF_GENERATIONS, true),
+        let phase = match self.length {
+            GifLength::Generations(generations) => Phase::Drawing { limit: generations },
+            GifLength::Period => Phase::Searching,
         };
         Ok(GifRecorder {
             // Generations of one run match exactly when their fingerprints do.
@@ -114,13 +180,16 @@ impl GifRequest {
             board: self.board,
             rect: self.rect,
             ms_per_generation: self.ms_per_generation,
-            limit,
-            find_period,
+            colors,
+            phase,
             scale,
             encoder,
-            previous: None,
+            cells: None,
+            ages: vec![0; width * height],
+            shown: Vec::new(),
             pending: None,
             clock: Clock::default(),
+            stepped: 0,
             drawn: 0,
             end: None,
         })
@@ -133,90 +202,190 @@ pub struct GifRecorder {
     board: Universe,
     rect: CellRect,
     ms_per_generation: u64,
-    /// Most generations to draw, and whether to stop sooner, once the board
-    /// comes back to its fingerprint at the `start`.
-    limit: usize,
-    find_period: bool,
+    colors: GifColors,
+    phase: Phase,
+    /// The board's fingerprint at the start, which it comes back to once round
+    /// a period.
     start: u64,
     scale: usize,
     encoder: gif::Encoder<Vec<u8>>,
-    previous: Option<CellImage>,
+    /// The cells of the current generation, and how many generations since
+    /// each last changed, top row first.
+    cells: Option<CellImage>,
+    ages: Vec<u8>,
+    /// Each cell's colour as the frames so far show it.
+    shown: Vec<u8>,
     /// The latest frame, written once the next change shows how long it lasts.
     pending: Option<gif::Frame<'static>>,
     clock: Clock,
+    /// Generations stepped through before drawing, and drawn.
+    stepped: usize,
     drawn: usize,
     /// Why the recording stopped, once it has.
     end: Option<End>,
 }
 
+#[derive(Clone, Copy)]
+enum Phase {
+    /// Stepping until the board comes back to the start, to learn the period.
+    Searching,
+    /// Stepping round the period again, `remaining` generations more, until
+    /// every cell's colour is the one it has each time round.
+    WarmingUp { period: usize, remaining: usize },
+    /// Drawing `limit` generations.
+    Drawing { limit: usize },
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum End {
-    /// The limit, which for a period means it never came back.
-    Limit,
-    CameBack,
+    Drawn,
+    /// The board didn't come back round within the most generations a GIF holds.
+    NoPeriod,
     /// The unbounded board reached its memory limit.
     Full,
 }
 
 impl GifRecorder {
-    /// Generations drawn so far.
-    pub fn drawn(&self) -> usize {
-        self.drawn
+    /// Generations stepped through or drawn so far.
+    pub fn progress(&self) -> usize {
+        self.stepped + self.drawn
     }
 
-    /// Draws the next generation, or returns true once there are no more.
+    /// Takes the recording a generation further, and returns true once it's
+    /// over.
     pub fn step(&mut self) -> io::Result<bool> {
         if self.end.is_some() {
             return Ok(true);
         }
-        if self.drawn > 0 {
-            // A period is only known once the step after the last frame.
-            self.end = if self.drawn == self.limit && !self.find_period {
-                Some(End::Limit)
-            } else if self.board.step_within(PLANE_CHUNKS_MAX).is_err() {
-                Some(End::Full)
-            } else if self.find_period && self.board.fingerprint() == self.start {
-                Some(End::CameBack)
-            } else if self.drawn == self.limit {
-                Some(End::Limit)
-            } else {
-                None
-            };
-            if self.end.is_some() {
-                return Ok(true);
+        match self.phase {
+            Phase::Searching => {
+                let first = self.cells.is_none();
+                if self.advance() && !first {
+                    self.stepped += 1;
+                    if self.board.fingerprint() == self.start {
+                        // Round the period as many times as it takes every
+                        // colour to settle into the loop.
+                        let period = self.stepped;
+                        let laps = self.colors.settles_after().div_ceil(period).max(1);
+                        self.phase = match (laps - 1) * period {
+                            0 => Phase::Drawing { limit: period },
+                            remaining => Phase::WarmingUp { period, remaining },
+                        };
+                    } else if self.stepped == MAX_GIF_GENERATIONS {
+                        self.end = Some(End::NoPeriod);
+                    }
+                }
+            }
+            Phase::WarmingUp { period, remaining } => {
+                if self.advance() {
+                    self.stepped += 1;
+                    self.phase = match remaining - 1 {
+                        0 => Phase::Drawing { limit: period },
+                        remaining => Phase::WarmingUp { period, remaining },
+                    };
+                }
+            }
+            Phase::Drawing { limit } => {
+                if self.drawn == limit {
+                    self.end = Some(End::Drawn);
+                } else if (self.drawn == 0 && self.cells.is_some()) || self.advance() {
+                    self.draw()?;
+                }
             }
         }
-        let image = CellImage::capture(&self.board, self.rect);
-        let changed = match &self.previous {
-            None => Some((0, 0, self.rect.width, self.rect.height)),
-            Some(previous) => image.changed_since(previous),
+        Ok(self.end.is_some())
+    }
+
+    /// Moves to the next generation, keeping the cells of the area and their
+    /// ages; the first call takes the board as it is. False, and over, if the
+    /// board can't step any further.
+    fn advance(&mut self) -> bool {
+        if self.cells.is_some() && self.board.step_within(PLANE_CHUNKS_MAX).is_err() {
+            self.end = Some(End::Full);
+            return false;
+        }
+        let now = CellImage::capture(&self.board, self.rect);
+        let width = self.rect.width;
+        match &self.cells {
+            None => {
+                for (index, age) in self.ages.iter_mut().enumerate() {
+                    let alive = now.is_alive(index % width, index / width);
+                    *age = self.colors.start[usize::from(alive)];
+                }
+            }
+            Some(before) if self.colors.ageing() => {
+                for (index, age) in self.ages.iter_mut().enumerate() {
+                    let (x, y) = (index % width, index / width);
+                    *age = if now.is_alive(x, y) == before.is_alive(x, y) {
+                        age.saturating_add(1)
+                    } else {
+                        0
+                    };
+                }
+            }
+            Some(_) => {}
+        }
+        self.cells = Some(now);
+        true
+    }
+
+    /// Draws the current generation: the whole area first, then the box of
+    /// cells whose colour changed.
+    fn draw(&mut self) -> io::Result<()> {
+        let cells = self.cells.as_ref().expect("a generation to draw");
+        let width = self.rect.width;
+        let colors: Vec<u8> = (self.ages.iter().enumerate())
+            .map(|(index, &age)| {
+                let alive = cells.is_alive(index % width, index / width);
+                self.colors.index(alive, age)
+            })
+            .collect();
+        let (area, shown) = if self.drawn == 0 {
+            (Some((0, 0, width, self.rect.height)), None)
+        } else {
+            (
+                changed_box(&colors, &self.shown, width),
+                Some(&self.shown[..]),
+            )
         };
-        if let Some(area) = changed {
-            let frame = draw(&image, self.previous.as_ref(), area, self.scale);
+        if let Some(area) = area {
+            let frame = draw(
+                &colors,
+                shown,
+                width,
+                area,
+                self.scale,
+                self.colors.unchanged(),
+            );
             if let Some(mut done) = self.pending.replace(frame) {
                 done.delay = self.clock.lap();
                 self.encoder.write_frame(&done).map_err(io::Error::other)?;
             }
         }
+        self.shown = colors;
         self.clock.run(self.ms_per_generation);
-        self.previous = Some(image);
         self.drawn += 1;
-        Ok(false)
+        Ok(())
     }
 
     /// The finished GIF, once [`step`](Self::step) has returned true.
     pub fn finish(mut self) -> io::Result<GifRecording> {
         debug_assert!(self.end.is_some(), "finished before the last generation");
-        if self.find_period && self.end != Some(End::CameBack) {
-            return Err(io::Error::other(if self.end == Some(End::Full) {
-                "the board reached its memory limit before it came back round".to_owned()
-            } else {
-                format!(
+        let looking = matches!(self.phase, Phase::Searching | Phase::WarmingUp { .. });
+        match self.end {
+            Some(End::Full) if looking => {
+                return Err(io::Error::other(
+                    "the board reached its memory limit before it came back round",
+                ));
+            }
+            Some(End::NoPeriod) => {
+                return Err(io::Error::other(format!(
                     "the board doesn't come back to this generation within \
                      {MAX_GIF_GENERATIONS} generations · run it until the status bar \
                      shows its period"
-                )
-            }));
+                )));
+            }
+            _ => {}
         }
         if let Some(mut last) = self.pending.take() {
             last.delay = self.clock.lap();
@@ -229,6 +398,27 @@ impl GifRecorder {
             scale: self.scale,
         })
     }
+}
+
+/// The smallest box, as `(left, top, width, height)`, holding every cell of
+/// `now` that differs from `before`, both in rows `width` cells long.
+fn changed_box(now: &[u8], before: &[u8], width: usize) -> Option<(usize, usize, usize, usize)> {
+    let (mut left, mut right, mut rows) = (usize::MAX, 0, None);
+    for (y, (row, was)) in now
+        .chunks_exact(width)
+        .zip(before.chunks_exact(width))
+        .enumerate()
+    {
+        let differs = |(a, b): (&u8, &u8)| a != b;
+        let Some(first) = row.iter().zip(was).position(differs) else {
+            continue;
+        };
+        let last = row.iter().zip(was).rposition(differs).unwrap_or(first);
+        (left, right) = (left.min(first), right.max(last));
+        rows = Some(rows.map_or((y, y), |(top, _)| (top, y)));
+    }
+    let (top, bottom) = rows?;
+    Some((left, top, right - left + 1, bottom - top + 1))
 }
 
 /// Time in milliseconds, handed out to frames in hundredths of a second. Each
@@ -256,27 +446,28 @@ impl Clock {
     }
 }
 
-/// A frame of the cells of `area` of `image`, each a square `scale` pixels
-/// across. With a `previous` image the frame lies over it, and the cells that
-/// haven't changed since are transparent.
+/// A frame of the `area` of `colors`, the cells' palette indices in rows
+/// `width` long, each cell a square `scale` pixels across. Over the `shown`
+/// colours of the frames before, the cells that kept theirs are `unchanged`,
+/// the transparent index.
 fn draw(
-    image: &CellImage,
-    previous: Option<&CellImage>,
-    (left, top, width, height): (usize, usize, usize, usize),
+    colors: &[u8],
+    shown: Option<&[u8]>,
+    width: usize,
+    (left, top, area_width, area_height): (usize, usize, usize, usize),
     scale: usize,
+    unchanged: u8,
 ) -> gif::Frame<'static> {
-    let row_pixels = width * scale;
-    let mut buffer = Vec::with_capacity(row_pixels * height * scale);
-    for y in top..top + height {
+    let row_pixels = area_width * scale;
+    let mut buffer = Vec::with_capacity(row_pixels * area_height * scale);
+    for y in top..top + area_height {
         let start = buffer.len();
-        for x in left..left + width {
-            let alive = image.is_alive(x, y);
-            let index = if previous.is_some_and(|previous| previous.is_alive(x, y) == alive) {
-                UNCHANGED
-            } else {
-                u8::from(alive) * LIVE
+        for index in y * width + left..y * width + left + area_width {
+            let color = match shown {
+                Some(shown) if shown[index] == colors[index] => unchanged,
+                _ => colors[index],
             };
-            buffer.extend(std::iter::repeat_n(index, scale));
+            buffer.extend(std::iter::repeat_n(color, scale));
         }
         for _ in 1..scale {
             buffer.extend_from_within(start..start + row_pixels);
@@ -287,22 +478,26 @@ fn draw(
     gif::Frame {
         left: pixels(left),
         top: pixels(top),
-        width: pixels(width),
-        height: pixels(height),
+        width: pixels(area_width),
+        height: pixels(area_height),
         buffer: buffer.into(),
         dispose: gif::DisposalMethod::Keep,
-        transparent: previous.map(|_| UNCHANGED),
+        transparent: shown.map(|_| unchanged),
         ..gif::Frame::default()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Clock, GifLength, GifRequest, MAX_GIF_SIDE};
+    use super::{Clock, GifColors, GifLength, GifRequest, MAX_GIF_SIDE};
     use crate::{board::Board, sparse_board::CellRect, universe::Universe};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     const COLORS: [[u8; 3]; 2] = [[10, 20, 30], [200, 210, 220]];
+
+    fn plain() -> GifColors {
+        GifColors::plain(COLORS[0], COLORS[1])
+    }
 
     fn request(board: Universe, rect: CellRect, length: GifLength, ms: u64) -> GifRequest {
         GifRequest {
@@ -380,13 +575,124 @@ mod tests {
         pixels
     }
 
+    /// Colours by age with a shade of their own for every age, so a frame
+    /// shows each cell's age: dead cells settle after 3 generations, and live
+    /// ones after 5, from a start at 2.
+    fn aged() -> GifColors {
+        let shades = |count: u8, color: fn(u8) -> [u8; 3]| (0..count).map(color).collect();
+        GifColors::by_age(
+            shades(4, |age| [10 + age, 0, 0]),
+            shades(6, |age| [0, 100 + age, 0]),
+            2,
+        )
+    }
+
+    /// The RGBA pixels of every generation of `rect` at `scale`, from the
+    /// start, with each cell's age kept one cell at a time as the board keeps
+    /// them: back to 0 when it changes, and up by one when it doesn't.
+    fn aged_frames(
+        mut board: Universe,
+        rect: CellRect,
+        scale: usize,
+        generations: usize,
+    ) -> Vec<Vec<u8>> {
+        let cells: Vec<(i64, i64)> = (0..rect.height)
+            .flat_map(|y| (0..rect.width).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                (
+                    rect.left + x as i64,
+                    rect.bottom + (rect.height - 1 - y) as i64,
+                )
+            })
+            .collect();
+        let mut ages: Vec<u8> = cells
+            .iter()
+            .map(|&(x, y)| if board.is_alive(x, y) { 2 } else { 3 })
+            .collect();
+        let mut frames = Vec::new();
+        for _ in 0..generations {
+            let mut pixels = Vec::new();
+            for y in 0..rect.height * scale {
+                for x in 0..rect.width * scale {
+                    let index = y / scale * rect.width + x / scale;
+                    let (cell, age) = (cells[index], ages[index]);
+                    pixels.extend(if board.is_alive(cell.0, cell.1) {
+                        [0, 100 + age.min(5), 0]
+                    } else {
+                        [10 + age.min(3), 0, 0]
+                    });
+                    pixels.push(255);
+                }
+            }
+            frames.push(pixels);
+            let before: Vec<bool> = cells.iter().map(|&(x, y)| board.is_alive(x, y)).collect();
+            board.step_within(usize::MAX).unwrap();
+            for ((age, &(x, y)), was) in ages.iter_mut().zip(&cells).zip(before) {
+                *age = if board.is_alive(x, y) == was {
+                    age.saturating_add(1)
+                } else {
+                    0
+                };
+            }
+        }
+        frames
+    }
+
+    /// A blinker beside a block, on an 8 × 8 board, and all of it.
+    fn blinker_and_block() -> (Universe, CellRect) {
+        let mut board = Universe::Finite(Board::new(8, 8));
+        for (x, y) in [(1, 5), (2, 5), (3, 5), (5, 1), (6, 1), (5, 2), (6, 2)] {
+            board.populate(x, y);
+        }
+        let rect = CellRect {
+            left: 0,
+            bottom: 0,
+            width: 8,
+            height: 8,
+        };
+        (board, rect)
+    }
+
+    #[test]
+    fn cells_take_the_colour_of_their_age_from_settled_colours_at_the_start() {
+        let (board, rect) = blinker_and_block();
+        let recording = request(board.clone(), rect, GifLength::Generations(8), 10)
+            .record(aged(), &AtomicUsize::new(0))
+            .unwrap();
+        let frames = play(&recording.file);
+        let expected = aged_frames(board, rect, 8, 8);
+        assert_eq!(frames.len(), 8);
+        for (generation, ((_, pixels), expected)) in frames.iter().zip(&expected).enumerate() {
+            assert!(pixels == expected, "generation {generation}");
+        }
+    }
+
+    #[test]
+    fn one_period_goes_round_until_the_colours_loop_too() {
+        // The blinker repeats every 2 generations, but colours take up to 5 to
+        // settle, so the recording goes round 3 times and draws from generation 6.
+        let (board, rect) = blinker_and_block();
+        let progress = AtomicUsize::new(0);
+        let recording = request(board.clone(), rect, GifLength::Period, 10)
+            .record(aged(), &progress)
+            .unwrap();
+        assert_eq!(recording.generations, 2);
+        assert_eq!(progress.load(Ordering::Relaxed), 6 + 2);
+        let frames = play(&recording.file);
+        let expected = aged_frames(board, rect, 8, 9);
+        assert_eq!(frames.len(), 2);
+        assert!(frames[0].1 == expected[6] && frames[1].1 == expected[7]);
+        // Round the loop, the next generation looks like the first.
+        assert!(expected[8] == expected[6]);
+    }
+
     #[test]
     fn every_frame_shows_its_generation_as_the_board_steps_it() {
         // Drawn as the glider crosses the wrap.
         let (mut board, rect) = glider_and_blinker();
         let progress = AtomicUsize::new(0);
         let recording = request(board.clone(), rect, GifLength::Generations(30), 100)
-            .record(COLORS, &progress)
+            .record(plain(), &progress)
             .unwrap();
         assert_eq!(recording.generations, 30);
         assert_eq!(progress.load(Ordering::Relaxed), 30);
@@ -414,7 +720,7 @@ mod tests {
             board.populate(x, y);
         }
         let recording = request(board.clone(), rect, GifLength::Period, 50)
-            .record(COLORS, &AtomicUsize::new(0))
+            .record(plain(), &AtomicUsize::new(0))
             .unwrap();
         assert_eq!(recording.generations, 240);
         let frames = play(&recording.file);
@@ -442,7 +748,7 @@ mod tests {
         };
         let progress = AtomicUsize::new(0);
         let error = request(plane, rect, GifLength::Period, 20)
-            .record(COLORS, &progress)
+            .record(plain(), &progress)
             .unwrap_err();
         assert!(
             error.to_string().contains("within 1000 generations"),
@@ -465,7 +771,7 @@ mod tests {
             height: 8,
         };
         let recording = request(board, rect, GifLength::Generations(7), 250)
-            .record(COLORS, &AtomicUsize::new(0))
+            .record(plain(), &AtomicUsize::new(0))
             .unwrap();
         let frames = play(&recording.file);
         assert_eq!(
@@ -501,7 +807,7 @@ mod tests {
             height: 6,
         };
         let recording = request(plane, rect, GifLength::Generations(12), 40)
-            .record(COLORS, &AtomicUsize::new(0))
+            .record(plain(), &AtomicUsize::new(0))
             .unwrap();
         assert_eq!(recording.generations, 12);
         assert_eq!(recording.scale, 1);

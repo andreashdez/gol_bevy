@@ -2,7 +2,7 @@
 //! and their shortcuts.
 use super::*;
 use crate::{
-    cell_gif::{GifLength, GifRecording, GifRequest},
+    cell_gif::{GifColors, GifLength, GifRecording, GifRequest},
     cell_image::CellImage,
     workspace::{DecodedWorkspace, Workspace},
 };
@@ -25,8 +25,9 @@ pub(super) enum FileRequest {
     /// Captured at the click like a save, with the theme's colours for dead
     /// and live cells.
     SaveImage(Box<CellImage>, [[u8; 3]; 2]),
-    /// A copy of the board to record from, taken at the click like an image.
-    SaveGif(Box<GifRequest>, [[u8; 3]; 2]),
+    /// A copy of the board to record from, taken at the click like an image,
+    /// with the colours the board shows, by age if cell age is on.
+    SaveGif(Box<GifRequest>, GifColors),
 }
 
 /// The native file dialog in progress, if any, then the reading or writing of
@@ -101,7 +102,8 @@ pub(super) fn request_save_gif(state: &mut DialogState, length: GifLength) {
     }
     match state.sim.app.board_gif(length) {
         Ok(request) => {
-            let colors = cell_colors(state);
+            let colors =
+                crate::render_plugin::gif_colors(state.theme.board(), state.cell_age.enabled);
             request_file(state, FileRequest::SaveGif(Box::new(request), colors));
         }
         Err(error) => report(state, true, error.to_string()),

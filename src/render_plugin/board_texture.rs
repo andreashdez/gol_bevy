@@ -265,6 +265,27 @@ pub(crate) fn color_to_texel(color: Color) -> [u8; 4] {
     ]
 }
 
+/// The colours a GIF draws cells in, as the board shows them: by age with cell
+/// age on, through to the ages their colours settle at, or plain.
+pub(crate) fn gif_colors(colors: &BoardColors, by_age: bool) -> crate::cell_gif::GifColors {
+    let rgb = |color| {
+        let [red, green, blue, _] = color_to_texel(color);
+        [red, green, blue]
+    };
+    if !by_age {
+        return crate::cell_gif::GifColors::plain(rgb(colors.dead), rgb(colors.live));
+    }
+    crate::cell_gif::GifColors::by_age(
+        (0..=TRAIL_LENGTH)
+            .map(|age| rgb(dead_shade(colors, age)))
+            .collect(),
+        (0..=SETTLED_AGE)
+            .map(|age| rgb(live_shade(colors, age)))
+            .collect(),
+        settled_age(true),
+    )
+}
+
 /// Board row 0 sits at the bottom in world space while texel row 0 sits at the
 /// top, so the vertical axis is flipped when addressing the texture.
 pub(crate) fn texel_offset(idx: usize, cols: usize, rows: usize) -> usize {

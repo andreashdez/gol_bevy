@@ -1242,7 +1242,10 @@ fn a_gif_plays_at_the_playback_speed_from_a_copy_of_the_board() {
 
     // Recording steps the copy, not the board.
     let recording = request
-        .record([[0; 3], [255; 3]], &std::sync::atomic::AtomicUsize::new(0))
+        .record(
+            crate::cell_gif::GifColors::plain([0; 3], [255; 3]),
+            &std::sync::atomic::AtomicUsize::new(0),
+        )
         .unwrap();
     assert_eq!(recording.generations, 30);
     assert_eq!(app.epoch, 0);

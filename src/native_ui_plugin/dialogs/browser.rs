@@ -4,7 +4,7 @@
 use super::files::{FileWork, gif_saved, recording_progress, report};
 use super::*;
 use crate::{
-    cell_gif::{GifLength, GifRequest},
+    cell_gif::{GifColors, GifLength, GifRequest},
     cell_image::CellImage,
 };
 use bevy::platform::time::Instant;
@@ -36,7 +36,7 @@ pub(super) fn save_image(state: &mut DialogState, image: &CellImage, colors: [[u
     }
 }
 
-pub(super) fn start_gif(state: &mut DialogState, gif: GifRequest, colors: [[u8; 3]; 2]) {
+pub(super) fn start_gif(state: &mut DialogState, gif: GifRequest, colors: GifColors) {
     let length = gif.length();
     match gif.recorder(colors) {
         Ok(recorder) => {
@@ -59,7 +59,7 @@ pub(super) fn keep_recording(state: &mut DialogState) {
             Ok(true) => break Ok(()),
             Err(error) => break Err(error),
             Ok(false) if started.elapsed() >= RECORDING_BUDGET => {
-                state.drafts.feedback = recording_progress(recorder.drawn(), total(*length));
+                state.drafts.feedback = recording_progress(recorder.progress(), total(*length));
                 return;
             }
             Ok(false) => {}

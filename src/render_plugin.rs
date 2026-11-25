@@ -15,8 +15,8 @@ mod preview;
 mod tests;
 
 pub(crate) use board_texture::{
-    BoardSprite, CellAges, CellPalette, CellStyle, SETTLED_AGE, color_to_texel, settled_age,
-    texel_offset,
+    BoardSprite, CellAges, CellPalette, CellStyle, SETTLED_AGE, color_to_texel, gif_colors,
+    settled_age, texel_offset,
 };
 use board_texture::{BoardTexture, sync_cells};
 #[cfg(test)]
