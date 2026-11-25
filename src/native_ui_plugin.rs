@@ -115,6 +115,7 @@ impl Plugin for NativeUiPlugin {
                 (
                     dialogs::file_shortcuts,
                     dialogs::sync_switches,
+                    dialogs::sync_recording,
                     dialogs::sync_density,
                     dialogs::sync_import_preview,
                 )

@@ -1244,7 +1244,7 @@ fn a_gif_plays_at_the_playback_speed_from_a_copy_of_the_board() {
     let recording = request
         .record(
             crate::cell_gif::GifColors::plain([0; 3], [255; 3]),
-            &std::sync::atomic::AtomicUsize::new(0),
+            &crate::cell_gif::GifProgress::default(),
         )
         .unwrap();
     assert_eq!(recording.generations, 30);

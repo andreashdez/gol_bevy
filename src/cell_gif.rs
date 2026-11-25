@@ -12,7 +12,7 @@ use crate::{
 };
 use std::{
     io,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 /// Most cells along either side of a recording: a frame of a busy board this
@@ -133,20 +133,51 @@ pub struct GifRecording {
     pub scale: usize,
 }
 
+/// How far a recording running on another thread has got, and a way to stop it.
+#[derive(Debug, Default)]
+pub struct GifProgress {
+    generations: AtomicUsize,
+    cancelled: AtomicBool,
+}
+
+impl GifProgress {
+    /// Generations stepped through or drawn so far.
+    pub fn generations(&self) -> usize {
+        self.generations.load(Ordering::Relaxed)
+    }
+
+    /// Stops the recording before its next generation.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+
+    pub fn cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
+    }
+}
+
 impl GifRequest {
     pub fn length(&self) -> GifLength {
         self.length
     }
 
     /// Draws the current generation and the ones after it as a GIF that loops
-    /// forever. `progress` counts the generations stepped through so far. Fails
+    /// forever, reporting to `progress` and stopping if it's cancelled. Fails
     /// for a period if the board doesn't come back to the current generation
     /// in time.
-    pub fn record(self, colors: GifColors, progress: &AtomicUsize) -> io::Result<GifRecording> {
+    pub fn record(self, colors: GifColors, progress: &GifProgress) -> io::Result<GifRecording> {
         let mut recorder = self.recorder(colors)?;
         loop {
+            if progress.cancelled() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "recording cancelled",
+                ));
+            }
             let over = recorder.step()?;
-            progress.store(recorder.progress(), Ordering::Relaxed);
+            progress
+                .generations
+                .store(recorder.progress(), Ordering::Relaxed);
             if over {
                 break;
             }
@@ -489,9 +520,8 @@ fn draw(
 
 #[cfg(test)]
 mod tests {
-    use super::{Clock, GifColors, GifLength, GifRequest, MAX_GIF_SIDE};
+    use super::{Clock, GifColors, GifLength, GifProgress, GifRequest, MAX_GIF_SIDE};
     use crate::{board::Board, sparse_board::CellRect, universe::Universe};
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     const COLORS: [[u8; 3]; 2] = [[10, 20, 30], [200, 210, 220]];
 
@@ -657,7 +687,7 @@ mod tests {
     fn cells_take_the_colour_of_their_age_from_settled_colours_at_the_start() {
         let (board, rect) = blinker_and_block();
         let recording = request(board.clone(), rect, GifLength::Generations(8), 10)
-            .record(aged(), &AtomicUsize::new(0))
+            .record(aged(), &GifProgress::default())
             .unwrap();
         let frames = play(&recording.file);
         let expected = aged_frames(board, rect, 8, 8);
@@ -672,12 +702,12 @@ mod tests {
         // The blinker repeats every 2 generations, but colours take up to 5 to
         // settle, so the recording goes round 3 times and draws from generation 6.
         let (board, rect) = blinker_and_block();
-        let progress = AtomicUsize::new(0);
+        let progress = GifProgress::default();
         let recording = request(board.clone(), rect, GifLength::Period, 10)
             .record(aged(), &progress)
             .unwrap();
         assert_eq!(recording.generations, 2);
-        assert_eq!(progress.load(Ordering::Relaxed), 6 + 2);
+        assert_eq!(progress.generations(), 6 + 2);
         let frames = play(&recording.file);
         let expected = aged_frames(board, rect, 8, 9);
         assert_eq!(frames.len(), 2);
@@ -690,12 +720,12 @@ mod tests {
     fn every_frame_shows_its_generation_as_the_board_steps_it() {
         // Drawn as the glider crosses the wrap.
         let (mut board, rect) = glider_and_blinker();
-        let progress = AtomicUsize::new(0);
+        let progress = GifProgress::default();
         let recording = request(board.clone(), rect, GifLength::Generations(30), 100)
             .record(plain(), &progress)
             .unwrap();
         assert_eq!(recording.generations, 30);
-        assert_eq!(progress.load(Ordering::Relaxed), 30);
+        assert_eq!(progress.generations(), 30);
         assert_eq!((recording.size, recording.scale), ((20, 12), 8));
 
         let frames = play(&recording.file);
@@ -720,7 +750,7 @@ mod tests {
             board.populate(x, y);
         }
         let recording = request(board.clone(), rect, GifLength::Period, 50)
-            .record(plain(), &AtomicUsize::new(0))
+            .record(plain(), &GifProgress::default())
             .unwrap();
         assert_eq!(recording.generations, 240);
         let frames = play(&recording.file);
@@ -746,7 +776,7 @@ mod tests {
             width: 3,
             height: 3,
         };
-        let progress = AtomicUsize::new(0);
+        let progress = GifProgress::default();
         let error = request(plane, rect, GifLength::Period, 20)
             .record(plain(), &progress)
             .unwrap_err();
@@ -754,7 +784,34 @@ mod tests {
             error.to_string().contains("within 1000 generations"),
             "{error}"
         );
-        assert_eq!(progress.load(Ordering::Relaxed), 1000);
+        assert_eq!(progress.generations(), 1000);
+    }
+
+    #[test]
+    fn a_recording_cancelled_from_another_thread_stops_part_way() {
+        // A busy 1024 × 1024 board takes a while a generation, so the recording
+        // is still under way when the cancel comes.
+        let mut board = Universe::Finite(Board::new(1024, 1024));
+        board.finite_mut().unwrap().populate_random();
+        let rect = CellRect {
+            left: 0,
+            bottom: 0,
+            width: 1024,
+            height: 1024,
+        };
+        let progress = GifProgress::default();
+        let result = std::thread::scope(|scope| {
+            let recording = scope.spawn(|| {
+                request(board, rect, GifLength::Generations(1000), 20).record(plain(), &progress)
+            });
+            while progress.generations() == 0 {
+                std::thread::yield_now();
+            }
+            progress.cancel();
+            recording.join().unwrap()
+        });
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Interrupted);
+        assert!(progress.generations() < 1000, "{}", progress.generations());
     }
 
     #[test]
@@ -771,7 +828,7 @@ mod tests {
             height: 8,
         };
         let recording = request(board, rect, GifLength::Generations(7), 250)
-            .record(plain(), &AtomicUsize::new(0))
+            .record(plain(), &GifProgress::default())
             .unwrap();
         let frames = play(&recording.file);
         assert_eq!(
@@ -807,7 +864,7 @@ mod tests {
             height: 6,
         };
         let recording = request(plane, rect, GifLength::Generations(12), 40)
-            .record(plain(), &AtomicUsize::new(0))
+            .record(plain(), &GifProgress::default())
             .unwrap();
         assert_eq!(recording.generations, 12);
         assert_eq!(recording.scale, 1);

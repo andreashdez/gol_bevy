@@ -2,18 +2,12 @@
 //! and their shortcuts.
 use super::*;
 use crate::{
-    cell_gif::{GifColors, GifLength, GifRecording, GifRequest},
+    cell_gif::{GifColors, GifLength, GifProgress, GifRecording, GifRequest},
     cell_image::CellImage,
     workspace::{DecodedWorkspace, Workspace},
 };
 use bevy::tasks::{IoTaskPool, Task, TaskPool, futures::check_ready};
-use std::{
-    path::Path,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-};
+use std::{path::Path, sync::Arc};
 
 pub(super) enum FileRequest {
     /// Captured at the click, so the file holds what was on screen then, even
@@ -36,6 +30,18 @@ pub(super) enum FileRequest {
 #[derive(Resource, Default)]
 pub(in crate::native_ui_plugin) struct FileDialog(pub(super) Option<FileWork>);
 
+impl FileDialog {
+    /// Whether a GIF is being recorded, which can be cancelled.
+    pub(super) fn recording(&self) -> bool {
+        match &self.0 {
+            Some(FileWork::Working(_, _, progress)) => progress.is_some(),
+            #[cfg(target_arch = "wasm32")]
+            Some(FileWork::Recording(..)) => true,
+            _ => false,
+        }
+    }
+}
+
 pub(super) enum FileWork {
     Picking(FileRequest, Task<Option<PathBuf>>),
     Working(PathBuf, Task<FileOutcome>, Option<Progress>),
@@ -44,10 +50,10 @@ pub(super) enum FileWork {
     Recording(Box<crate::cell_gif::GifRecorder>, GifLength),
 }
 
-/// How far work that takes a while has got: generations of a GIF recorded so
-/// far, of how many if that's known before the board comes back round.
+/// How far a GIF recording has got, of how many generations if that's known
+/// before the board comes back round, and the way to cancel it.
 pub(super) struct Progress {
-    done: Arc<AtomicUsize>,
+    shared: Arc<GifProgress>,
     total: Option<usize>,
 }
 
@@ -59,6 +65,8 @@ pub(super) enum FileOutcome {
     Rle(Result<String, String>),
     /// What an image or animation saved, to report.
     ImageSaved(Result<String, String>),
+    /// A recording stopped before it finished, saving nothing.
+    Cancelled,
 }
 
 pub(super) fn request_save(state: &mut DialogState) {
@@ -234,8 +242,10 @@ pub(in crate::native_ui_plugin) fn poll_file_dialog(mut state: DialogState) {
         }
         Some(FileWork::Working(_, task, progress)) => {
             let Some(outcome) = check_ready(task) else {
-                if let Some(Progress { done, total }) = progress {
-                    let feedback = recording_progress(done.load(Ordering::Relaxed), *total);
+                if let Some(Progress { shared, total }) = progress
+                    && !shared.cancelled()
+                {
+                    let feedback = recording_progress(shared.generations(), *total);
                     if state.drafts.feedback != feedback {
                         state.drafts.feedback = feedback;
                     }
@@ -282,7 +292,7 @@ pub(super) fn finish_file_request(
     report(state, false, feedback.into());
     let progress = match &request {
         FileRequest::SaveGif(gif, _) => Some(Progress {
-            done: Arc::default(),
+            shared: Arc::default(),
             total: match gif.length() {
                 GifLength::Generations(generations) => Some(generations),
                 GifLength::Period => None,
@@ -290,7 +300,9 @@ pub(super) fn finish_file_request(
         }),
         _ => None,
     };
-    let done = progress.as_ref().map(|progress| Arc::clone(&progress.done));
+    let shared = progress
+        .as_ref()
+        .map(|progress| Arc::clone(&progress.shared));
     let target = path.clone();
     let work = async move {
         let shown = target.display();
@@ -324,21 +336,45 @@ pub(super) fn finish_file_request(
                 )
             }
             FileRequest::SaveGif(gif, colors) => {
-                let done = done.expect("a GIF has its progress");
+                let progress = shared.expect("a GIF has its progress");
                 let length = gif.length();
-                FileOutcome::ImageSaved(
-                    gif.record(colors, &done)
-                        .and_then(|gif| {
-                            crate::atomic_file::write(&target, &gif.file)?;
-                            Ok(gif_saved("Saved", length, &gif, &format!("to {shown}")))
-                        })
-                        .map_err(|error| format!("Could not save {shown}: {error}")),
-                )
+                match gif.record(colors, &progress) {
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                        FileOutcome::Cancelled
+                    }
+                    recorded => FileOutcome::ImageSaved(
+                        recorded
+                            .and_then(|gif| {
+                                crate::atomic_file::write(&target, &gif.file)?;
+                                Ok(gif_saved("Saved", length, &gif, &format!("to {shown}")))
+                            })
+                            .map_err(|error| format!("Could not save {shown}: {error}")),
+                    ),
+                }
             }
         }
     };
     let task = IoTaskPool::get_or_init(TaskPool::default).spawn(work);
     state.file_dialog.0 = Some(FileWork::Working(path, task, progress));
+}
+
+pub(super) const RECORDING_CANCELLED: &str = "Recording cancelled; nothing was saved.";
+
+/// Stops the GIF being recorded. The background one stops before its next
+/// generation and reports then; the web version's stops at once.
+pub(super) fn cancel_recording(state: &mut DialogState) {
+    match &state.file_dialog.0 {
+        Some(FileWork::Working(_, _, Some(progress))) => {
+            progress.shared.cancel();
+            report(state, false, "Cancelling…".into());
+        }
+        #[cfg(target_arch = "wasm32")]
+        Some(FileWork::Recording(..)) => {
+            state.file_dialog.0 = None;
+            report(state, false, RECORDING_CANCELLED.into());
+        }
+        _ => {}
+    }
 }
 
 /// How far a GIF recording has got, of `total` generations if that's known.
@@ -383,6 +419,7 @@ pub(super) fn finish_file_work(state: &mut DialogState, path: PathBuf, outcome: 
         }),
         FileOutcome::Rle(result) => result.map(|source| load_rle(state, &path, source)),
         FileOutcome::ImageSaved(result) => result,
+        FileOutcome::Cancelled => Ok(RECORDING_CANCELLED.into()),
     };
     match result {
         Ok(feedback) => {

@@ -30,8 +30,8 @@ mod widgets;
 
 pub(super) use files::{FileDialog, file_shortcuts, poll_file_dialog};
 use files::{
-    FileRequest, confirm_open, file_dialog_busy, request_file, request_open, request_save,
-    request_save_gif, request_save_image,
+    FileRequest, cancel_recording, confirm_open, file_dialog_busy, request_file, request_open,
+    request_save, request_save_gif, request_save_image,
 };
 use help::help_columns;
 use import_preview::import_preview;
@@ -145,6 +145,28 @@ pub(super) enum DialogReadout {
     Diagnostics,
     /// What the Board section's size is the size of.
     BoardNote,
+}
+
+/// Shown only while a GIF is being recorded, as it holds the button that
+/// cancels it.
+#[derive(Component)]
+pub(super) struct WhileRecording;
+
+/// Shows the recording's controls while there is one to control.
+pub(super) fn sync_recording(
+    dialog: Res<FileDialog>,
+    mut nodes: Query<&mut Node, With<WhileRecording>>,
+) {
+    let display = if dialog.recording() {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    for mut node in &mut nodes {
+        if node.display != display {
+            node.display = display;
+        }
+    }
 }
 
 pub(super) struct NativeDialogsPlugin;
@@ -409,6 +431,7 @@ fn dialog_action(
             }
         },
         Action::SaveGifPeriod => request_save_gif(&mut state, GifLength::Period),
+        Action::CancelRecording => cancel_recording(&mut state),
         Action::OpenWorkspace => request_open(&mut state),
         Action::OpenRle => {
             if !file_dialog_busy(&mut state) {
@@ -648,6 +671,7 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         heading(p, "Animation", "Record the same area as a looping GIF at the playback speed, from the current generation on, coloured by age if Cell age is on. One period records until the board comes back to it, so the loop has no jump. The board plays on meanwhile.");
                         action_row(p, gif, Action::SaveGif, |p| inline_field(p, "Generations", &drafts.generations, Field::Generations, false));
                         p.spawn(row()).with_children(|p| { button(p, period, Action::SaveGifPeriod); });
+                        p.spawn((row(), WhileRecording)).with_children(|p| { button(p, "Cancel recording", Action::CancelRecording); });
                         if !WEB_BUILD {
                             heading(p, "Workspace file", &format!("Save your board and imported patterns to a .golw file. {}+S saves.", command_key()));
                             p.spawn(row()).with_children(|p| { button(p, "Save workspace…", Action::SaveWorkspace); });

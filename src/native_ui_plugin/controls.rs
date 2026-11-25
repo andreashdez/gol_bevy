@@ -173,6 +173,7 @@ pub(super) fn hint(action: Action) -> String {
             key(BINDING_TOGGLE_BOUNDARY_MODE)
         ),
         Action::ExportRle => "Copy the live cells to the clipboard as RLE".into(),
+        Action::CancelRecording => "Stop recording the GIF, and save nothing".into(),
         Action::SaveGifPeriod => {
             "Record until the board comes back to this generation, for a GIF that loops without a jump"
                 .into()
