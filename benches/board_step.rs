@@ -57,12 +57,12 @@ fn bench_board_step_and_dirty(c: &mut Criterion) {
     let mut group = c.benchmark_group("board_step_dirty");
 
     for size in [256, 512, 1024] {
-        let mut sparse_board = Board::new(size, size);
-        seed_glider(&mut sparse_board);
-        let _ = sparse_board.take_dirty_cells();
-        group.bench_function(format!("sparse_glider_{size}"), |b| {
+        let mut glider_board = Board::new(size, size);
+        seed_glider(&mut glider_board);
+        let _ = glider_board.take_dirty_cells();
+        group.bench_function(format!("glider_{size}"), |b| {
             b.iter(|| {
-                let dirty_count = step_and_extract(black_box(&mut sparse_board));
+                let dirty_count = step_and_extract(black_box(&mut glider_board));
                 black_box(dirty_count);
             })
         });

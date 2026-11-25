@@ -23,7 +23,7 @@ cargo bench --bench board_step     # or: just bench, which runs both benchmarks
 
 Times a step together with taking the cells that changed, which is what each frame does:
 
-- **sparse:** a glider on 256, 512, and 1024 boards, where only a few rows are evaluated
+- **glider:** a glider on 256, 512, and 1024 boards, where only a few rows are evaluated
 - **noise:** deterministic random fills at 30% and 45% density on the same sizes, stepped on and on, so they settle into debris
 - **dense:** a freshly seeded 512, 1024, and 2048 board on every iteration, so every row is evaluated every time
 - **sparse board:** the glider and the fresh 30% noise on `SparseBoard`, with its dirty chunks extracted, to compare the two boards directly
