@@ -4,7 +4,7 @@ use super::files::{
 use super::import_preview::import_summary;
 use super::widgets::DensitySlider;
 use super::*;
-use crate::workspace::Workspace;
+use crate::{cell_gif::GifLength, workspace::Workspace};
 use bevy::ecs::system::RunSystemOnce;
 use bevy::ui_widgets::{SliderValue, ValueChange};
 use std::path::Path;
@@ -433,7 +433,11 @@ fn a_gif_records_the_generations_asked_for_and_refuses_a_count_out_of_range() {
     let directory = crate::test_support::TestDirectory::new();
     let path = directory.0.join("board.gif");
     world.resource_mut::<Simulation>().app.populate_board(4, 4);
-    let gif = world.resource::<Simulation>().app.board_gif(5).unwrap();
+    let gif = world
+        .resource::<Simulation>()
+        .app
+        .board_gif(GifLength::Generations(5))
+        .unwrap();
     choose(
         &mut world,
         FileRequest::SaveGif(Box::new(gif), [[0; 3], [255; 3]]),
@@ -450,6 +454,53 @@ fn a_gif_records_the_generations_asked_for_and_refuses_a_count_out_of_range() {
     );
     assert_eq!(drafts.workspace_path, None);
     assert!(std::fs::read(&path).unwrap().starts_with(b"GIF89a"));
+}
+
+#[test]
+fn one_period_reports_its_length_or_why_there_is_none() {
+    let directory = crate::test_support::TestDirectory::new();
+    let path = directory.0.join("board.gif");
+    let mut world = test_world(DialogKind::Export);
+    let save_period = |world: &mut World| {
+        let gif = world
+            .resource::<Simulation>()
+            .app
+            .board_gif(GifLength::Period)
+            .unwrap();
+        choose(
+            world,
+            FileRequest::SaveGif(Box::new(gif), [[0; 3], [255; 3]]),
+            Some(&path),
+        );
+        let drafts = world.resource::<Drafts>();
+        (drafts.error, drafts.feedback.clone())
+    };
+    // A blinker comes back every 2 generations.
+    for x in 4..7 {
+        world.resource_mut::<Simulation>().app.populate_board(x, 4);
+    }
+    let (error, feedback) = save_period(&mut world);
+    assert!(!error, "{feedback}");
+    assert!(
+        feedback.starts_with("Saved one period, 2 generations, of 32 × 32 cells"),
+        "{feedback}"
+    );
+
+    // An R-pentomino never comes back to its first generation, but settles into
+    // debris instead, so nothing is saved.
+    std::fs::remove_file(&path).unwrap();
+    let app = &mut world.resource_mut::<Simulation>().into_inner().app;
+    app.clear_board();
+    for (x, y) in [(15, 16), (16, 16), (14, 15), (15, 15), (15, 14)] {
+        app.populate_board(x, y);
+    }
+    let (error, feedback) = save_period(&mut world);
+    assert!(error);
+    assert!(
+        feedback.contains("doesn't come back to this generation within 1000"),
+        "{feedback}"
+    );
+    assert!(!path.exists());
 }
 
 #[test]

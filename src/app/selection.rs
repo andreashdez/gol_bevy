@@ -3,7 +3,7 @@
 
 use super::{App, EditTool};
 use crate::{
-    cell_gif::{FASTEST_MS_PER_GENERATION, GifRequest, MAX_GIF_SIDE},
+    cell_gif::{FASTEST_MS_PER_GENERATION, GifLength, GifRequest, MAX_GIF_SIDE},
     cell_image::{CellImage, MAX_IMAGE_SIDE},
     patterns::RleWriter,
     sparse_board::{CellRect, PLANE_EXPORT_CELLS_MAX},
@@ -261,15 +261,15 @@ impl App {
         Ok(CellImage::capture(&self.board, rect))
     }
 
-    /// The current generation and the `generations - 1` after it, to record
-    /// over the area [`board_image`](Self::board_image) draws, at the playback
-    /// speed, from a copy of the board.
-    pub fn board_gif(&self, generations: usize) -> Result<GifRequest, ImageExportError> {
+    /// `length` generations from the current one, to record over the area
+    /// [`board_image`](Self::board_image) draws, at the playback speed, from a
+    /// copy of the board.
+    pub fn board_gif(&self, length: GifLength) -> Result<GifRequest, ImageExportError> {
         let rect = self.image_area(MAX_GIF_SIDE)?;
         Ok(GifRequest {
             board: self.board.clone(),
             rect,
-            generations,
+            length,
             ms_per_generation: if self.is_max_speed() {
                 FASTEST_MS_PER_GENERATION
             } else {

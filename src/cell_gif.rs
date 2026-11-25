@@ -37,13 +37,23 @@ pub const FASTEST_MS_PER_GENERATION: u64 = 20;
 const LIVE: u8 = 1;
 const UNCHANGED: u8 = 2;
 
+/// How many generations to record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GifLength {
+    /// This many, the current one first.
+    Generations(usize),
+    /// From the current generation until the board comes back to it, so the GIF
+    /// loops without a jump. Up to [`MAX_GIF_GENERATIONS`].
+    Period,
+}
+
 /// What a recording starts from: a copy of the board, stepped on its own so
 /// the board itself plays on, and the area to draw.
 #[derive(Debug, Clone)]
 pub struct GifRequest {
     pub(crate) board: Universe,
     pub(crate) rect: CellRect,
-    pub(crate) generations: usize,
+    pub(crate) length: GifLength,
     pub(crate) ms_per_generation: u64,
 }
 
@@ -51,8 +61,8 @@ pub struct GifRequest {
 #[derive(Debug)]
 pub struct GifRecording {
     pub file: Vec<u8>,
-    /// Generations drawn, fewer than asked for if an unbounded board reached
-    /// its memory limit first.
+    /// Generations drawn: a period, or fewer than asked for if an unbounded
+    /// board reached its memory limit first.
     pub generations: usize,
     /// Width and height in cells.
     pub size: (usize, usize),
@@ -61,14 +71,14 @@ pub struct GifRecording {
 }
 
 impl GifRequest {
-    /// The generations to draw, the current one first.
-    pub fn generations(&self) -> usize {
-        self.generations
+    pub fn length(&self) -> GifLength {
+        self.length
     }
 
     /// Draws the current generation and the ones after it, dead cells in
     /// `colors[0]` and live ones in `colors[1]`, as a GIF that loops forever.
-    /// `progress` counts the generations drawn so far.
+    /// `progress` counts the generations drawn so far. Fails for a period if
+    /// the board doesn't come back to the current generation in time.
     pub fn record(
         mut self,
         colors: [[u8; 3]; 2],
@@ -89,14 +99,35 @@ impl GifRequest {
             .set_repeat(gif::Repeat::Infinite)
             .map_err(io::Error::other)?;
 
+        let (limit, find_period) = match self.length {
+            GifLength::Generations(generations) => (generations, false),
+            GifLength::Period => (MAX_GIF_GENERATIONS, true),
+        };
+        // Generations of one run match exactly when their fingerprints do.
+        let start = self.board.fingerprint();
+        let (mut came_back, mut full) = (false, false);
         let mut previous: Option<CellImage> = None;
         // The latest frame, written once the next change shows how long it lasts.
         let mut pending: Option<gif::Frame<'static>> = None;
         let mut clock = Clock::default();
         let mut drawn = 0;
-        while drawn < self.generations {
-            if drawn > 0 && self.board.step_within(PLANE_CHUNKS_MAX).is_err() {
-                break;
+        while drawn <= limit {
+            if drawn > 0 {
+                // A period is only known once the step after the last frame.
+                if drawn == limit && !find_period {
+                    break;
+                }
+                if self.board.step_within(PLANE_CHUNKS_MAX).is_err() {
+                    full = true;
+                    break;
+                }
+                if find_period && self.board.fingerprint() == start {
+                    came_back = true;
+                    break;
+                }
+                if drawn == limit {
+                    break;
+                }
             }
             let image = CellImage::capture(&self.board, self.rect);
             let changed = match &previous {
@@ -114,6 +145,17 @@ impl GifRequest {
             previous = Some(image);
             drawn += 1;
             progress.store(drawn, Ordering::Relaxed);
+        }
+        if find_period && !came_back {
+            return Err(io::Error::other(if full {
+                "the board reached its memory limit before it came back round".to_owned()
+            } else {
+                format!(
+                    "the board doesn't come back to this generation within \
+                     {MAX_GIF_GENERATIONS} generations · run it until the status bar \
+                     shows its period"
+                )
+            }));
         }
         if let Some(mut last) = pending {
             last.delay = clock.lap();
@@ -195,19 +237,44 @@ fn draw(
 
 #[cfg(test)]
 mod tests {
-    use super::{Clock, GifRequest, MAX_GIF_SIDE};
+    use super::{Clock, GifLength, GifRequest, MAX_GIF_SIDE};
     use crate::{board::Board, sparse_board::CellRect, universe::Universe};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     const COLORS: [[u8; 3]; 2] = [[10, 20, 30], [200, 210, 220]];
 
-    fn request(board: Universe, rect: CellRect, generations: usize, ms: u64) -> GifRequest {
+    fn request(board: Universe, rect: CellRect, length: GifLength, ms: u64) -> GifRequest {
         GifRequest {
             board,
             rect,
-            generations,
+            length,
             ms_per_generation: ms,
         }
+    }
+
+    /// A glider and a blinker on a 20 × 12 board that wraps, and all of it.
+    fn glider_and_blinker() -> (Universe, CellRect) {
+        let mut board = Universe::Finite(Board::new(20, 12));
+        let cells = [
+            (1, 10),
+            (2, 9),
+            (0, 8),
+            (1, 8),
+            (2, 8),
+            (15, 3),
+            (16, 3),
+            (17, 3),
+        ];
+        for (x, y) in cells {
+            board.populate(x, y);
+        }
+        let rect = CellRect {
+            left: 0,
+            bottom: 0,
+            width: 20,
+            height: 12,
+        };
+        (board, rect)
     }
 
     /// Each frame's delay and its pixels as RGBA once composed over the ones
@@ -254,28 +321,10 @@ mod tests {
 
     #[test]
     fn every_frame_shows_its_generation_as_the_board_steps_it() {
-        // A glider and a blinker on a wrapping board, drawn through the wrap.
-        let mut board = Universe::Finite(Board::new(20, 12));
-        for (x, y) in [
-            (1, 10),
-            (2, 9),
-            (0, 8),
-            (1, 8),
-            (2, 8),
-            (15, 3),
-            (16, 3),
-            (17, 3),
-        ] {
-            board.populate(x, y);
-        }
-        let rect = CellRect {
-            left: 0,
-            bottom: 0,
-            width: 20,
-            height: 12,
-        };
+        // Drawn as the glider crosses the wrap.
+        let (mut board, rect) = glider_and_blinker();
         let progress = AtomicUsize::new(0);
-        let recording = request(board.clone(), rect, 30, 100)
+        let recording = request(board.clone(), rect, GifLength::Generations(30), 100)
             .record(COLORS, &progress)
             .unwrap();
         assert_eq!(recording.generations, 30);
@@ -295,6 +344,53 @@ mod tests {
     }
 
     #[test]
+    fn one_period_ends_on_the_generation_before_the_first_comes_back() {
+        // A glider crosses the whole of a 20 × 12 board that wraps every 240
+        // generations: 60 cells along its diagonal, 4 generations a cell.
+        let (mut board, rect) = glider_and_blinker();
+        board.clear();
+        for (x, y) in [(1, 10), (2, 9), (0, 8), (1, 8), (2, 8)] {
+            board.populate(x, y);
+        }
+        let recording = request(board.clone(), rect, GifLength::Period, 50)
+            .record(COLORS, &AtomicUsize::new(0))
+            .unwrap();
+        assert_eq!(recording.generations, 240);
+        let frames = play(&recording.file);
+        assert_eq!(frames.len(), 240);
+        let first = expected(&board, rect, 8);
+        for _ in 0..239 {
+            board.step_within(usize::MAX).unwrap();
+        }
+        assert!(frames.last().unwrap().1 == expected(&board, rect, 8));
+        board.step_within(usize::MAX).unwrap();
+        assert!(expected(&board, rect, 8) == first);
+    }
+
+    #[test]
+    fn a_board_that_never_comes_back_has_no_period_to_record() {
+        let mut plane = Universe::Unbounded(Default::default());
+        for (x, y) in [(1, 2), (2, 1), (0, 0), (1, 0), (2, 0)] {
+            plane.populate(x, y);
+        }
+        let rect = CellRect {
+            left: 0,
+            bottom: 0,
+            width: 3,
+            height: 3,
+        };
+        let progress = AtomicUsize::new(0);
+        let error = request(plane, rect, GifLength::Period, 20)
+            .record(COLORS, &progress)
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("within 1000 generations"),
+            "{error}"
+        );
+        assert_eq!(progress.load(Ordering::Relaxed), 1000);
+    }
+
+    #[test]
     fn generations_that_change_nothing_lengthen_the_frame_before() {
         // A block never changes: one frame for the whole recording.
         let mut board = Universe::Finite(Board::new(8, 8));
@@ -307,7 +403,7 @@ mod tests {
             width: 8,
             height: 8,
         };
-        let recording = request(board, rect, 7, 250)
+        let recording = request(board, rect, GifLength::Generations(7), 250)
             .record(COLORS, &AtomicUsize::new(0))
             .unwrap();
         let frames = play(&recording.file);
@@ -343,7 +439,7 @@ mod tests {
             width: MAX_GIF_SIDE,
             height: 6,
         };
-        let recording = request(plane, rect, 12, 40)
+        let recording = request(plane, rect, GifLength::Generations(12), 40)
             .record(COLORS, &AtomicUsize::new(0))
             .unwrap();
         assert_eq!(recording.generations, 12);

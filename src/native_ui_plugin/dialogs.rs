@@ -2,7 +2,7 @@
 use super::*;
 use crate::{
     board::{BoundaryMode, RandomizeSettings},
-    cell_gif::MAX_GIF_GENERATIONS,
+    cell_gif::{GifLength, MAX_GIF_GENERATIONS},
     keybindings::{BINDING_TOGGLE_HELP, TypedKeys, command_key},
     rule::Rule,
     shared::{
@@ -398,12 +398,13 @@ fn dialog_action(
         Action::SaveWorkspace => request_save(&mut state),
         Action::SaveImage => request_save_image(&mut state),
         Action::SaveGif => match parse_generations(&state.drafts.generations) {
-            Ok(generations) => request_save_gif(&mut state, generations),
+            Ok(generations) => request_save_gif(&mut state, GifLength::Generations(generations)),
             Err(error) => {
                 state.drafts.error = true;
                 state.drafts.feedback = error;
             }
         },
+        Action::SaveGifPeriod => request_save_gif(&mut state, GifLength::Period),
         Action::OpenWorkspace => request_open(&mut state),
         Action::OpenRle => {
             if !file_dialog_busy(&mut state) {
@@ -639,8 +640,9 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         if !WEB_BUILD {
                             heading(p, "Image", "Save a PNG of the selection, or else of the whole board, or of the live cells of an unbounded board, in the theme's colours.");
                             p.spawn(row()).with_children(|p| { button(p, "Save image…", Action::SaveImage); });
-                            heading(p, "Animation", "Record the same area as a looping GIF at the playback speed, from the current generation on. The board plays on meanwhile.");
+                            heading(p, "Animation", "Record the same area as a looping GIF at the playback speed, from the current generation on. One period records until the board comes back to it, so the loop has no jump. The board plays on meanwhile.");
                             action_row(p, "Save GIF…", Action::SaveGif, |p| inline_field(p, "Generations", &drafts.generations, Field::Generations, false));
+                            p.spawn(row()).with_children(|p| { button(p, "Save one period…", Action::SaveGifPeriod); });
                             heading(p, "Workspace file", &format!("Save your board and imported patterns to a .golw file. {}+S saves.", command_key()));
                             p.spawn(row()).with_children(|p| { button(p, "Save workspace…", Action::SaveWorkspace); });
                         }

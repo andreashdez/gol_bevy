@@ -2,7 +2,8 @@
 
 use super::*;
 use crate::{
-    patterns::PatternParseError, sparse_board::PLANE_EXPORT_CELLS_MAX, universe::CellSnapshot,
+    cell_gif::GifLength, patterns::PatternParseError, sparse_board::PLANE_EXPORT_CELLS_MAX,
+    universe::CellSnapshot,
 };
 
 fn stamp_centered(app: &mut App, pattern: PatternKind) {
@@ -1213,7 +1214,7 @@ fn an_image_shows_the_selection_or_else_the_board_or_the_live_cells_of_the_plane
     app.board.populate(3000, 0);
     assert_eq!(app.board_image().unwrap().size(), (3006, 10));
     assert_eq!(
-        app.board_gif(10).unwrap_err(),
+        app.board_gif(GifLength::Generations(10)).unwrap_err(),
         ImageExportError::TooLarge(2048)
     );
     app.board.populate(i64::MIN, i64::MAX);
@@ -1228,13 +1229,16 @@ fn a_gif_plays_at_the_playback_speed_from_a_copy_of_the_board() {
     let mut app = App::new(16, 8);
     app.populate_board(3, 2);
     app.set_tick_rate_ms(150);
-    let request = app.board_gif(30).unwrap();
+    let request = app.board_gif(GifLength::Generations(30)).unwrap();
     assert_eq!(
-        (request.generations(), request.ms_per_generation),
-        (30, 150)
+        (request.length(), request.ms_per_generation),
+        (GifLength::Generations(30), 150)
     );
     app.set_max_speed();
-    assert_eq!(app.board_gif(30).unwrap().ms_per_generation, 20);
+    assert_eq!(
+        app.board_gif(GifLength::Period).unwrap().ms_per_generation,
+        20
+    );
 
     // Recording steps the copy, not the board.
     let recording = request

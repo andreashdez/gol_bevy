@@ -42,6 +42,8 @@ pub(super) enum Action {
     SaveImage,
     /// Records generations of the selection, or else the board, as a GIF.
     SaveGif,
+    /// Records the selection, or else the board, until it comes back round.
+    SaveGifPeriod,
     OpenWorkspace,
     /// Loads an `.rle` file into the import fields.
     OpenRle,
@@ -104,6 +106,7 @@ pub(super) fn activate(
         | Action::SaveWorkspace
         | Action::SaveImage
         | Action::SaveGif
+        | Action::SaveGifPeriod
         | Action::OpenWorkspace
         | Action::OpenRle
         | Action::ConfirmOpenWorkspace

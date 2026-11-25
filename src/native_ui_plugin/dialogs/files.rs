@@ -2,7 +2,7 @@
 //! and their shortcuts.
 use super::*;
 use crate::{
-    cell_gif::GifRequest,
+    cell_gif::{GifLength, GifRequest},
     cell_image::CellImage,
     workspace::{DecodedWorkspace, Workspace},
 };
@@ -41,10 +41,10 @@ pub(super) enum FileWork {
 }
 
 /// How far work that takes a while has got: generations of a GIF recorded so
-/// far, of how many.
+/// far, of how many if that's known before the board comes back round.
 pub(super) struct Progress {
     done: Arc<AtomicUsize>,
-    total: usize,
+    total: Option<usize>,
 }
 
 /// What the file task produced, applied to the app back on the main thread.
@@ -91,12 +91,12 @@ pub(super) fn request_save_image(state: &mut DialogState) {
     }
 }
 
-/// Records `generations` of the selection, or else the board, as a GIF.
-pub(super) fn request_save_gif(state: &mut DialogState, generations: usize) {
+/// Records the selection, or else the board, as a GIF.
+pub(super) fn request_save_gif(state: &mut DialogState, length: GifLength) {
     if file_dialog_busy(state) {
         return;
     }
-    match state.sim.app.board_gif(generations) {
+    match state.sim.app.board_gif(length) {
         Ok(request) => {
             let colors = cell_colors(state);
             request_file(state, FileRequest::SaveGif(Box::new(request), colors));
@@ -212,7 +212,12 @@ pub(in crate::native_ui_plugin) fn poll_file_dialog(mut state: DialogState) {
             let Some(outcome) = check_ready(task) else {
                 if let Some(Progress { done, total }) = progress {
                     let done = done.load(Ordering::Relaxed);
-                    let feedback = format!("Recording… {done} of {total} generations.");
+                    let feedback = match total {
+                        Some(total) => format!("Recording… {done} of {total} generations."),
+                        None => format!(
+                            "Recording… {done} generations, until the board comes back round."
+                        ),
+                    };
                     if state.drafts.feedback != feedback {
                         state.drafts.feedback = feedback;
                     }
@@ -258,7 +263,10 @@ pub(super) fn finish_file_request(
     let progress = match &request {
         FileRequest::SaveGif(gif, _) => Some(Progress {
             done: Arc::default(),
-            total: gif.generations(),
+            total: match gif.length() {
+                GifLength::Generations(generations) => Some(generations),
+                GifLength::Period => None,
+            },
         }),
         _ => None,
     };
@@ -297,20 +305,25 @@ pub(super) fn finish_file_request(
             }
             FileRequest::SaveGif(gif, colors) => {
                 let done = done.expect("a GIF has its progress");
-                let asked = gif.generations();
+                let length = gif.length();
                 FileOutcome::ImageSaved(
                     gif.record(colors, &done)
                         .and_then(|gif| {
                             crate::atomic_file::write(&target, &gif.file)?;
                             let ((width, height), scale) = (gif.size, gif.scale);
                             let generations = gif.generations;
-                            let early = if generations < asked {
-                                " It stops early, where the board reached its memory limit."
-                            } else {
-                                ""
+                            let what = match length {
+                                GifLength::Period => format!("one period, {generations} generations,"),
+                                GifLength::Generations(_) => format!("{generations} generations"),
+                            };
+                            let early = match length {
+                                GifLength::Generations(asked) if generations < asked => {
+                                    " It stops early, where the board reached its memory limit."
+                                }
+                                _ => "",
                             };
                             Ok(format!(
-                                "Saved {generations} generations of {width} × {height} cells, {scale} pixels across each, to {shown}.{early}"
+                                "Saved {what} of {width} × {height} cells, {scale} pixels across each, to {shown}.{early}"
                             ))
                         })
                         .map_err(|error| format!("Could not save {shown}: {error}")),
