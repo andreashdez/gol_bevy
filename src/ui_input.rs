@@ -4,11 +4,17 @@ use crate::shared::UpdateSet;
 use bevy::{
     input::ButtonState,
     input_focus::{InputFocus, InputFocusVisible},
+    picking::{
+        events::{PointerClick, PointerPress, PointerRelease, pointer_events},
+        pointer::{PointerAction, PointerInput},
+    },
+    platform::collections::HashSet,
     prelude::*,
     text::EditableText,
     ui_widgets::Slider,
     window::{PrimaryWindow, WindowEvent},
 };
+use std::time::Duration;
 
 #[derive(Resource, Default)]
 pub struct UiInputRegions {
@@ -53,6 +59,7 @@ impl Plugin for UiInputPlugin {
         app.init_resource::<UiInputRegions>()
             .init_resource::<UiInputCapture>()
             .add_systems(First, begin_frame)
+            .add_systems(PreUpdate, finish_taps.after(pointer_events))
             .add_systems(
                 Update,
                 capture_input
@@ -70,6 +77,61 @@ fn begin_frame(
 ) {
     capture.pointer = regions.modal;
     capture.keyboard = regions.modal || focus.get().is_some_and(|e| editors.contains(e));
+}
+
+/// Bevy's picking sends a press to what the pointer is over now, but its
+/// release to what the pointer was over the frame before. A tap, or a click in
+/// a slow frame, that arrives, presses, and lifts within one frame leaves the
+/// control it pressed held down and never clicks it. This finishes those
+/// presses: each control a press reached that its release then missed gets the
+/// click and the release it would have had.
+fn finish_taps(
+    mut inputs: MessageReader<PointerInput>,
+    mut presses: MessageReader<PointerPress>,
+    mut releases: MessageReader<PointerRelease>,
+    mut commands: Commands,
+) {
+    // The pointers and buttons that lifted after pressing in this frame.
+    let (mut down, mut tapped) = (HashSet::new(), HashSet::new());
+    for input in inputs.read() {
+        match input.action {
+            PointerAction::Press(button) => {
+                down.insert((input.pointer_id, button));
+            }
+            PointerAction::Release(button) if down.remove(&(input.pointer_id, button)) => {
+                tapped.insert((input.pointer_id, button));
+            }
+            _ => {}
+        }
+    }
+    if tapped.is_empty() {
+        presses.clear();
+        releases.clear();
+        return;
+    }
+    let reached: HashSet<_> = releases
+        .read()
+        .map(|release| (release.pointer.id, release.button, release.entity))
+        .collect();
+    for press in presses.read() {
+        let (pointer, button, entity) = (press.pointer.id, press.button, press.entity);
+        if tapped.contains(&(pointer, button)) && !reached.contains(&(pointer, button, entity)) {
+            commands.trigger(PointerClick {
+                entity,
+                pointer: press.pointer.clone(),
+                button,
+                hit: press.hit.clone(),
+                duration: Duration::ZERO,
+                count: press.count,
+            });
+            commands.trigger(PointerRelease {
+                entity,
+                pointer: press.pointer.clone(),
+                button,
+                hit: press.hit.clone(),
+            });
+        }
+    }
 }
 
 #[derive(SystemParam)]

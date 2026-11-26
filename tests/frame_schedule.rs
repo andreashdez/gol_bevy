@@ -6,7 +6,7 @@ use bevy::{
     input::{ButtonState, mouse::MouseButtonInput},
     prelude::*,
     render::{RenderPlugin, settings::WgpuSettings},
-    window::{PrimaryWindow, WindowResolution},
+    window::{CursorMoved, PrimaryWindow, WindowEvent, WindowResolution},
     winit::WinitPlugin,
 };
 use gol_bevy::{
@@ -18,10 +18,15 @@ use gol_bevy::{
 /// The default plugins with a window but no event loop or GPU, then the app's.
 fn headless_app() -> App {
     // Settings are read and saved as the app runs, so they go to a folder of
-    // their own rather than the user's. This test is alone in its binary, so
-    // nothing else reads the environment meanwhile.
-    let settings = std::env::temp_dir().join(format!("gol-bevy-schedule-{}", std::process::id()));
-    unsafe { std::env::set_var("GOL_BEVY_CONFIG_DIR", &settings) };
+    // their own rather than the user's. The first test to get here sets it
+    // before any app runs, and the others wait, so nothing reads the
+    // environment while it changes.
+    static SETTINGS: std::sync::Once = std::sync::Once::new();
+    SETTINGS.call_once(|| {
+        let settings =
+            std::env::temp_dir().join(format!("gol-bevy-schedule-{}", std::process::id()));
+        unsafe { std::env::set_var("GOL_BEVY_CONFIG_DIR", &settings) };
+    });
 
     let mut app = App::new();
     app.add_plugins(
@@ -60,19 +65,40 @@ fn window(app: &mut App) -> Entity {
         .unwrap()
 }
 
-/// Puts the pointer at `position` and presses or releases the left button, as
-/// the window's events would, then runs a frame.
-fn click_frame(app: &mut App, position: Vec2, state: ButtonState) {
+/// Moves the pointer to `position`, as the window's events would.
+fn move_pointer(app: &mut App, position: Vec2) {
     let window = window(app);
     app.world_mut()
         .get_mut::<Window>(window)
         .unwrap()
         .set_cursor_position(Some(position));
-    app.world_mut().write_message(MouseButtonInput {
+    let moved = CursorMoved {
+        window,
+        position,
+        delta: None,
+    };
+    app.world_mut().write_message(moved.clone());
+    app.world_mut()
+        .write_message(WindowEvent::CursorMoved(moved));
+}
+
+/// Presses or releases the left button, as the window's events would.
+fn press(app: &mut App, state: ButtonState) {
+    let input = MouseButtonInput {
         button: MouseButton::Left,
         state,
-        window,
-    });
+        window: window(app),
+    };
+    app.world_mut().write_message(input);
+    app.world_mut()
+        .write_message(WindowEvent::MouseButtonInput(input));
+}
+
+/// Puts the pointer at `position` and presses or releases the left button,
+/// then runs a frame.
+fn click_frame(app: &mut App, position: Vec2, state: ButtonState) {
+    move_pointer(app, position);
+    press(app, state);
     app.update();
 }
 
@@ -121,4 +147,27 @@ fn a_click_edits_the_canvas_but_not_through_the_palette_and_is_redrawn_next_fram
     let right = Vec2::new(canvas.max.x - 100.0, canvas.center().y);
     click_frame(&mut app, right, ButtonState::Pressed);
     assert!(live_cells(&app) > 1, "a click beside it stamps");
+}
+
+#[test]
+fn a_tap_pressed_and_released_within_one_frame_still_clicks_a_button() {
+    let mut app = headless_app();
+    for _ in 0..3 {
+        app.update();
+    }
+    let running = |app: &App| app.world().resource::<Simulation>().app.is_running();
+    let play = Vec2::new(44.0, 32.0);
+    click_frame(&mut app, play, ButtonState::Pressed);
+    click_frame(&mut app, play, ButtonState::Released);
+    assert!(running(&app), "a click over two frames plays");
+
+    // A quick tap, or a click in a slow frame: the pointer comes from the
+    // board, presses Play, and lifts before the app sees another frame.
+    move_pointer(&mut app, canvas_rect(Vec2::new(1200.0, 800.0)).center());
+    app.update();
+    move_pointer(&mut app, play);
+    press(&mut app, ButtonState::Pressed);
+    press(&mut app, ButtonState::Released);
+    app.update();
+    assert!(!running(&app), "the tap pauses");
 }
