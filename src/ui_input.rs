@@ -85,6 +85,11 @@ fn begin_frame(
 /// control it pressed held down and never clicks it. This finishes those
 /// presses: each control a press reached that its release then missed gets the
 /// click and the release it would have had.
+///
+/// Reported as <https://github.com/bevyengine/bevy/issues/26066>, with a fix in
+/// <https://github.com/bevyengine/bevy/pull/26077>. Once a Bevy release has it,
+/// every release reaches the control it pressed, this does nothing, and it can
+/// go; `tests/frame_schedule.rs` still checks taps then.
 fn finish_taps(
     mut inputs: MessageReader<PointerInput>,
     mut presses: MessageReader<PointerPress>,
