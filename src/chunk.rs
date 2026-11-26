@@ -2,7 +2,7 @@
 //! step that works out a chunk's next rows 64 cells at a time. The finite board
 //! keeps chunks in a grid and the unbounded one in a map; each reads a chunk's
 //! neighbours its own way, past its edges or across the plane, and hands the
-//! row sums to [`next_rows`].
+//! row sums to `next_rows`.
 use crate::rule::Rule;
 use bevy::tasks::{ComputeTaskPool, TaskPool};
 

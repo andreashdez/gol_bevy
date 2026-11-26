@@ -66,7 +66,7 @@ impl CellImage {
     }
 
     /// Pixels across each cell: as many as keep the longer side within
-    /// [`SCALED_SIDE`] pixels, from 1 to [`MAX_SCALE`].
+    /// `SCALED_SIDE` pixels, from 1 to `MAX_SCALE`.
     pub fn scale(&self) -> usize {
         (SCALED_SIDE / self.width.max(self.height)).clamp(1, MAX_SCALE)
     }
