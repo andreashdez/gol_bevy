@@ -40,8 +40,13 @@ pub(super) fn start_gif(state: &mut DialogState, gif: GifRequest, colors: GifCol
     let length = gif.length();
     match gif.recorder(colors) {
         Ok(recorder) => {
+            let measuring = recorder.measuring();
             state.file_dialog.0 = Some(FileWork::Recording(Box::new(recorder), length));
-            report(state, false, recording_progress(0, total(length)));
+            report(
+                state,
+                false,
+                recording_progress(measuring, 0, total(length)),
+            );
         }
         Err(error) => report(state, true, format!("Could not record the GIF: {error}")),
     }
@@ -59,7 +64,8 @@ pub(super) fn keep_recording(state: &mut DialogState) {
             Ok(true) => break Ok(()),
             Err(error) => break Err(error),
             Ok(false) if started.elapsed() >= RECORDING_BUDGET => {
-                state.drafts.feedback = recording_progress(recorder.progress(), total(*length));
+                state.drafts.feedback =
+                    recording_progress(recorder.measuring(), recorder.progress(), total(*length));
                 return;
             }
             Ok(false) => {}

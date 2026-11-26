@@ -22,7 +22,9 @@ use self::{
 };
 pub use self::{
     playback::{AutoPause, POPULATION_HISTORY},
-    selection::{BoardExport, BoardExportError, ImageExportError, SelectionExportError},
+    selection::{
+        BoardExport, BoardExportError, ImageExportError, RecordedArea, SelectionExportError,
+    },
     stamp::{PasteError, PatternImport},
 };
 use crate::{

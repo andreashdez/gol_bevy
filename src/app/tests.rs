@@ -2,7 +2,9 @@
 
 use super::*;
 use crate::{
-    cell_gif::GifLength, patterns::PatternParseError, sparse_board::PLANE_EXPORT_CELLS_MAX,
+    cell_gif::{GifArea, GifLength},
+    patterns::PatternParseError,
+    sparse_board::PLANE_EXPORT_CELLS_MAX,
     universe::CellSnapshot,
 };
 
@@ -1222,6 +1224,44 @@ fn an_image_shows_the_selection_or_else_the_board_or_the_live_cells_of_the_plane
         app.board_image().unwrap_err(),
         ImageExportError::TooLarge(16384)
     );
+}
+
+#[test]
+fn a_gif_records_the_selection_or_the_board_or_the_run_of_an_unbounded_one() {
+    let mut app = App::new(16, 8);
+    app.populate_board(3, 2);
+    let rect = |left, bottom, width, height| CellRect {
+        left,
+        bottom,
+        width,
+        height,
+    };
+    let area = |app: &App| app.board_gif(GifLength::Generations(5)).unwrap().area;
+    assert_eq!(
+        app.recorded_area(),
+        Ok(RecordedArea::Board(rect(0, 0, 16, 8)))
+    );
+    assert_eq!(area(&app), GifArea::Fixed(rect(0, 0, 16, 8)));
+    selecting(&mut app, (4, 2), (2, 1));
+    assert_eq!(
+        app.recorded_area(),
+        Ok(RecordedArea::Selection(rect(2, 1, 3, 2)))
+    );
+    assert_eq!(area(&app), GifArea::Fixed(rect(2, 1, 3, 2)));
+
+    // Without a selection, the unbounded board's box is only where the run starts.
+    app.set_tool(EditTool::Draw);
+    app.set_unbounded().unwrap();
+    app.clear_board();
+    app.board.populate(-5, 9);
+    app.board.populate(1, 0);
+    assert_eq!(
+        app.recorded_area(),
+        Ok(RecordedArea::Run(rect(-5, 0, 7, 10)))
+    );
+    assert_eq!(area(&app), GifArea::Run);
+    app.board.clear();
+    assert_eq!(app.recorded_area(), Err(ImageExportError::Empty));
 }
 
 #[test]

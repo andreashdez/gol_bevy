@@ -110,12 +110,23 @@ impl GifColors {
     }
 }
 
+/// Where a recording draws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GifArea {
+    /// This rectangle, whatever passes through it.
+    Fixed(CellRect),
+    /// The box around the live cells over the whole recording, found by
+    /// stepping a copy of the board through it first, so a growing pattern
+    /// fits from the first frame to the last.
+    Run,
+}
+
 /// What a recording starts from: a copy of the board, stepped on its own so
 /// the board itself plays on, and the area to draw.
 #[derive(Debug, Clone)]
 pub struct GifRequest {
     pub(crate) board: Universe,
-    pub(crate) rect: CellRect,
+    pub(crate) area: GifArea,
     pub(crate) length: GifLength,
     pub(crate) ms_per_generation: u64,
 }
@@ -137,13 +148,19 @@ pub struct GifRecording {
 #[derive(Debug, Default)]
 pub struct GifProgress {
     generations: AtomicUsize,
+    measuring: AtomicBool,
     cancelled: AtomicBool,
 }
 
 impl GifProgress {
-    /// Generations stepped through or drawn so far.
+    /// Generations measured, or stepped through or drawn, so far.
     pub fn generations(&self) -> usize {
         self.generations.load(Ordering::Relaxed)
+    }
+
+    /// Whether the recording is still finding the area the run fills.
+    pub fn measuring(&self) -> bool {
+        self.measuring.load(Ordering::Relaxed)
     }
 
     /// Stops the recording before its next generation.
@@ -178,6 +195,9 @@ impl GifRequest {
             progress
                 .generations
                 .store(recorder.progress(), Ordering::Relaxed);
+            progress
+                .measuring
+                .store(recorder.measuring(), Ordering::Relaxed);
             if over {
                 break;
             }
@@ -188,48 +208,177 @@ impl GifRequest {
     /// A recording to draw a generation at a time, as [`record`](Self::record)
     /// does all at once.
     pub fn recorder(self, colors: GifColors) -> io::Result<GifRecorder> {
-        let (width, height) = (self.rect.width, self.rect.height);
-        let scale = (GIF_SIDE / width.max(height)).clamp(1, MAX_SCALE);
-        let pixels = |cells: usize| u16::try_from(cells * scale).map_err(io::Error::other);
-        let mut encoder = gif::Encoder::new(
-            Vec::new(),
-            pixels(width)?,
-            pixels(height)?,
-            &colors.palette(),
-        )
-        .map_err(io::Error::other)?;
-        encoder
-            .set_repeat(gif::Repeat::Infinite)
-            .map_err(io::Error::other)?;
-        let phase = match self.length {
-            GifLength::Generations(generations) => Phase::Drawing { limit: generations },
-            GifLength::Period => Phase::Searching,
+        let stage = match self.area {
+            GifArea::Fixed(rect) => Stage::Recording(Box::new(Recording::new(self, rect, colors)?)),
+            GifArea::Run => Stage::Measuring(Box::new(Measuring {
+                scout: self.board.clone(),
+                start: self.board.fingerprint(),
+                bounds: live_bounds(&self.board),
+                stepped: 0,
+                request: self,
+                colors,
+            })),
         };
-        Ok(GifRecorder {
-            // Generations of one run match exactly when their fingerprints do.
-            start: self.board.fingerprint(),
-            board: self.board,
-            rect: self.rect,
-            ms_per_generation: self.ms_per_generation,
-            colors,
-            phase,
-            scale,
-            encoder,
-            cells: None,
-            ages: vec![0; width * height],
-            shown: Vec::new(),
-            pending: None,
-            clock: Clock::default(),
-            stepped: 0,
-            drawn: 0,
-            end: None,
-        })
+        Ok(GifRecorder { stage: Some(stage) })
     }
 }
 
 /// A recording under way. Drawn a generation at a time, it can run in short
 /// slices, as it does between frames in the web version, which has one thread.
 pub struct GifRecorder {
+    /// Only ever empty while moving from measuring to recording.
+    stage: Option<Stage>,
+}
+
+enum Stage {
+    Measuring(Box<Measuring>),
+    Recording(Box<Recording>),
+}
+
+/// Stepping a copy of the board through the recording, to find the box its
+/// live cells fill, before recording from the start over that box.
+struct Measuring {
+    request: GifRequest,
+    colors: GifColors,
+    scout: Universe,
+    /// The board's fingerprint at the start, which a period comes back to.
+    start: u64,
+    /// The corners of the box around every live cell so far.
+    bounds: Option<((i64, i64), (i64, i64))>,
+    stepped: usize,
+}
+
+impl Measuring {
+    /// Steps one generation further, and returns the box once the run is
+    /// measured.
+    fn step(&mut self) -> io::Result<Option<CellRect>> {
+        let done = match self.request.length {
+            GifLength::Generations(generations) => self.stepped + 1 >= generations,
+            GifLength::Period => false,
+        };
+        if !done {
+            let full = self.scout.step_within(PLANE_CHUNKS_MAX).is_err();
+            self.stepped += 1;
+            match self.request.length {
+                GifLength::Period if full => {
+                    return Err(io::Error::other(
+                        "the board reached its memory limit before it came back round",
+                    ));
+                }
+                GifLength::Period if self.scout.fingerprint() == self.start => {}
+                GifLength::Period if self.stepped == MAX_GIF_GENERATIONS => {
+                    return Err(no_period());
+                }
+                // The recording stops where the board fills up, too.
+                GifLength::Generations(_) if full => {}
+                _ => {
+                    self.include(live_bounds(&self.scout))?;
+                    return Ok(None);
+                }
+            }
+        }
+        let (min, max) = self
+            .bounds
+            .ok_or_else(|| io::Error::other("the board is empty, so there is nothing to record"))?;
+        let rect = CellRect::spanning(min, max);
+        fits(rect)?;
+        Ok(Some(rect))
+    }
+
+    /// Widens the box to take in `bounds`, failing once it can't be drawn.
+    fn include(&mut self, bounds: Option<((i64, i64), (i64, i64))>) -> io::Result<()> {
+        let Some((low, high)) = bounds else {
+            return Ok(());
+        };
+        let (min, max) = self.bounds.map_or((low, high), |(min, max)| {
+            (
+                (min.0.min(low.0), min.1.min(low.1)),
+                (max.0.max(high.0), max.1.max(high.1)),
+            )
+        });
+        self.bounds = Some((min, max));
+        fits(CellRect::spanning(min, max))
+    }
+}
+
+/// Fails for a box too large to record.
+fn fits(rect: CellRect) -> io::Result<()> {
+    if rect.width > MAX_GIF_SIDE || rect.height > MAX_GIF_SIDE {
+        return Err(io::Error::other(format!(
+            "the pattern grows past {MAX_GIF_SIDE} cells on a side · select an area to record \
+             part of it"
+        )));
+    }
+    Ok(())
+}
+
+/// The corners of the box around the live cells: on a finite board, the board.
+fn live_bounds(board: &Universe) -> Option<((i64, i64), (i64, i64))> {
+    match board {
+        Universe::Finite(board) => {
+            let (cols, rows) = board.size();
+            Some(((0, 0), (cols as i64 - 1, rows as i64 - 1)))
+        }
+        Universe::Unbounded(plane) => plane.live_bounds(),
+    }
+}
+
+fn no_period() -> io::Error {
+    io::Error::other(format!(
+        "the board doesn't come back to this generation within {MAX_GIF_GENERATIONS} \
+         generations · run it until the status bar shows its period"
+    ))
+}
+
+impl GifRecorder {
+    /// Generations measured, or stepped through or drawn, so far.
+    pub fn progress(&self) -> usize {
+        match &self.stage {
+            Some(Stage::Measuring(measuring)) => measuring.stepped,
+            Some(Stage::Recording(recording)) => recording.progress(),
+            None => 0,
+        }
+    }
+
+    /// Whether the recording is still finding the area the run fills.
+    pub fn measuring(&self) -> bool {
+        matches!(self.stage, Some(Stage::Measuring(_)))
+    }
+
+    /// Takes the recording a generation further, and returns true once it's
+    /// over.
+    pub fn step(&mut self) -> io::Result<bool> {
+        match self.stage.as_mut().expect("a stage") {
+            Stage::Recording(recording) => recording.step(),
+            Stage::Measuring(measuring) => {
+                let Some(rect) = measuring.step()? else {
+                    return Ok(false);
+                };
+                let Some(Stage::Measuring(measuring)) = self.stage.take() else {
+                    unreachable!("measuring");
+                };
+                let Measuring {
+                    request, colors, ..
+                } = *measuring;
+                self.stage = Some(Stage::Recording(Box::new(Recording::new(
+                    request, rect, colors,
+                )?)));
+                Ok(false)
+            }
+        }
+    }
+
+    /// The finished GIF, once [`step`](Self::step) has returned true.
+    pub fn finish(self) -> io::Result<GifRecording> {
+        match self.stage {
+            Some(Stage::Recording(recording)) => recording.finish(),
+            _ => unreachable!("finished before recording"),
+        }
+    }
+}
+
+/// Drawing the recording over a known area.
+struct Recording {
     board: Universe,
     rect: CellRect,
     ms_per_generation: u64,
@@ -256,6 +405,47 @@ pub struct GifRecorder {
     end: Option<End>,
 }
 
+impl Recording {
+    fn new(request: GifRequest, rect: CellRect, colors: GifColors) -> io::Result<Self> {
+        let (width, height) = (rect.width, rect.height);
+        let scale = (GIF_SIDE / width.max(height)).clamp(1, MAX_SCALE);
+        let pixels = |cells: usize| u16::try_from(cells * scale).map_err(io::Error::other);
+        let mut encoder = gif::Encoder::new(
+            Vec::new(),
+            pixels(width)?,
+            pixels(height)?,
+            &colors.palette(),
+        )
+        .map_err(io::Error::other)?;
+        encoder
+            .set_repeat(gif::Repeat::Infinite)
+            .map_err(io::Error::other)?;
+        let phase = match request.length {
+            GifLength::Generations(generations) => Phase::Drawing { limit: generations },
+            GifLength::Period => Phase::Searching,
+        };
+        Ok(Self {
+            // Generations of one run match exactly when their fingerprints do.
+            start: request.board.fingerprint(),
+            board: request.board,
+            rect,
+            ms_per_generation: request.ms_per_generation,
+            colors,
+            phase,
+            scale,
+            encoder,
+            cells: None,
+            ages: vec![0; width * height],
+            shown: Vec::new(),
+            pending: None,
+            clock: Clock::default(),
+            stepped: 0,
+            drawn: 0,
+            end: None,
+        })
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Phase {
     /// Stepping until the board comes back to the start, to learn the period.
@@ -276,15 +466,12 @@ enum End {
     Full,
 }
 
-impl GifRecorder {
-    /// Generations stepped through or drawn so far.
-    pub fn progress(&self) -> usize {
+impl Recording {
+    fn progress(&self) -> usize {
         self.stepped + self.drawn
     }
 
-    /// Takes the recording a generation further, and returns true once it's
-    /// over.
-    pub fn step(&mut self) -> io::Result<bool> {
+    fn step(&mut self) -> io::Result<bool> {
         if self.end.is_some() {
             return Ok(true);
         }
@@ -399,8 +586,7 @@ impl GifRecorder {
         Ok(())
     }
 
-    /// The finished GIF, once [`step`](Self::step) has returned true.
-    pub fn finish(mut self) -> io::Result<GifRecording> {
+    fn finish(mut self) -> io::Result<GifRecording> {
         debug_assert!(self.end.is_some(), "finished before the last generation");
         let looking = matches!(self.phase, Phase::Searching | Phase::WarmingUp { .. });
         match self.end {
@@ -409,13 +595,7 @@ impl GifRecorder {
                     "the board reached its memory limit before it came back round",
                 ));
             }
-            Some(End::NoPeriod) => {
-                return Err(io::Error::other(format!(
-                    "the board doesn't come back to this generation within \
-                     {MAX_GIF_GENERATIONS} generations · run it until the status bar \
-                     shows its period"
-                )));
-            }
+            Some(End::NoPeriod) => return Err(no_period()),
             _ => {}
         }
         if let Some(mut last) = self.pending.take() {
@@ -520,7 +700,7 @@ fn draw(
 
 #[cfg(test)]
 mod tests {
-    use super::{Clock, GifColors, GifLength, GifProgress, GifRequest, MAX_GIF_SIDE};
+    use super::{Clock, GifArea, GifColors, GifLength, GifProgress, GifRequest, MAX_GIF_SIDE};
     use crate::{board::Board, sparse_board::CellRect, universe::Universe};
 
     const COLORS: [[u8; 3]; 2] = [[10, 20, 30], [200, 210, 220]];
@@ -532,7 +712,7 @@ mod tests {
     fn request(board: Universe, rect: CellRect, length: GifLength, ms: u64) -> GifRequest {
         GifRequest {
             board,
-            rect,
+            area: GifArea::Fixed(rect),
             length,
             ms_per_generation: ms,
         }
@@ -880,5 +1060,60 @@ mod tests {
         };
         assert_eq!(live(&frames[0].1), 5);
         assert!(live(&frames.last().unwrap().1) < 5);
+    }
+
+    fn fitting_the_run(board: Universe, length: GifLength) -> std::io::Result<super::GifRecording> {
+        GifRequest {
+            board,
+            area: GifArea::Run,
+            length,
+            ms_per_generation: 40,
+        }
+        .record(plain(), &GifProgress::default())
+    }
+
+    #[test]
+    fn fitting_the_run_keeps_a_moving_pattern_whole_in_every_frame() {
+        // In 40 generations a glider moves 10 cells each way, so the run fills
+        // 13 × 13 cells, though the glider only fills 3 × 3 at the start.
+        let mut plane = Universe::Unbounded(Default::default());
+        for (x, y) in [(1, 2), (2, 1), (0, 0), (1, 0), (2, 0)] {
+            plane.populate(x, y);
+        }
+        let recording = fitting_the_run(plane, GifLength::Generations(41)).unwrap();
+        assert_eq!((recording.size, recording.generations), ((13, 13), 41));
+        let frames = play(&recording.file);
+        let live = |pixels: &Vec<u8>| {
+            let cell = recording.scale * recording.scale;
+            pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|pixel| pixel[..3] == COLORS[1])
+                .count()
+                / cell
+        };
+        assert!(frames.iter().all(|(_, pixels)| live(pixels) == 5));
+    }
+
+    #[test]
+    fn fitting_the_run_covers_a_period_and_refuses_what_wont_fit() {
+        // A blinker turns between a row and a column, so its period fills 3 × 3.
+        let mut plane = Universe::Unbounded(Default::default());
+        for x in 0..3 {
+            plane.populate(x, 0);
+        }
+        let recording = fitting_the_run(plane, GifLength::Period).unwrap();
+        assert_eq!((recording.size, recording.generations), ((3, 3), 2));
+
+        // Two blocks further apart than a GIF can be wide.
+        let mut plane = Universe::Unbounded(Default::default());
+        for x in [0, 3000] {
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                plane.populate(x + dx, dy);
+            }
+        }
+        let error = fitting_the_run(plane, GifLength::Generations(1)).unwrap_err();
+        assert!(error.to_string().contains("past 2048 cells"), "{error}");
     }
 }

@@ -86,6 +86,20 @@ impl CellRect {
         }
     }
 
+    /// The rectangle from corner `min` to corner `max`, both included. Corners
+    /// further apart than a `usize` counts make it as wide as one can be.
+    pub fn spanning((left, bottom): (i64, i64), (right, top): (i64, i64)) -> Self {
+        let span = |low: i64, high: i64| {
+            usize::try_from(high.abs_diff(low)).map_or(usize::MAX, |span| span.saturating_add(1))
+        };
+        Self {
+            left,
+            bottom,
+            width: span(left, right),
+            height: span(bottom, top),
+        }
+    }
+
     /// The middle of this rectangle, at most `side` cells across each way.
     pub fn middle(self, side: usize) -> Self {
         let keep = |start: i64, length: usize| {

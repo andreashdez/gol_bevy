@@ -3,7 +3,7 @@
 
 use super::{App, EditTool};
 use crate::{
-    cell_gif::{FASTEST_MS_PER_GENERATION, GifLength, GifRequest, MAX_GIF_SIDE},
+    cell_gif::{FASTEST_MS_PER_GENERATION, GifArea, GifLength, GifRequest, MAX_GIF_SIDE},
     cell_image::{CellImage, MAX_IMAGE_SIDE},
     patterns::RleWriter,
     sparse_board::{CellRect, PLANE_EXPORT_CELLS_MAX},
@@ -72,6 +72,17 @@ impl fmt::Display for ImageExportError {
             ),
         }
     }
+}
+
+/// The area a GIF records, for the Export dialog to say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordedArea {
+    Selection(CellRect),
+    /// The whole of a finite board.
+    Board(CellRect),
+    /// The box the live cells of an unbounded board fill over the whole
+    /// recording, which starts as this one around them now.
+    Run(CellRect),
 }
 
 /// A rectangle picked with the Select tool: the cell a drag started on, the one
@@ -261,14 +272,17 @@ impl App {
         Ok(CellImage::capture(&self.board, rect))
     }
 
-    /// `length` generations from the current one, to record over the area
-    /// [`board_image`](Self::board_image) draws, at the playback speed, from a
+    /// `length` generations from the current one, to record over the
+    /// [`recorded_area`](Self::recorded_area) at the playback speed, from a
     /// copy of the board.
     pub fn board_gif(&self, length: GifLength) -> Result<GifRequest, ImageExportError> {
-        let rect = self.image_area(MAX_GIF_SIDE)?;
+        let area = match self.recorded_area()? {
+            RecordedArea::Selection(rect) | RecordedArea::Board(rect) => GifArea::Fixed(rect),
+            RecordedArea::Run(_) => GifArea::Run,
+        };
         Ok(GifRequest {
             board: self.board.clone(),
-            rect,
+            area,
             length,
             ms_per_generation: if self.is_max_speed() {
                 FASTEST_MS_PER_GENERATION
@@ -276,6 +290,20 @@ impl App {
                 self.tick_rate_ms()
             },
         })
+    }
+
+    /// What a GIF records: the selection, or else the whole of a finite board,
+    /// or else, on an unbounded board, the box its live cells fill over the
+    /// whole recording, so a growing pattern stays in the picture.
+    pub fn recorded_area(&self) -> Result<RecordedArea, ImageExportError> {
+        let rect = self.image_area(MAX_GIF_SIDE)?;
+        Ok(
+            match (self.selection().is_some(), self.board.finite().is_none()) {
+                (true, _) => RecordedArea::Selection(rect),
+                (false, false) => RecordedArea::Board(rect),
+                (false, true) => RecordedArea::Run(rect),
+            },
+        )
     }
 
     /// The selection, or else the whole of a finite board, or the box around
@@ -295,17 +323,7 @@ impl App {
             }
             (None, Universe::Unbounded(plane)) => {
                 let (min, max) = plane.live_bounds().ok_or(ImageExportError::Empty)?;
-                // Measured without subtracting, which far-apart cells would overflow.
-                let span = |low: i64, high: i64| {
-                    usize::try_from(high.abs_diff(low))
-                        .map_or(usize::MAX, |span| span.saturating_add(1))
-                };
-                CellRect {
-                    left: min.0,
-                    bottom: min.1,
-                    width: span(min.0, max.0),
-                    height: span(min.1, max.1),
-                }
+                CellRect::spanning(min, max)
             }
         };
         if rect.width > max_side || rect.height > max_side {

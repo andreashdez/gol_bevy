@@ -11,12 +11,15 @@ Add a line under Unreleased in the same pull request as the change; see
 - **Save image…** in Export saves the selection, or else the board, as a PNG in the
   theme's colours, drawn from the cells rather than the screen: each cell up to 8 pixels
   across, and a pixel each on large boards.
-- **Save GIF…** in Export records generations of the same area as a looping GIF at the
-  playback speed, from a copy of the board, so the board plays on. Each frame holds only
-  the cells that changed, and the dialog counts the generations recorded, with **Cancel
-  recording** to stop and save nothing. **Save one period…** records until the board
-  comes back to the current generation, for a loop without a jump. With cell age on,
-  cells take their colours by age, as on the board.
+- **Save GIF…** in Export records generations of the selection, or else the board, as a
+  looping GIF at the playback speed, from a copy of the board, so the board plays on. On
+  an unbounded board with no selection it first measures the box the pattern fills over
+  the whole recording, so a growing pattern stays in the picture, and the dialog says
+  which area it records. Each frame holds only the cells that changed, and the dialog
+  counts the generations recorded, with **Cancel recording** to stop and save nothing.
+  **Save one period…** records until the board comes back to the current generation, for
+  a loop without a jump. With cell age on, cells take their colours by age, as on the
+  board.
 - The web version downloads images and GIFs from Export, as `board.png` and `board.gif`.
 
 ### Changed

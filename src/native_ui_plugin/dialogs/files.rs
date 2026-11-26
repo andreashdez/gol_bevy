@@ -245,7 +245,8 @@ pub(in crate::native_ui_plugin) fn poll_file_dialog(mut state: DialogState) {
                 if let Some(Progress { shared, total }) = progress
                     && !shared.cancelled()
                 {
-                    let feedback = recording_progress(shared.generations(), *total);
+                    let feedback =
+                        recording_progress(shared.measuring(), shared.generations(), *total);
                     if state.drafts.feedback != feedback {
                         state.drafts.feedback = feedback;
                     }
@@ -377,11 +378,17 @@ pub(super) fn cancel_recording(state: &mut DialogState) {
     }
 }
 
-/// How far a GIF recording has got, of `total` generations if that's known.
-pub(super) fn recording_progress(done: usize, total: Option<usize>) -> String {
+/// How far a GIF recording has got, of `total` generations if that's known,
+/// and whether it's still measuring how far the pattern grows first.
+pub(super) fn recording_progress(measuring: bool, done: usize, total: Option<usize>) -> String {
+    let what = if measuring {
+        "Measuring how far it grows…"
+    } else {
+        "Recording…"
+    };
     match total {
-        Some(total) => format!("Recording… {done} of {total} generations."),
-        None => format!("Recording… {done} generations, until the board comes back round."),
+        Some(total) => format!("{what} {done} of {total} generations."),
+        None => format!("{what} {done} generations, until the board comes back round."),
     }
 }
 

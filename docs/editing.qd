@@ -105,7 +105,13 @@ Each cell is a square of up to 8 pixels, as many as keep the image within 4096 p
 
 ## Record a GIF
 
-To record the board as it runs, open **Export**, set **Generations**, and click **Save GIF…**. It records the same area as an image, from the current generation on, as a GIF that loops forever: 100 generations by default, and up to 1000. Recording steps a copy of the board, so the board itself plays on, and the dialog counts the generations recorded meanwhile. Another file can't be saved or opened until it finishes. **Cancel recording**, which shows while one is under way, stops it and saves nothing.
+To record the board as it runs, open **Export**, set **Generations**, and click **Save GIF…**. It records from the current generation on, as a GIF that loops forever: 100 generations by default, and up to 1000. Recording steps a copy of the board, so the board itself plays on, and the dialog counts the generations recorded meanwhile. Another file can't be saved or opened until it finishes. **Cancel recording**, which shows while one is under way, stops it and saves nothing.
+
+The dialog says which area it records:
+
+- your [selection](#selections), if there is one, up to 2048 cells on a side, whatever passes through it;
+- otherwise the whole finite board;
+- otherwise, on an unbounded board, the box the live cells fill over the whole recording. It steps a copy of the board through the run first to measure it, as "Measuring how far it grows…", then records, so a pattern that grows or travels stays in the picture from the first frame to the last. That takes up to twice as long. If the run would grow past 2048 cells on a side, nothing is saved; select an area to record part of it.
 
 For a GIF that loops without a jump, click **Save one period…** instead. It records from the current generation until the board comes back to it, up to 1000 generations, so the last frame leads straight back into the first. The board has to be repeating already: a pattern still settling never comes back to where it is, and the GIF isn't saved. Run the board until the status bar shows its period first. The period is the whole board's, so a selection loops after the board's period even if what's inside it repeats sooner.
 
@@ -113,7 +119,7 @@ The web version downloads the GIF instead, as **Download GIF** and **Download on
 
 Each generation shows for as long as it does at the playback speed. At ∞ it shows for 20 ms, 50 generations a second, the fastest that browsers play a GIF: they slow anything quicker to 10 frames a second. GIF times count hundredths of a second, so at 40 generations a second frames alternate between 30 and 20 ms.
 
-Each cell is a square of up to 8 pixels, as many as keep the GIF within 1024 pixels on its longer side, and a pixel each on anything larger. A GIF can be at most 2048 cells on a side. Each frame after the first holds only the box around the cells whose colour changed, and a generation that changes nothing adds to the time the frame before it shows, so a lone glider on a large board records small. On an unbounded board the area is the box around the live cells when recording starts, and a ship that leaves it leaves the picture. If the board reaches its memory limit, the recording stops there. Like an image, a GIF has no grid.
+Each cell is a square of up to 8 pixels, as many as keep the GIF within 1024 pixels on its longer side, and a pixel each on anything larger. Each frame after the first holds only the box around the cells whose colour changed, and a generation that changes nothing adds to the time the frame before it shows, so a lone glider on a large board records small. A ship that leaves a selected area leaves the picture. If the board reaches its memory limit, the recording stops there. Like an image, a GIF has no grid.
 
 With [cell age](interface.qd#cell-age) on, a GIF colours cells by age as the board does: newborn cells bright, old ones deeper, and trails fading where cells died. Ages count from the start of the recording, as after loading a board: cells already alive start out in the plain live colour, and empty cells with no trail. One period goes round the loop until every colour has settled into it, up to 60 generations, before it records, so the colours loop without a jump too. Ageing cells change colour every generation, so a GIF with cell age on is larger.
 

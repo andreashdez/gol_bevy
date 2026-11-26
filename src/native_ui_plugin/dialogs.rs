@@ -1,6 +1,7 @@
 //! Native editors and modal input routing. Drafts survive closing and reopening.
 use super::*;
 use crate::{
+    app::RecordedArea,
     board::{BoundaryMode, RandomizeSettings},
     cell_gif::{GifLength, MAX_GIF_GENERATIONS},
     keybindings::{BINDING_TOGGLE_HELP, TypedKeys, command_key},
@@ -145,6 +146,8 @@ pub(super) enum DialogReadout {
     Diagnostics,
     /// What the Board section's size is the size of.
     BoardNote,
+    /// What a GIF would record.
+    RecordedArea,
 }
 
 /// Shown only while a GIF is being recorded, as it holds the button that
@@ -613,6 +616,7 @@ pub(super) fn update_dialogs(
                     state.sim.step_samples,
                 )
             }
+            DialogReadout::RecordedArea => recorded_area_label(&state.sim.app),
             DialogReadout::BoardNote => if state.sim.app.board.finite().is_some() {
                 "Resizing keeps the cells that fit. Undo still goes back past it."
             } else {
@@ -623,6 +627,26 @@ pub(super) fn update_dialogs(
         if text.0 != value {
             text.0 = value;
         }
+    }
+}
+
+/// What a GIF would record, said in the Export dialog, so a pattern that would
+/// grow out of the picture can be given room first.
+fn recorded_area_label(app: &GolApp) -> String {
+    match app.recorded_area() {
+        Ok(RecordedArea::Selection(rect)) => {
+            format!("Records your {} × {} selection.", rect.width, rect.height)
+        }
+        Ok(RecordedArea::Board(rect)) => format!(
+            "Records the whole {} × {} board. Select an area to record part of it.",
+            rect.width, rect.height
+        ),
+        Ok(RecordedArea::Run(rect)) => format!(
+            "Records the area the pattern fills over the whole recording, {} × {} now; \
+             it measures the run first. Select an area to record a fixed one.",
+            rect.width, rect.height
+        ),
+        Err(error) => error.to_string(),
     }
 }
 
@@ -668,7 +692,8 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                         let [image, gif, period] = if WEB_BUILD { ["Download image", "Download GIF", "Download one period"] } else { ["Save image…", "Save GIF…", "Save one period…"] };
                         heading(p, "Image", "Save a PNG of the selection, or else of the whole board, or of the live cells of an unbounded board, in the theme's colours.");
                         p.spawn(row()).with_children(|p| { button(p, image, Action::SaveImage); });
-                        heading(p, "Animation", "Record the same area as a looping GIF at the playback speed, from the current generation on, coloured by age if Cell age is on. One period records until the board comes back to it, so the loop has no jump. The board plays on meanwhile.");
+                        heading(p, "Animation", "Record a looping GIF at the playback speed, from the current generation on, coloured by age if Cell age is on. One period records until the board comes back to it, so the loop has no jump. The board plays on meanwhile.");
+                        p.spawn((label("", 14.0, Token::Ink), DialogReadout::RecordedArea));
                         action_row(p, gif, Action::SaveGif, |p| inline_field(p, "Generations", &drafts.generations, Field::Generations, false));
                         p.spawn(row()).with_children(|p| { button(p, period, Action::SaveGifPeriod); });
                         p.spawn((row(), WhileRecording)).with_children(|p| { button(p, "Cancel recording", Action::CancelRecording); });
