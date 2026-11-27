@@ -1,5 +1,6 @@
-//! Running generations: playback and its speed, stepping the board, noticing a
-//! board that settled or filled up, and the population of the run so far.
+//! Running generations: playback and its speed, stepping the board, jumping to
+//! a generation, noticing a board that settled or filled up, and the population
+//! of the run so far.
 
 use super::App;
 use crate::settle::Settled;
@@ -14,6 +15,8 @@ pub enum AutoPause {
     Settled(Settled),
     /// The unbounded board reached its memory budget.
     BoardFull,
+    /// A jump reached its generation.
+    Arrived(usize),
 }
 
 impl fmt::Display for AutoPause {
@@ -21,6 +24,28 @@ impl fmt::Display for AutoPause {
         match self {
             Self::Settled(settled) => settled.fmt(f),
             Self::BoardFull => f.write_str("the board reached its memory limit"),
+            Self::Arrived(generation) => write!(f, "reached generation {generation}"),
+        }
+    }
+}
+
+/// Why a jump couldn't start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JumpError {
+    /// Generations only run forward, and the board is already at or past it.
+    Passed { current: usize },
+    /// Past the last generation the counter holds.
+    TooFar,
+}
+
+impl fmt::Display for JumpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Passed { current } => write!(
+                f,
+                "The board is already at generation {current}. Reset to start or undo to go back."
+            ),
+            Self::TooFar => f.write_str("That is past the last generation the counter holds."),
         }
     }
 }
@@ -30,13 +55,54 @@ impl App {
     const TICK_RATE_MAX_MS: u64 = 1000;
     const TICK_RATE_STEP_MS: u64 = 25;
 
+    /// Pausing ends a jump, and playing again runs on at the set speed.
     pub fn toggle_running(&mut self) {
         self.running = !self.running;
+        self.jump_target = None;
         self.needs_redraw = true;
     }
 
     pub fn is_running(&self) -> bool {
         self.running
+    }
+
+    /// Runs generations as fast as the frame allows until generation `target`,
+    /// then pauses. It is one run, so Reset to start goes back to where it
+    /// began; pausing ends it. Returns `target`.
+    pub fn jump_to(&mut self, target: usize) -> Result<usize, JumpError> {
+        if target <= self.epoch {
+            return Err(JumpError::Passed {
+                current: self.epoch,
+            });
+        }
+        self.jump_target = Some(target);
+        self.running = true;
+        self.needs_redraw = true;
+        Ok(target)
+    }
+
+    /// [`jump_to`](Self::jump_to) the generation `generations` from this one.
+    pub fn jump_by(&mut self, generations: usize) -> Result<usize, JumpError> {
+        let target = self
+            .epoch
+            .checked_add(generations)
+            .ok_or(JumpError::TooFar)?;
+        self.jump_to(target)
+    }
+
+    /// The generation the jump under way runs to.
+    pub fn jump_target(&self) -> Option<usize> {
+        self.jump_target.filter(|_| self.running)
+    }
+
+    /// Asks the UI for the Jump dialog, as its shortcut does.
+    pub fn request_jump(&mut self) {
+        self.jump_requested = true;
+    }
+
+    /// Whether the Jump dialog was asked for since the last call.
+    pub fn take_jump_request(&mut self) -> bool {
+        std::mem::take(&mut self.jump_requested)
     }
 
     pub fn tick_rate_ms(&self) -> u64 {
@@ -144,11 +210,35 @@ impl App {
             let settled = self
                 .settle
                 .record(fingerprint, self.board.fingerprint(), res);
-            if self.running && self.pause_when_settled && settled.is_some() {
+            if let Some(target) = self.jump_target() {
+                if let Some(cycle) = self.settle.settled() {
+                    self.skip_cycles(cycle, target);
+                }
+                if self.epoch == target {
+                    self.running = false;
+                    self.jump_target = None;
+                    self.auto_paused = Some(AutoPause::Arrived(target));
+                }
+            } else if self.running && self.pause_when_settled && settled.is_some() {
                 self.running = false;
                 self.auto_paused = settled.map(AutoPause::Settled);
             }
             self.needs_redraw = true;
+        }
+    }
+
+    /// Moves a jump on a settled board through whole cycles at once, as each
+    /// brings back the board it started from. Only the generations left over
+    /// are stepped, so a jump far past a settled board arrives at once.
+    fn skip_cycles(&mut self, cycle: Settled, target: usize) {
+        let skip = (target - self.epoch) / cycle.period * cycle.period;
+        if skip == 0 {
+            return;
+        }
+        self.epoch += skip;
+        // The latest step's change recurs a whole number of cycles later.
+        if let Some((epoch, ..)) = &mut self.last_step {
+            *epoch = self.epoch;
         }
     }
 

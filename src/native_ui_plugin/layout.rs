@@ -187,9 +187,15 @@ pub(super) fn setup(
                 .with_child((label("", 12.0, Token::Muted), Readout::Status));
                 // Muted words around ink numbers. Numbers keep the widest size
                 // they have reached, so their neighbours do not shift as they tick.
-                p.spawn(controls::readout_group()).with_children(|p| {
-                    p.spawn(label("Gen", 13.0, Token::Muted));
-                    p.spawn(controls::number(Readout::Generation, 13.0, Token::Ink));
+                // The generation opens Jump, as the rule opens Settings; its words
+                // sit a level down, where the button doesn't recolour them.
+                let generation = button_frame(p, "Jump to a generation", Action::Jump);
+                p.commands().entity(generation).with_children(|p| {
+                    p.spawn((controls::readout_group(), Pickable::IGNORE))
+                        .with_children(|p| {
+                            p.spawn(label("Gen", 13.0, Token::Muted));
+                            p.spawn(controls::number(Readout::Generation, 13.0, Token::Ink));
+                        });
                 });
                 p.spawn((
                     controls::readout_group(),

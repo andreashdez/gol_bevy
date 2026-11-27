@@ -6,6 +6,14 @@ Add a line under Unreleased in the same pull request as the change; see
 
 ## [Unreleased]
 
+### Added
+
+- **Jump to a generation**, with **G** or by clicking the generation counter, steps a
+  number of generations at once or runs to a generation number, as fast as each frame
+  allows, then pauses. Pausing stops it early, and Reset to start goes back to where it
+  began. Once the board settles, it skips the cycles left, so a still or repeating board
+  arrives at once however far ahead the generation is.
+
 ## [0.5.0] - 2026-11-27
 
 ### Added

@@ -3,7 +3,7 @@ use crate::{
     feedback::EditFeedback,
     keybindings::{
         BINDING_CLEAR, BINDING_CLEAR_STAMP, BINDING_DESELECT, BINDING_ERASE_SELECTION,
-        BINDING_FLIP_STAMP, BINDING_QUIT, BINDING_RANDOMIZE, BINDING_RESET_EPOCH,
+        BINDING_FLIP_STAMP, BINDING_JUMP, BINDING_QUIT, BINDING_RANDOMIZE, BINDING_RESET_EPOCH,
         BINDING_RESET_TO_START, BINDING_ROTATE_STAMP, BINDING_RUN_PAUSE, BINDING_SLOW_DOWN,
         BINDING_SPEED_UP, BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_DIAGNOSTICS,
         BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, BINDING_TOGGLE_PALETTE, TOOL_SHORTCUTS,
@@ -99,6 +99,9 @@ pub(super) fn handle_keyboard(
     }
     if BINDING_STEP.just_pressed(&keys, &typed) {
         sim.app.increment_epoch();
+    }
+    if BINDING_JUMP.just_pressed(&keys, &typed) {
+        sim.app.request_jump();
     }
     if BINDING_RESET_TO_START.just_pressed(&keys, &typed) {
         feedback.reset_to_start(&mut sim.app);

@@ -7,6 +7,12 @@ pub(super) enum Action {
     /// Returns to the board before the run.
     ResetToStart,
     Step,
+    /// Opens the Jump dialog.
+    Jump,
+    /// Steps the number of generations in the Jump dialog.
+    JumpBy,
+    /// Runs to the generation in the Jump dialog.
+    JumpTo,
     Undo,
     Redo,
     Grid,
@@ -115,7 +121,10 @@ pub(super) fn activate(
         | Action::ConfirmOpenWorkspace
         | Action::CancelOpenWorkspace
         | Action::ApplyRandomize
-        | Action::RandomizeNow => {}
+        | Action::RandomizeNow
+        | Action::Jump
+        | Action::JumpBy
+        | Action::JumpTo => {}
         Action::Grid => view.grid.enabled = !view.grid.enabled,
         Action::CellAge => view.cell_age.enabled = !view.cell_age.enabled,
         Action::Theme(choice) => {

@@ -1484,3 +1484,78 @@ fn a_paste_that_is_not_a_pattern_leaves_the_stamp_and_rule_alone() {
     assert_eq!(app.board.rule(), rule);
     assert!(!app.can_undo(), "pasting is no edit");
 }
+
+/// Steps while the jump runs, as frames would, and returns how many steps it took.
+fn finish_jump(app: &mut App) -> usize {
+    let mut steps = 0;
+    while app.jump_target().is_some() {
+        app.increment_epoch();
+        steps += 1;
+    }
+    steps
+}
+
+#[test]
+fn a_jump_stops_on_its_generation_with_the_board_stepping_would_reach() {
+    let mut app = unbounded_app();
+    stamp_centered(&mut app, PatternKind::Glider);
+    let mut stepped = unbounded_app();
+    stamp_centered(&mut stepped, PatternKind::Glider);
+    for _ in 0..40 {
+        stepped.increment_epoch();
+    }
+    let start = app.board.snapshot_cells();
+
+    assert_eq!(app.jump_by(40), Ok(40));
+    assert_eq!(app.jump_target(), Some(40));
+    assert_eq!(finish_jump(&mut app), 40);
+    assert_eq!(app.epoch, 40);
+    assert!(!app.is_running());
+    assert_eq!(app.take_auto_paused(), Some(AutoPause::Arrived(40)));
+    assert_eq!(app.board.snapshot_cells(), stepped.board.snapshot_cells());
+
+    // It was one run, so the board before it is a reset away.
+    assert!(app.reset_to_start());
+    assert_eq!(app.board.snapshot_cells(), start);
+    assert_eq!(app.epoch, 0);
+}
+
+#[test]
+fn a_jump_past_a_settled_board_skips_its_cycles_and_lands_in_phase() {
+    let (mut app, start) = blinker_board();
+    app.set_pause_when_settled(true);
+    assert_eq!(app.jump_to(1_000_001), Ok(1_000_001));
+    let steps = finish_jump(&mut app);
+    assert!(steps < 10, "took {steps} steps");
+    assert_eq!(app.epoch, 1_000_001);
+    assert_eq!(app.take_auto_paused(), Some(AutoPause::Arrived(1_000_001)));
+    // An odd generation of a blinker is its other phase.
+    assert_ne!(app.board.snapshot_cells(), start);
+    assert_eq!(app.population_change(), Some(0));
+    app.increment_epoch();
+    assert_eq!(app.board.snapshot_cells(), start);
+}
+
+#[test]
+fn jumps_only_run_forward_and_pausing_ends_them() {
+    let (mut app, _) = blinker_board();
+    app.increment_epoch();
+    assert_eq!(app.jump_to(1), Err(JumpError::Passed { current: 1 }));
+    assert_eq!(app.jump_by(usize::MAX), Err(JumpError::TooFar));
+    assert!(!app.is_running(), "a refused jump leaves playback alone");
+
+    assert_eq!(app.jump_by(100), Ok(101));
+    app.toggle_running();
+    assert_eq!(app.jump_target(), None);
+    // Playing again runs at the set speed, with no jump to end it.
+    app.toggle_running();
+    assert_eq!(app.jump_target(), None);
+    assert!(app.is_running());
+
+    // Undo pauses too, which ends a jump as well.
+    app.toggle_running();
+    app.populate_board(0, 0);
+    assert!(app.jump_by(100).is_ok());
+    assert!(app.undo());
+    assert_eq!(app.jump_target(), None);
+}

@@ -7,6 +7,7 @@
 |----------------------|-------------------|----------|
 | Run or pause         | .keybinding {Space} | **Play** / **Pause** |
 | Advance one generation | .keybinding {J} | **Step** |
+| Step many generations, or run to one | .keybinding {G} | the generation counter in the status bar |
 | Go back to the start of the run | .keybinding {B} | **Reset to start** |
 | Reset the generation counter to 0 | .keybinding {0} | **Reset generation counter** in Settings |
 
@@ -19,6 +20,14 @@ Resetting the generation counter leaves the cells as they are.
 Pausing and stepping stay part of the same run. Drawing, erasing, stamping, randomizing, clearing, or changing the rule moves the start to the edited board, even while the simulation runs, so a reset never discards an edit. Undo, redo, and resizing the board end the run instead, and the button stays disabled until the next generation. With [Fill canvas](settings.qd#fill-canvas) on, resizing the window resizes the board too.
 
 A reset is itself an [undoable edit](editing.qd#undo-and-redo): undo returns to where the run had got to, and redo resets again.
+
+### Jump to a generation
+
+**Jump to a generation** steps forward a number of generations, or runs to a generation number, without watching every one go by. Open it with .keybinding {G} or by clicking the generation counter in the status bar, then choose **Step forward** with a count, or **Run to** with a generation ahead of the current one. Counts may be grouped, as in `1,000,000`.
+
+The dialog closes and the board runs as fast as each frame allows, whatever the speed is set to: about 8 ms of stepping per frame, with no cap on how many generations that is. It pauses on the generation it was going to, with a notice. Pausing stops it early, and pressing Play afterwards runs on at the set speed. A jump is part of the run, so **Reset to start** goes back to where it began, and on an unbounded board it pauses at the memory limit like any run.
+
+Once the board [settles](#when-the-board-settles), a jump doesn't step the cycles that are left: each brings back the same board, so it skips whole cycles and steps only the few generations of the last one. A board that has gone still or repeats arrives at once, even a billion generations on. **Pause when settled** doesn't stop a jump.
 
 ### When the board settles
 

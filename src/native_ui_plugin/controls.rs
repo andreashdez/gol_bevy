@@ -3,9 +3,9 @@ use super::*;
 use crate::{
     coords::CAMERA_ZOOM_MIN,
     keybindings::{
-        BINDING_CLEAR, BINDING_ERASE_SELECTION, BINDING_FLIP_STAMP, BINDING_RANDOMIZE,
-        BINDING_RESET_CAMERA, BINDING_RESET_TO_START, BINDING_ROTATE_STAMP, BINDING_RUN_PAUSE,
-        BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_DIAGNOSTICS,
+        BINDING_CLEAR, BINDING_ERASE_SELECTION, BINDING_FLIP_STAMP, BINDING_JUMP,
+        BINDING_RANDOMIZE, BINDING_RESET_CAMERA, BINDING_RESET_TO_START, BINDING_ROTATE_STAMP,
+        BINDING_RUN_PAUSE, BINDING_STEP, BINDING_TOGGLE_BOUNDARY_MODE, BINDING_TOGGLE_DIAGNOSTICS,
         BINDING_TOGGLE_GRID, BINDING_TOGGLE_HELP, BINDING_TOGGLE_PALETTE, BINDING_TOOL_DRAW,
         BINDING_TOOL_ERASE, BINDING_TOOL_SELECT, BINDING_TOOL_STAMP, CAPS_COPY, CAPS_OPEN,
         CAPS_REDO, CAPS_SAVE, CAPS_UNDO, KeyBinding, shortcut_label,
@@ -68,6 +68,12 @@ pub(super) fn hint(action: Action) -> String {
             key(BINDING_RESET_TO_START)
         ),
         Action::Step => format!("Step one generation · {}", key(BINDING_STEP)),
+        Action::Jump => format!(
+            "The generation · click to jump forward to another · {}",
+            key(BINDING_JUMP)
+        ),
+        Action::JumpBy => "Run this many generations at full speed, then pause".into(),
+        Action::JumpTo => "Run at full speed until this generation, then pause".into(),
         Action::Undo => format!("Undo the last edit · {undo}"),
         Action::Redo => format!("Redo the last edit · {}", shortcut_label(CAPS_REDO)),
         Action::Grid => format!("Show / hide the grid · {}", key(BINDING_TOGGLE_GRID)),

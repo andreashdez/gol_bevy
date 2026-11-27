@@ -60,6 +60,7 @@ builds. On Linux, Bevy needs a few system libraries first; see
 | --- | --- |
 | `Space` | Play / pause |
 | `J` | Step one generation |
+| `G` | Jump to a generation |
 | `B` | Reset to start |
 | `+` | Speed up |
 | `−` | Slow down |
@@ -160,7 +161,6 @@ The pages are built from `docs/`, so they can be read there too.
 
 - [ ] **HashLife for the unbounded board**, so long-running patterns such as breeders
   can run far past today's memory limit and reach generations like 2³⁰ quickly.
-- [ ] **Jump to a generation**: step N generations at once, or run to generation N.
 - [ ] **GIF of the current view** on the unbounded board, beside recording a selection or
   the area the run fills.
 - [ ] **Retry saves on Windows** when antivirus, the search indexer, or a sync client

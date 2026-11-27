@@ -21,7 +21,7 @@ use self::{
     stamp::StampTransform,
 };
 pub use self::{
-    playback::{AutoPause, POPULATION_HISTORY},
+    playback::{AutoPause, JumpError, POPULATION_HISTORY},
     selection::{
         BoardExport, BoardExportError, ImageExportError, RecordedArea, SelectionExportError,
     },
@@ -60,6 +60,11 @@ pub struct App {
     max_speed: bool,
     /// whether simulation advances on each tick
     running: bool,
+    /// The generation a jump runs to. Only counts while running: anything that
+    /// pauses ends the jump.
+    jump_target: Option<usize>,
+    /// The Jump dialog was asked for from the keyboard, until the UI opens it.
+    jump_requested: bool,
     /// whether UI should redraw
     needs_redraw: bool,
     /// whether help overlay is visible
@@ -116,6 +121,8 @@ impl App {
             tick_rate_ms: 25,
             max_speed: false,
             running: false,
+            jump_target: None,
+            jump_requested: false,
             needs_redraw: true,
             show_help: false,
             selected_pattern: None,

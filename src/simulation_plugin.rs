@@ -26,15 +26,16 @@ impl Plugin for SimulationPlugin {
 /// catch-up frame is slower still, and the app never recovers.
 const MAX_STEPS_PER_FRAME: u64 = 8;
 
-/// Stepping time a max-speed frame may spend, leaving the rest of a 60 Hz frame
-/// for input, UI, and rendering. At least one step runs however long it takes.
-/// It does not shrink on faster displays: on a 120 Hz display, half its frame
-/// halved the generations per second of a busy 1024 × 1024 board, while this
-/// still drew about 110 frames a second there.
+/// Stepping time a max-speed or jumping frame may spend, leaving the rest of a
+/// 60 Hz frame for input, UI, and rendering. At least one step runs however
+/// long it takes. It does not shrink on faster displays: on a 120 Hz display,
+/// half its frame halved the generations per second of a busy 1024 × 1024
+/// board, while this still drew about 110 frames a second there.
 const MAX_SPEED_FRAME_BUDGET: Duration = Duration::from_millis(8);
 
 /// Bounds max speed on boards that step almost for free, such as empty or
-/// settled ones, so that a frame does not spin through its whole budget.
+/// settled ones, so that a frame does not spin through its whole budget. A
+/// jump has its generation to stop at instead, and gets there sooner without.
 const MAX_SPEED_STEPS_PER_FRAME: u64 = 1024;
 
 fn advance_simulation(
@@ -56,15 +57,16 @@ fn run_due_steps(sim: &mut Simulation, delta: Duration, max_speed_budget: Durati
         return 0;
     }
 
-    if sim.app.is_max_speed() {
+    let jumping = sim.app.jump_target().is_some();
+    if jumping || sim.app.is_max_speed() {
         sim.accumulator = Duration::ZERO;
         let started = Instant::now();
         let mut steps = 0;
         loop {
             step(sim);
             steps += 1;
-            // A step can pause the board by settling it.
-            if steps == MAX_SPEED_STEPS_PER_FRAME
+            // A step can pause the board by settling it, or by ending a jump.
+            if (!jumping && steps == MAX_SPEED_STEPS_PER_FRAME)
                 || started.elapsed() >= max_speed_budget
                 || !sim.app.is_running()
             {
@@ -241,5 +243,38 @@ mod tests {
         let steps = run(&mut sim, Duration::ZERO, Duration::from_secs(60));
         assert_eq!(steps, MAX_SPEED_STEPS_PER_FRAME);
         assert_eq!(sim.app.epoch, 1 + MAX_SPEED_STEPS_PER_FRAME as usize);
+    }
+
+    #[test]
+    fn a_jump_runs_past_the_max_speed_cap_and_says_where_it_stopped() {
+        use crate::feedback::EditFeedback;
+        use bevy::{ecs::system::RunSystemOnce, prelude::*};
+
+        let mut sim = running_simulation();
+        sim.app.toggle_running();
+        sim.app.set_unbounded().unwrap();
+        // A glider never settles, so every generation is stepped.
+        for (x, y) in [(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)] {
+            sim.app.populate_board(x, y);
+        }
+        let target = 3 * MAX_SPEED_STEPS_PER_FRAME as usize;
+        sim.app.jump_to(target).unwrap();
+        assert_eq!(
+            run(&mut sim, Duration::ZERO, Duration::from_secs(60)),
+            target as u64
+        );
+        assert_eq!(sim.app.epoch, target);
+        assert!(!sim.app.is_running());
+
+        let mut world = World::new();
+        world.insert_resource(sim);
+        world.init_resource::<Time>();
+        world.init_resource::<EditFeedback>();
+        world.resource_mut::<Simulation>().app.jump_by(1).unwrap();
+        world.run_system_once(super::advance_simulation).unwrap();
+        assert_eq!(
+            world.resource::<EditFeedback>().message,
+            format!("Paused · reached generation {}", target + 1)
+        );
     }
 }

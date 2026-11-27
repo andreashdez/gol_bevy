@@ -102,6 +102,38 @@ fn the_status_bar_rule_opens_settings_with_the_rulestring_first() {
 }
 
 #[test]
+fn jump_opens_from_its_shortcut_and_starts_or_says_why_not() {
+    let mut world = test_world(DialogKind::Jump);
+    world.resource_mut::<NativeUi>().dialog = None;
+    for _ in 0..1500 {
+        world.resource_mut::<Simulation>().app.increment_epoch();
+    }
+    world.resource_mut::<Simulation>().app.request_jump();
+    world.run_system_once(update_dialogs).unwrap();
+    assert_eq!(world.resource::<NativeUi>().dialog, Some(DialogKind::Jump));
+    // The default generation to run to is behind the board, so it moves ahead.
+    assert_eq!(world.resource::<Drafts>().jump_to, "2500");
+
+    let to = world.spawn((Field::JumpTo, EditableText::new("1000"))).id();
+    let run_to = world.spawn(Action::JumpTo).id();
+    world.trigger(Activate { entity: run_to });
+    let drafts = world.resource::<Drafts>();
+    assert!(drafts.error);
+    assert!(drafts.feedback.contains("already at generation 1500"));
+    assert!(!world.resource::<Simulation>().app.is_running());
+
+    world.entity_mut(to).despawn();
+    world.spawn((Field::JumpBy, EditableText::new("1,000,000")));
+    let step = world.spawn(Action::JumpBy).id();
+    world.trigger(Activate { entity: step });
+    assert_eq!(
+        world.resource::<Simulation>().app.jump_target(),
+        Some(1_001_500)
+    );
+    assert!(world.resource::<NativeUi>().dialog.is_none());
+}
+
+#[test]
 fn fill_canvas_toggles_and_an_explicit_size_switches_it_off() {
     let mut world = test_world(DialogKind::Settings);
     let fill = world.spawn(Action::FillCanvas).id();

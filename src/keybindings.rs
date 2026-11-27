@@ -120,6 +120,12 @@ pub const BINDING_STEP: KeyBinding = KeyBinding {
     caps: &["J"],
     action: "Step one generation",
 };
+pub const BINDING_JUMP: KeyBinding = KeyBinding {
+    chars: &["g"],
+    keys: &[],
+    caps: &["G"],
+    action: "Jump to a generation",
+};
 pub const BINDING_RESET_TO_START: KeyBinding = KeyBinding {
     chars: &["b"],
     keys: &[],
@@ -372,6 +378,7 @@ pub fn help_sections() -> [HelpSection; 6] {
             entries: vec![
                 BINDING_RUN_PAUSE.into(),
                 BINDING_STEP.into(),
+                BINDING_JUMP.into(),
                 BINDING_RESET_TO_START.into(),
                 BINDING_SPEED_UP.into(),
                 BINDING_SLOW_DOWN.into(),

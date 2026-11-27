@@ -86,7 +86,7 @@ Running   Gen 1520   842 alive −12   B3/S23   (40, 29)
 From left to right:
 
 - **Running** or **Paused**, in a pill that turns green while the simulation runs.
-- The generation counter.
+- The generation counter. Click it to [jump to a generation](simulation.qd#jump-to-a-generation).
 - The number of living cells, how the latest generation changed it, and, from 900 pixels wide, a line of the population over the last 256 generations of the run. The change reads `+12`, `−12`, or `±0` for a stable population. The change disappears after an edit, undo, or counter reset, since it no longer describes the board. Once the board [settles](simulation.qd#when-the-board-settles), `stable` or `period 2` takes its place; hover over it to see the generation that began.
 - The rule. Click it to open [Settings](settings.qd#simulation) with the rulestring ready to edit.
 - The [edge mode](simulation.qd#edges), **Wrap edges**, **Fixed edges**, or **Unbounded**, from 850 pixels wide. Click it to switch, like .keybinding {M}.
@@ -104,6 +104,7 @@ Clear, randomize, undo, and redo show a notice at the bottom left of the canvas 
 | **Export**          | the **Export** button                    | copying the board as RLE, and saving images, GIFs, and workspace files |
 | **Settings**        | the **Settings** button, or the rule in the status bar | board size, rule, theme, grid, cell age, edges, diagnostics, generation reset |
 | **Help**            | .keybinding {/} or the **Help** button   | a summary and the full list of shortcuts                       |
+| **Jump to a generation** | .keybinding {G}, or the generation counter in the status bar | stepping many generations at once, or running to one |
 | **Diagnostics**     | .keybinding {F3} or **Settings**         | live simulation statistics                                     |
 
 Dialogs are modal. While one is open, typing and scrolling inside it do not reach the board, and board shortcuts are disabled. Press .keybinding {Esc} or click **Close** to close a dialog; focus returns to the control that opened it.

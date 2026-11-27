@@ -50,6 +50,8 @@ pub(crate) enum DialogKind {
     Settings,
     Help,
     Diagnostics,
+    /// Runs forward to a generation.
+    Jump,
     /// Asks before a validated workspace file replaces the current one.
     ConfirmOpen,
 }
@@ -62,13 +64,17 @@ impl DialogKind {
             Self::Settings => "Workspace settings",
             Self::Help => "Controls and tips",
             Self::Diagnostics => "Simulation diagnostics",
+            Self::Jump => "Jump to a generation",
             Self::ConfirmOpen => "Open workspace?",
         }
     }
 
     /// Whether results appear in the dialog, rather than as a notice over the board.
     fn shows_feedback(self) -> bool {
-        matches!(self, Self::Import | Self::Export | Self::Settings)
+        matches!(
+            self,
+            Self::Import | Self::Export | Self::Settings | Self::Jump
+        )
     }
 }
 
@@ -96,6 +102,10 @@ pub(super) struct Drafts {
     seed: String,
     /// How many generations a GIF records.
     generations: String,
+    /// How many generations Jump steps forward.
+    jump_by: String,
+    /// The generation Jump runs to.
+    jump_to: String,
     feedback: String,
     error: bool,
     return_focus: Option<Entity>,
@@ -119,6 +129,8 @@ impl Default for Drafts {
             density: 25,
             seed: String::new(),
             generations: "100".into(),
+            jump_by: "1000".into(),
+            jump_to: "1000".into(),
             feedback: String::new(),
             error: false,
             return_focus: None,
@@ -139,6 +151,8 @@ pub(super) enum Field {
     Rule,
     Seed,
     Generations,
+    JumpBy,
+    JumpTo,
 }
 #[derive(Component)]
 pub(super) enum DialogReadout {
@@ -148,6 +162,8 @@ pub(super) enum DialogReadout {
     BoardNote,
     /// What a GIF would record.
     RecordedArea,
+    /// The generation Jump starts from.
+    Generation,
 }
 
 /// Shown only while a GIF is being recorded, as it holds the button that
@@ -218,6 +234,8 @@ fn save_fields<F: bevy::ecs::query::QueryFilter>(
             Field::Rule => &mut drafts.rule,
             Field::Seed => &mut drafts.seed,
             Field::Generations => &mut drafts.generations,
+            Field::JumpBy => &mut drafts.jump_by,
+            Field::JumpTo => &mut drafts.jump_to,
         };
         if *target != value {
             *target = value;
@@ -263,6 +281,7 @@ fn dialog_action(
                 | Action::EditRule
                 | Action::Help
                 | Action::Diagnostics
+                | Action::Jump
         )
     {
         state.drafts.return_focus = Some(event.entity);
@@ -298,6 +317,33 @@ fn dialog_action(
         Action::Diagnostics => {
             state.diagnostics.enabled = true;
             state.mode.dialog = Some(DialogKind::Diagnostics);
+        }
+        Action::Jump => open_jump(&mut state),
+        Action::JumpBy | Action::JumpTo => {
+            let by = *action == Action::JumpBy;
+            let text = if by {
+                &state.drafts.jump_by
+            } else {
+                &state.drafts.jump_to
+            };
+            let started = match parse_generation(text) {
+                None => Err("Enter a whole number of generations, such as 1000.".to_owned()),
+                Some(0) if by => Err("Step forward at least 1 generation.".to_owned()),
+                Some(count) if by => state.sim.app.jump_by(count).map_err(|e| e.to_string()),
+                Some(target) => state.sim.app.jump_to(target).map_err(|e| e.to_string()),
+            };
+            match started {
+                Ok(target) => {
+                    close(&mut state);
+                    state
+                        .notice
+                        .show(format!("Jumping to generation {target} · pause to stop"));
+                }
+                Err(error) => {
+                    state.drafts.error = true;
+                    state.drafts.feedback = error;
+                }
+            }
         }
         Action::CloseDialog => close(&mut state),
         Action::ImportSubmit => {
@@ -469,6 +515,28 @@ fn parse_generations(text: &str) -> Result<usize, String> {
         .ok_or_else(|| format!("A GIF records 1 to {MAX_GIF_GENERATIONS} generations."))
 }
 
+/// A count or generation number, which may be grouped as `1,000,000` or
+/// `1_000_000`.
+fn parse_generation(text: &str) -> Option<usize> {
+    let digits: String = text
+        .trim()
+        .chars()
+        .filter(|c| !matches!(c, ',' | '_'))
+        .collect();
+    digits.parse().ok()
+}
+
+/// Opens Jump. A generation to run to that the board has passed moves on to
+/// one ahead of it, so Run to always starts out going forward.
+fn open_jump(state: &mut DialogState) {
+    let epoch = state.sim.app.epoch;
+    if parse_generation(&state.drafts.jump_to).is_none_or(|target| target <= epoch) {
+        state.drafts.jump_to = epoch.saturating_add(1000).to_string();
+    }
+    state.drafts.feedback.clear();
+    state.mode.dialog = Some(DialogKind::Jump);
+}
+
 fn show_rule(fields: &mut Query<(&Field, &mut EditableText)>, rulestring: &str) {
     for (field, mut input) in fields {
         if matches!(field, Field::Rule) {
@@ -556,6 +624,9 @@ pub(super) fn update_dialogs(
             state.mode.dialog = Some(DialogKind::Diagnostics);
         }
     }
+    if state.sim.app.take_jump_request() && state.mode.dialog.is_none() {
+        open_jump(&mut state);
+    }
     if state.mode.dialog.is_some()
         && (keys.just_pressed(KeyCode::Escape)
             || (state.mode.dialog == Some(DialogKind::Diagnostics)
@@ -617,6 +688,9 @@ pub(super) fn update_dialogs(
                 )
             }
             DialogReadout::RecordedArea => recorded_area_label(&state.sim.app),
+            DialogReadout::Generation => {
+                format!("The board is at generation {}.", state.sim.app.epoch)
+            }
             DialogReadout::BoardNote => if state.sim.app.board.finite().is_some() {
                 "Resizing keeps the cells that fit. Undo still goes back past it."
             } else {
@@ -756,6 +830,16 @@ fn build_dialog(commands: &mut Commands, kind: DialogKind, drafts: &Drafts) {
                             let cancel = button(p, "Cancel", Action::CancelOpenWorkspace);
                             p.commands().entity(cancel).insert(AutoFocus);
                         });
+                    }
+                    DialogKind::Jump => {
+                        heading(p, "Generations", "Runs at full speed, then pauses. Pausing stops it early, and Reset to start goes back to where it began.");
+                        p.spawn((label("", 14.0, Token::Ink), DialogReadout::Generation));
+                        let step = action_row(p, "Step forward", Action::JumpBy, |p| inline_field(p, "Generations to step", &drafts.jump_by, Field::JumpBy, true));
+                        let run_to = action_row(p, "Run to", Action::JumpTo, |p| inline_field(p, "Generation to run to", &drafts.jump_to, Field::JumpTo, false));
+                        // One width for both buttons lines the fields up.
+                        for entity in [step, run_to] {
+                            p.commands().entity(entity).entry::<Node>().and_modify(|mut node| node.min_width = px(112));
+                        }
                     }
                     DialogKind::Diagnostics => {
                         p.spawn((Text::default(), TextFont { font_size: FontSize::Px(14.0), ..default() },
