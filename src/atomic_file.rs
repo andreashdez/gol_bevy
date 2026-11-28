@@ -39,7 +39,7 @@ fn write_with(
             file.sync_all()
         })()
     };
-    let result = result.and_then(|()| fs::rename(&temp, path));
+    let result = result.and_then(|()| replace(&temp, path));
     if result.is_err() {
         let _ = fs::remove_file(&temp);
         return result;
@@ -51,6 +51,33 @@ fn write_with(
         let _ = directory.sync_all();
     }
     Ok(())
+}
+
+/// Antivirus scanners, the search indexer and sync clients briefly open files on Windows
+/// without letting them be deleted, and replacing such a file fails until they let go, so
+/// retry for a moment before reporting the save as failed. Settings save from a system, so
+/// the whole wait stays near half a second.
+#[cfg(windows)]
+fn replace(temp: &Path, path: &Path) -> io::Result<()> {
+    const RETRIES: u32 = 6;
+    // ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION.
+    let held = |error: &io::Error| matches!(error.raw_os_error(), Some(5 | 32 | 33));
+    let mut delay = std::time::Duration::from_millis(10);
+    for _ in 0..RETRIES {
+        match fs::rename(temp, path) {
+            Err(error) if held(&error) => {
+                std::thread::sleep(delay);
+                delay *= 2;
+            }
+            result => return result,
+        }
+    }
+    fs::rename(temp, path)
+}
+
+#[cfg(not(windows))]
+fn replace(temp: &Path, path: &Path) -> io::Result<()> {
+    fs::rename(temp, path)
 }
 
 #[cfg(test)]
@@ -111,5 +138,47 @@ mod tests {
         // No temporary file is left beside either the link or its target.
         assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 2);
         assert_eq!(fs::read_dir(&dotfiles).unwrap().count(), 1);
+    }
+
+    /// Open the file the way a scanner holding it does: without sharing, so it cannot be
+    /// replaced until the handle closes.
+    #[cfg(windows)]
+    fn hold(path: &Path) -> fs::File {
+        use std::os::windows::fs::OpenOptionsExt;
+        fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(path)
+            .unwrap()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn replacing_a_briefly_held_file_waits_until_it_is_released() {
+        let directory = crate::test_support::TestDirectory::new();
+        let path = directory.0.join("settings.toml");
+        fs::write(&path, "original settings").unwrap();
+        let held = hold(&path);
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            drop(held);
+        });
+        write(&path, b"new settings").unwrap();
+        release.join().unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new settings");
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_file_held_past_the_retries_fails_and_keeps_the_previous_file() {
+        let directory = crate::test_support::TestDirectory::new();
+        let path = directory.0.join("settings.toml");
+        fs::write(&path, "original settings").unwrap();
+        let held = hold(&path);
+        assert!(write(&path, b"new settings").is_err());
+        drop(held);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original settings");
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
     }
 }

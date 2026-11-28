@@ -83,7 +83,7 @@ gol-bevy is a Bevy app split into plugins around a plain-Rust core. The core (`a
 | `cell_image`            | A rectangle of the board as a bit per cell, and the PNG drawn from it         |
 | `cell_gif`              | Recording generations of a copy of the board as a GIF, each frame only what changed |
 | `workspace`             | Versioned workspace files, checked completely before they replace anything    |
-| `atomic_file`           | Writing through a temporary file, so a failed save keeps the old contents     |
+| `atomic_file`           | Writing through a temporary file, so a failed save keeps the old contents, and waiting briefly for a file held on Windows |
 | `shared`                | App-wide Bevy state: the simulation resource, system sets, overlay toggles, themes, board size settings |
 | `keybindings`           | Key binding constants, typed characters, and the Help and README controls lists built from them |
 | `feedback`              | Short notices shown after edits from the toolbar or the keyboard              |

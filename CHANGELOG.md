@@ -14,6 +14,11 @@ Add a line under Unreleased in the same pull request as the change; see
   began. Once the board settles, it skips the cycles left, so a still or repeating board
   arrives at once however far ahead the generation is.
 
+### Fixed
+
+- Saving on Windows waits up to about half a second for antivirus, the search indexer, or
+  a sync client to let go of the file being replaced, instead of failing at once.
+
 ## [0.5.0] - 2026-11-27
 
 ### Added

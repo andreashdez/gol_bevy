@@ -163,8 +163,6 @@ The pages are built from `docs/`, so they can be read there too.
   can run far past today's memory limit and reach generations like 2³⁰ quickly.
 - [ ] **GIF of the current view** on the unbounded board, beside recording a selection or
   the area the run fills.
-- [ ] **Retry saves on Windows** when antivirus, the search indexer, or a sync client
-  briefly holds the file being replaced.
 - [ ] **Signed and notarized macOS builds**, so the download opens without the `xattr`
   step.
 - [ ] **More downloads**: a Linux arm64 build, and a Flatpak.
